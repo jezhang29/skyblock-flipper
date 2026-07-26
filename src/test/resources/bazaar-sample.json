@@ -1,0 +1,150 @@
+{
+ "success": true,
+ "lastUpdated": 1785095661128,
+ "products": {
+  "ENCHANTED_DIAMOND": {
+   "product_id": "ENCHANTED_DIAMOND",
+   "sell_summary": [
+    {
+     "amount": 35345,
+     "pricePerUnit": 1270.8,
+     "orders": 1
+    },
+    {
+     "amount": 36640,
+     "pricePerUnit": 1270.7,
+     "orders": 1
+    },
+    {
+     "amount": 567559,
+     "pricePerUnit": 1270.6,
+     "orders": 8
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 174,
+     "pricePerUnit": 1308.4,
+     "orders": 2
+    },
+    {
+     "amount": 577,
+     "pricePerUnit": 1308.5,
+     "orders": 1
+    },
+    {
+     "amount": 374,
+     "pricePerUnit": 1308.7,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "ENCHANTED_DIAMOND",
+    "sellPrice": 1270.7491068700167,
+    "sellVolume": 2227868,
+    "sellMovingWeek": 25113690,
+    "sellOrders": 55,
+    "buyPrice": 1326.48539789141,
+    "buyVolume": 974378,
+    "buyMovingWeek": 5905860,
+    "buyOrders": 135
+   }
+  },
+  "CORRUPTED_BAIT": {
+   "product_id": "CORRUPTED_BAIT",
+   "sell_summary": [
+    {
+     "amount": 41035,
+     "pricePerUnit": 17.1,
+     "orders": 1
+    },
+    {
+     "amount": 70393,
+     "pricePerUnit": 16.9,
+     "orders": 1
+    },
+    {
+     "amount": 5379,
+     "pricePerUnit": 16.8,
+     "orders": 1
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 239,
+     "pricePerUnit": 168.6,
+     "orders": 1
+    },
+    {
+     "amount": 960,
+     "pricePerUnit": 168.7,
+     "orders": 1
+    },
+    {
+     "amount": 96,
+     "pricePerUnit": 168.8,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "CORRUPTED_BAIT",
+    "sellPrice": 17.1,
+    "sellVolume": 906529,
+    "sellMovingWeek": 473603,
+    "sellOrders": 19,
+    "buyPrice": 187.99793814432988,
+    "buyVolume": 196959,
+    "buyMovingWeek": 427388,
+    "buyOrders": 78
+   }
+  },
+  "ENCHANTED_COCOA": {
+   "product_id": "ENCHANTED_COCOA",
+   "sell_summary": [
+    {
+     "amount": 25262,
+     "pricePerUnit": 450.3,
+     "orders": 1
+    },
+    {
+     "amount": 2571,
+     "pricePerUnit": 450.2,
+     "orders": 1
+    },
+    {
+     "amount": 66910,
+     "pricePerUnit": 450.1,
+     "orders": 1
+    }
+   ],
+   "buy_summary": [
+    {
+     "amount": 2845,
+     "pricePerUnit": 486.8,
+     "orders": 3
+    },
+    {
+     "amount": 56327,
+     "pricePerUnit": 486.9,
+     "orders": 2
+    },
+    {
+     "amount": 70899,
+     "pricePerUnit": 487.0,
+     "orders": 1
+    }
+   ],
+   "quick_status": {
+    "productId": "ENCHANTED_COCOA",
+    "sellPrice": 450.3,
+    "sellVolume": 443569,
+    "sellMovingWeek": 61788550,
+    "sellOrders": 9,
+    "buyPrice": 486.95232065564187,
+    "buyVolume": 3547674,
+    "buyMovingWeek": 11861211,
+    "buyOrders": 71
+   }
+  }
+ }
+}
