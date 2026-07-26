@@ -5,9 +5,11 @@ import com.google.gson.JsonParseException;
 
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.EndedAuction;
+import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.model.dto.BazaarDto;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
+import jeff.skyblockflipper.core.model.dto.ItemsDto;
 import jeff.skyblockflipper.core.model.dto.MayorDto;
 
 import java.io.IOException;
@@ -65,6 +67,14 @@ public final class HypixelApi {
 	public List<EndedAuction> fetchEndedAuctions() throws ApiException {
 		EndedAuctionsDto dto = get("skyblock/auctions_ended", EndedAuctionsDto.class);
 		return dto.auctions != null ? dto.auctions : List.of();
+	}
+
+	/**
+	 * Static item definitions, including the fixed NPC sell prices that NPC flips are measured
+	 * against. Only changes with game updates, so it is fetched rarely.
+	 */
+	public ItemCatalog fetchItems() throws ApiException {
+		return get("resources/skyblock/items", ItemsDto.class).toCatalog();
 	}
 
 	/** Current mayor and minister. Drives the Derpy fee multiplier, among other things. */

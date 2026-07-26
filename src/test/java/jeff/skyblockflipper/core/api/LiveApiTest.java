@@ -88,6 +88,24 @@ class LiveApiTest {
 	}
 
 	@Test
+	void itemCatalogParsesIncludingFractionalNpcPrices() throws Exception {
+		// npc_sell_price is fractional for ~60 items (a torch sells for 0.3). Typing it as an
+		// integer throws on the entire payload, not just that item, which would take the whole
+		// catalog down and silently disable NPC flips.
+		var catalog = api.fetchItems();
+
+		assertTrue(catalog.items().size() > 5_000, "only got " + catalog.items().size() + " items");
+
+		long fractional = catalog.items().values().stream()
+				.map(entry -> entry.npcPrice().orElse(null))
+				.filter(price -> price != null && price != Math.floor(price))
+				.count();
+
+		assertTrue(fractional > 0,
+				"expected some sub-coin NPC prices; if this is now zero the field may have changed type");
+	}
+
+	@Test
 	void electionEndpointStillNamesAMayor() throws Exception {
 		MayorInfo mayor = api.fetchMayor();
 
