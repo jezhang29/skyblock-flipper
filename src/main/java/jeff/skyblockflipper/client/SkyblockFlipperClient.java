@@ -50,6 +50,7 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		reloadConfig();
+		LedgerService.load();
 		FlipCommand.register();
 		CandidateFeed.register();
 		FlipHud.register();

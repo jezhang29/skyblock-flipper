@@ -14,10 +14,23 @@ import java.util.List;
 
 /** Renders ranked candidates into chat. */
 public final class CandidateRenderer {
+	/**
+	 * The list the player is currently looking at, so {@code /flip take 2} means the second line on
+	 * their screen. Re-ranking on the way to the ledger would silently log a different flip than
+	 * the one they read and decided to act on.
+	 */
+	private static volatile List<FlipCandidate> lastShown = List.of();
+
 	private CandidateRenderer() {
 	}
 
+	public static List<FlipCandidate> lastShown() {
+		return lastShown;
+	}
+
 	public static void renderList(FabricClientCommandSource source, List<FlipCandidate> candidates, String heading) {
+		lastShown = List.copyOf(candidates);
+
 		if (candidates.isEmpty()) {
 			source.sendFeedback(Chat.prefixed(Component.literal(
 					"No candidates clear the fee stack right now. That is a normal answer.")
