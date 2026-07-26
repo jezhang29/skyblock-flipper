@@ -1,14 +1,20 @@
 package jeff.skyblockflipper.core.api;
 
+import jeff.skyblockflipper.core.config.ScanSettings;
 import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.valuation.FairValueModel;
+import jeff.skyblockflipper.core.valuation.UnderpricedScan;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Background polling loop for the Hypixel endpoints.
@@ -37,17 +43,33 @@ public final class MarketPoller implements AutoCloseable {
 
 	private static final Duration PRUNE_INTERVAL = Duration.ofHours(6);
 
+	/**
+	 * Hypixel regenerates the auction house about once a minute, and an unchanged sweep is skipped
+	 * after one page, so this costs one request when nothing has moved.
+	 */
+	private static final Duration AUCTION_INTERVAL = Duration.ofSeconds(60);
+
+	/**
+	 * Rebuilding valuations means replaying and decoding a couple of days of tape. Item values do
+	 * not move fast enough to justify doing that more often than this.
+	 */
+	private static final Duration VALUATION_INTERVAL = Duration.ofMinutes(10);
+
 	private final HypixelApi api;
 	private final MarketData data;
 	private final SalesTape tape;
+	private final Supplier<ScanSettings> settings;
 	private final Consumer<String> log;
 
 	private ScheduledExecutorService executor;
 
-	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape, Consumer<String> log) {
+	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape,
+			Supplier<ScanSettings> settings, Consumer<String> log) {
 		this.api = api;
 		this.data = data;
 		this.tape = tape;
+		// A supplier rather than a copy: /flip reload then changes what the next sweep does.
+		this.settings = settings;
 		this.log = log;
 	}
 
@@ -68,6 +90,11 @@ public final class MarketPoller implements AutoCloseable {
 		schedule(this::pollMayor, Duration.ofSeconds(4), MAYOR_INTERVAL);
 		schedule(this::pollItems, Duration.ofSeconds(6), ITEMS_INTERVAL);
 		schedule(this::pruneTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
+
+		// Valuation runs first and early: the auction sweep is skipped entirely until there is
+		// something to compare listings against, so there is no point starting it sooner.
+		schedule(this::rebuildValuations, Duration.ofSeconds(10), VALUATION_INTERVAL);
+		schedule(this::scanAuctions, Duration.ofSeconds(30), AUCTION_INTERVAL);
 	}
 
 	public synchronized boolean isRunning() {
@@ -104,6 +131,57 @@ public final class MarketPoller implements AutoCloseable {
 
 	private void pollItems() throws ApiException {
 		data.setCatalog(api.fetchItems());
+	}
+
+	/** Replays the recent tape into a fresh set of medians. */
+	private void rebuildValuations() {
+		ScanSettings config = settings.get();
+		Duration window = Duration.ofDays(config.valuationWindowDays());
+		FairValueModel.Builder builder = FairValueModel.builder(Instant.now(), window);
+
+		try {
+			int read = tape.forEachRecent(config.valuationWindowDays(), builder::add);
+			FairValueModel model = builder.build();
+			data.setValues(model);
+
+			log.accept("Valuations rebuilt from " + read + " taped sales: "
+					+ model.pricedConfigurations() + " item configurations priced");
+		} catch (IOException e) {
+			log.accept("Failed reading the sales tape for valuation: " + e);
+		}
+	}
+
+	/**
+	 * Sweeps live listings for anything below fair value.
+	 *
+	 * <p>Skipped whenever there is nothing to compare against. A sweep costs tens of megabytes, and
+	 * running one with an empty model would spend all of it to learn nothing.
+	 */
+	private void scanAuctions() throws ApiException {
+		ScanSettings config = settings.get();
+
+		if (!config.scanAuctions()) {
+			return;
+		}
+
+		FairValueModel model = data.values();
+
+		if (model.isEmpty()) {
+			return;
+		}
+
+		UnderpricedScan scan = new UnderpricedScan(model, config.minDiscount(), config.maxPrice());
+		OptionalLong updated = api.sweepActiveBins(data.auctionsLastUpdated(), scan);
+
+		if (updated.isEmpty()) {
+			// The house has not changed since the last sweep; that cost one page, not fifty.
+			return;
+		}
+
+		data.setAuctionScan(updated.getAsLong(), scan.results(),
+				scan.listingsSeen() + " listings, " + scan.decoded() + " decoded, "
+						+ scan.rejectedOnExactValue() + " rejected on exact match, "
+						+ scan.results().size() + " under fair value");
 	}
 
 	private void pruneTape() {

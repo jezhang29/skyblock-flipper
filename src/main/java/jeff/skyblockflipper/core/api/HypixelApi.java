@@ -7,6 +7,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
+import jeff.skyblockflipper.core.model.dto.AuctionsDto;
 import jeff.skyblockflipper.core.model.dto.BazaarDto;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
 import jeff.skyblockflipper.core.model.dto.ItemsDto;
@@ -44,6 +45,9 @@ public final class HypixelApi {
 	/** Fallback backoff when a 429 arrives without a usable reset header. */
 	private static final Duration DEFAULT_BACKOFF = Duration.ofSeconds(60);
 
+	/** The house runs to ~51 pages; this is a sanity bound, not a limit anyone should hit. */
+	private static final int MAX_AUCTION_PAGES = 200;
+
 	private final HttpClient http;
 	private final Gson gson = new Gson();
 
@@ -67,6 +71,43 @@ public final class HypixelApi {
 	public List<EndedAuction> fetchEndedAuctions() throws ApiException {
 		EndedAuctionsDto dto = get("skyblock/auctions_ended", EndedAuctionsDto.class);
 		return dto.auctions != null ? dto.auctions : List.of();
+	}
+
+	/**
+	 * Walks every page of the active auction house, handing each buy-it-now listing to
+	 * {@code sink}.
+	 *
+	 * <p>This is by far the most expensive thing the mod does: ~51 pages and roughly 70MB of JSON
+	 * per sweep. Two things keep it reasonable. The listing DTO declares only the six fields that
+	 * matter, so the lore and bidder lists are discarded during parsing rather than after. And the
+	 * sweep is skipped outright when Hypixel reports the same {@code lastUpdated} as last time,
+	 * which it does for a full minute at a stretch.
+	 *
+	 * @return the new {@code lastUpdated}, or empty if the house has not changed since
+	 */
+	public OptionalLong sweepActiveBins(long knownLastUpdated, ListingSink sink) throws ApiException {
+		AuctionsDto first = fetchAuctionPage(0);
+
+		if (first.lastUpdated == knownLastUpdated) {
+			return OptionalLong.empty();
+		}
+
+		first.binListings().forEach(sink::offer);
+
+		// A page count this far out of range means the response is not what we think it is;
+		// walking it anyway would be tens of thousands of requests.
+		int pages = Math.min(first.totalPages, MAX_AUCTION_PAGES);
+
+		for (int page = 1; page < pages; page++) {
+			fetchAuctionPage(page).binListings().forEach(sink::offer);
+		}
+
+		return OptionalLong.of(first.lastUpdated);
+	}
+
+	/** One page of the auction house. Exposed so the shape can be contract-tested for one request. */
+	public AuctionsDto fetchAuctionPage(int page) throws ApiException {
+		return get("skyblock/auctions?page=" + page, AuctionsDto.class);
 	}
 
 	/**

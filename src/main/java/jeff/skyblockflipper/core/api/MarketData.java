@@ -3,9 +3,12 @@ package jeff.skyblockflipper.core.api;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
+import jeff.skyblockflipper.core.valuation.FairValueModel;
+import jeff.skyblockflipper.core.valuation.PricedListing;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -21,6 +24,11 @@ public final class MarketData {
 	private final AtomicReference<ItemCatalog> catalog = new AtomicReference<>(ItemCatalog.empty());
 	private final AtomicReference<Instant> bazaarFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<Instant> salesFetchedAt = new AtomicReference<>(Instant.EPOCH);
+	private final AtomicReference<FairValueModel> values = new AtomicReference<>(FairValueModel.empty());
+	private final AtomicReference<List<PricedListing>> underpriced = new AtomicReference<>(List.of());
+	private final AtomicReference<Instant> auctionsScannedAt = new AtomicReference<>(Instant.EPOCH);
+	private final AtomicReference<String> scanSummary = new AtomicReference<>("");
+	private final AtomicLong auctionsLastUpdated = new AtomicLong();
 	private final AtomicReference<String> lastError = new AtomicReference<>("");
 	private final AtomicLong salesRecorded = new AtomicLong();
 	private final AtomicLong pollFailures = new AtomicLong();
@@ -51,6 +59,47 @@ public final class MarketData {
 
 	public void setCatalog(ItemCatalog value) {
 		catalog.set(value);
+	}
+
+	public FairValueModel values() {
+		return values.get();
+	}
+
+	public void setValues(FairValueModel model) {
+		values.set(model);
+	}
+
+	/** Live listings found below fair value by the last sweep. */
+	public List<PricedListing> underpriced() {
+		return underpriced.get();
+	}
+
+	/**
+	 * @param lastUpdated Hypixel's own stamp for the auction house, so an unchanged house can be
+	 *                    skipped rather than re-downloaded
+	 */
+	public void setAuctionScan(long lastUpdated, List<PricedListing> found, String summary) {
+		auctionsLastUpdated.set(lastUpdated);
+		underpriced.set(List.copyOf(found));
+		scanSummary.set(summary);
+		auctionsScannedAt.set(Instant.now());
+	}
+
+	public long auctionsLastUpdated() {
+		return auctionsLastUpdated.get();
+	}
+
+	public Duration auctionsAge() {
+		return age(auctionsScannedAt.get());
+	}
+
+	public boolean hasScannedAuctions() {
+		return !auctionsScannedAt.get().equals(Instant.EPOCH);
+	}
+
+	/** One line describing what the last sweep did, for {@code /flip status}. */
+	public String scanSummary() {
+		return scanSummary.get();
 	}
 
 	public MayorInfo mayor() {

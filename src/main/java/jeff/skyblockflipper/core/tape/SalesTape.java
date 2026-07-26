@@ -130,6 +130,35 @@ public final class SalesTape {
 		return out;
 	}
 
+	/**
+	 * Streams the last {@code days} days of sales through {@code consumer}, oldest day first.
+	 *
+	 * <p>Streamed rather than returned: a busy couple of days is a few hundred thousand sales
+	 * carrying a kilobyte and a half of blob each, so the caller that only wants a median per item
+	 * should never have to hold them all at once.
+	 *
+	 * @return how many sales were read
+	 */
+	public int forEachRecent(int days, java.util.function.Consumer<EndedAuction> consumer) throws IOException {
+		if (!Files.isDirectory(directory)) {
+			return 0;
+		}
+
+		LocalDate cutoff = LocalDate.now(ZoneOffset.UTC).minusDays(Math.max(0, days - 1));
+		int read = 0;
+
+		try (Stream<Path> files = Files.list(directory)) {
+			for (Path file : files.filter(p -> onOrAfter(p, cutoff)).sorted().toList()) {
+				for (EndedAuction sale : readFile(file)) {
+					consumer.accept(sale);
+					read++;
+				}
+			}
+		}
+
+		return read;
+	}
+
 	/** Deletes day files older than the retention window. */
 	public int prune() throws IOException {
 		if (!Files.isDirectory(directory)) {
@@ -192,6 +221,22 @@ public final class SalesTape {
 		}
 
 		return out;
+	}
+
+	/** True for our own day files dated on or after {@code cutoff}; anything else is skipped. */
+	private static boolean onOrAfter(Path file, LocalDate cutoff) {
+		String name = file.getFileName().toString();
+
+		if (!name.endsWith(SUFFIX)) {
+			return false;
+		}
+
+		try {
+			return !LocalDate.parse(name.substring(0, name.length() - SUFFIX.length()), DAY)
+					.isBefore(cutoff);
+		} catch (java.time.format.DateTimeParseException e) {
+			return false;
+		}
 	}
 
 	private Path fileFor(Instant when) {
