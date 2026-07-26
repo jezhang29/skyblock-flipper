@@ -1,17 +1,27 @@
 package jeff.skyblockflipper.client.command;
 
+import com.mojang.brigadier.arguments.DoubleArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.LongArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
+import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
+import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.text.Coins;
+
+import java.io.IOException;
 
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -64,6 +74,26 @@ public final class FlipCommand {
 							showConfig(ctx.getSource());
 							return 1;
 						}))
+				.then(ClientCommands.literal("take")
+						.then(ClientCommands.argument("rank", IntegerArgumentType.integer(1))
+								.executes(ctx -> take(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "rank")))))
+				.then(ClientCommands.literal("close")
+						.then(ClientCommands.argument("id", StringArgumentType.word())
+								.then(ClientCommands.argument("units", LongArgumentType.longArg(0))
+										.then(ClientCommands.argument("price", DoubleArgumentType.doubleArg(0))
+												.executes(ctx -> close(
+														ctx.getSource(),
+														StringArgumentType.getString(ctx, "id"),
+														LongArgumentType.getLong(ctx, "units"),
+														DoubleArgumentType.getDouble(ctx, "price")))))))
+				.then(ClientCommands.literal("abandon")
+						.then(ClientCommands.argument("id", StringArgumentType.word())
+								.executes(ctx -> abandon(ctx.getSource(), StringArgumentType.getString(ctx, "id")))))
+				.then(ClientCommands.literal("ledger")
+						.executes(ctx -> {
+							showLedger(ctx.getSource());
+							return 1;
+						}))
 				.then(ClientCommands.literal("hud")
 						.executes(ctx -> {
 							toggleHud(ctx.getSource());
@@ -105,11 +135,106 @@ public final class FlipCommand {
 		List<FlipCandidate> candidates = CandidateFeed.rank(kind, DEFAULT_LIMIT);
 
 		CandidateRenderer.renderList(source, candidates, heading);
+		LedgerRenderer.renderCaptureWarning(source, LedgerService.ledger().stats(kind), kind);
 
 		if (data.mayor().isDerpy()) {
 			source.sendFeedback(Component.literal("Derpy is mayor: auction fees are 4x. Bazaar is unaffected.")
 					.withStyle(ChatFormatting.RED));
 		}
+	}
+
+	/** Records the flip on the line the player is looking at, at the numbers they saw. */
+	private static int take(FabricClientCommandSource source, int rank) {
+		List<FlipCandidate> shown = CandidateRenderer.lastShown();
+
+		if (shown.isEmpty()) {
+			source.sendError(Component.literal("Nothing to take - run /flip first.")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		if (rank > shown.size()) {
+			source.sendError(Component.literal("That list only had " + shown.size() + " entries.")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		FlipCandidate candidate = shown.get(rank - 1);
+
+		try {
+			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
+
+			source.sendFeedback(Chat.prefixed(Component.literal("Took " + entry.displayName() + " as ")
+					.withStyle(ChatFormatting.WHITE)
+					.append(Component.literal(entry.id()).withStyle(ChatFormatting.YELLOW))));
+			source.sendFeedback(Component.literal("  quoted " + Coins.format(candidate.totalNetProfit())
+					+ " on " + candidate.units() + " units. Close it with /flip close " + entry.id()
+					+ " <units sold> <sell price>").withStyle(ChatFormatting.DARK_GRAY));
+			return 1;
+		} catch (IOException e) {
+			return ledgerWriteFailed(source, e);
+		}
+	}
+
+	private static int close(FabricClientCommandSource source, String id, long unitsSold, double unitSellPrice) {
+		try {
+			// Fees come from live config so the realized side is computed on the same basis the
+			// quote used; otherwise the capture rate would measure the fee model, not the market.
+			return LedgerService.ledger()
+					.close(id, unitsSold, unitSellPrice, CandidateFeed.context().fees())
+					.map(entry -> {
+						double realized = entry.realizedTotal();
+						double quoted = entry.quotedOnFilled();
+
+						source.sendFeedback(Chat.prefixed(Component.literal("Closed " + entry.displayName())
+								.withStyle(ChatFormatting.WHITE)));
+						source.sendFeedback(Component.literal("  realized " + Coins.format(realized)
+								+ " against " + Coins.format(quoted) + " quoted on " + entry.unitsSold()
+								+ "/" + entry.units() + " units")
+								.withStyle(realized >= quoted ? ChatFormatting.GREEN : ChatFormatting.YELLOW));
+						return 1;
+					})
+					.orElseGet(() -> {
+						source.sendError(Component.literal("No open position with id " + id + ".")
+								.withStyle(ChatFormatting.RED));
+						return 0;
+					});
+		} catch (IOException e) {
+			return ledgerWriteFailed(source, e);
+		}
+	}
+
+	private static int abandon(FabricClientCommandSource source, String id) {
+		try {
+			return LedgerService.ledger().abandon(id)
+					.map(entry -> {
+						source.sendFeedback(Chat.prefixed(Component.literal(
+								"Abandoned " + entry.displayName() + " - counted against the fill rate.")
+								.withStyle(ChatFormatting.GRAY)));
+						return 1;
+					})
+					.orElseGet(() -> {
+						source.sendError(Component.literal("No open position with id " + id + ".")
+								.withStyle(ChatFormatting.RED));
+						return 0;
+					});
+		} catch (IOException e) {
+			return ledgerWriteFailed(source, e);
+		}
+	}
+
+	private static void showLedger(FabricClientCommandSource source) {
+		LedgerRenderer.renderOpen(source,
+				LedgerService.ledger().openEntries(),
+				LedgerService.ledger().committedCapital());
+		LedgerRenderer.renderStats(source, LedgerService.ledger().stats(null));
+	}
+
+	private static int ledgerWriteFailed(FabricClientCommandSource source, IOException e) {
+		SkyblockFlipper.LOGGER.error("Ledger write failed", e);
+		source.sendError(Component.literal("Could not write the ledger - see the log.")
+				.withStyle(ChatFormatting.RED));
+		return 0;
 	}
 
 	private static void toggleHud(FabricClientCommandSource source) {
