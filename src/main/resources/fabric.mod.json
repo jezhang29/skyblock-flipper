@@ -1,0 +1,31 @@
+{
+	"schemaVersion": 1,
+	"id": "skyblock-flipper",
+	"version": "${version}",
+	"name": "Skyblock Flipper",
+	"description": "Finds and ranks profitable auction, bazaar and crafting flips on Hypixel Skyblock. Advisory only: it shows you numbers, it never clicks for you.",
+	"authors": [
+		"jeff"
+	],
+	"contact": {},
+	"license": "CC0-1.0",
+	"icon": "assets/skyblock-flipper/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"jeff.skyblockflipper.client.SkyblockFlipperClient"
+		]
+	},
+	"mixins": [
+		{
+			"config": "skyblock-flipper.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
