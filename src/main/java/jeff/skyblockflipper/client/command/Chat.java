@@ -1,5 +1,7 @@
 package jeff.skyblockflipper.client.command;
 
+import jeff.skyblockflipper.core.text.Coins;
+
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 
@@ -12,16 +14,8 @@ final class Chat {
 		return Component.literal("[Flipper] ").withStyle(ChatFormatting.GOLD).append(message);
 	}
 
-	/** Renders coin amounts the way Skyblock players read them: 12.5M, 340k, 900. */
+	/** Abbreviation lives in {@code core} so the HUD and chat never disagree about a number. */
 	static String coins(long amount) {
-		if (amount >= 1_000_000_000L) {
-			return String.format("%.2fB", amount / 1_000_000_000.0d);
-		} else if (amount >= 1_000_000L) {
-			return String.format("%.2fM", amount / 1_000_000.0d);
-		} else if (amount >= 1_000L) {
-			return String.format("%.1fk", amount / 1_000.0d);
-		}
-
-		return String.valueOf(amount);
+		return Coins.format(amount);
 	}
 }

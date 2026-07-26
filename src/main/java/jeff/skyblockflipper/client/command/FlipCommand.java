@@ -2,6 +2,7 @@ package jeff.skyblockflipper.client.command;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
+import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.core.api.MarketData;
@@ -10,8 +11,6 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
-import jeff.skyblockflipper.core.strategy.StrategyContext;
-import jeff.skyblockflipper.core.strategy.StrategyEngine;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -30,8 +29,6 @@ import java.util.List;
  */
 public final class FlipCommand {
 	private static final int DEFAULT_LIMIT = 10;
-
-	private static final StrategyEngine ENGINE = StrategyEngine.withDefaults();
 
 	private FlipCommand() {
 	}
@@ -67,11 +64,18 @@ public final class FlipCommand {
 							showConfig(ctx.getSource());
 							return 1;
 						}))
+				.then(ClientCommands.literal("hud")
+						.executes(ctx -> {
+							toggleHud(ctx.getSource());
+							return 1;
+						}))
 				.then(ClientCommands.literal("reload")
 						.executes(ctx -> {
 							if (SkyblockFlipperClient.reloadConfig()) {
 								// Picks up a flipped pollingEnabled without a game restart.
 								MarketDataService.restart();
+								// A new bankroll changes the ranking without the book moving.
+								CandidateFeed.invalidate();
 								ctx.getSource().sendFeedback(Chat.prefixed(
 										Component.literal("Config reloaded.").withStyle(ChatFormatting.GREEN)));
 								return 1;
@@ -96,30 +100,30 @@ public final class FlipCommand {
 			return;
 		}
 
-		StrategyContext context = context(data);
-
-		List<FlipCandidate> candidates = kind == null
-				? ENGINE.rank(context, DEFAULT_LIMIT)
-				: ENGINE.rank(context, kind, DEFAULT_LIMIT);
+		// Ranked on demand rather than read from the HUD's cache: someone who just typed the
+		// command is asking about the book as it is now.
+		List<FlipCandidate> candidates = CandidateFeed.rank(kind, DEFAULT_LIMIT);
 
 		CandidateRenderer.renderList(source, candidates, heading);
 
-		if (context.fees().derpy()) {
+		if (data.mayor().isDerpy()) {
 			source.sendFeedback(Component.literal("Derpy is mayor: auction fees are 4x. Bazaar is unaffected.")
 					.withStyle(ChatFormatting.RED));
 		}
 	}
 
-	private static StrategyContext context(MarketData data) {
+	private static void toggleHud(FabricClientCommandSource source) {
 		FlipperConfig config = SkyblockFlipperClient.config();
+		config.hudEnabled = !config.hudEnabled;
 
-		// Read through config() at use time rather than caching, so /flip reload takes effect.
-		return new StrategyContext(
-				data.bazaar(),
-				data.catalog(),
-				new Fees(config.bazaarFlipperLevel, data.mayor().isDerpy()),
-				config.bankroll,
-				config.minProfitPerFlip);
+		if (!SkyblockFlipperClient.saveConfig()) {
+			source.sendError(Component.literal("HUD toggled for this session, but the config could not be saved.")
+					.withStyle(ChatFormatting.RED));
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal("HUD " + (config.hudEnabled ? "on" : "off"))
+				.withStyle(config.hudEnabled ? ChatFormatting.GREEN : ChatFormatting.GRAY)));
 	}
 
 	private static void showStatus(FabricClientCommandSource source) {
@@ -169,7 +173,9 @@ public final class FlipCommand {
 		line(source, "bazaar flipper level", String.valueOf(config.bazaarFlipperLevel));
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
 		line(source, "min confidence", String.format("%.2f", config.minConfidence));
-		line(source, "hud enabled", String.valueOf(config.hudEnabled));
+		line(source, "hud", config.hudEnabled
+				? config.hudLines + " lines, " + config.anchor() + " +" + config.hudMarginX + "," + config.hudMarginY
+				: "off");
 		line(source, "polling enabled", String.valueOf(config.pollingEnabled));
 	}
 

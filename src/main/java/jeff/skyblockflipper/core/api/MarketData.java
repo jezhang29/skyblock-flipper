@@ -24,6 +24,7 @@ public final class MarketData {
 	private final AtomicReference<String> lastError = new AtomicReference<>("");
 	private final AtomicLong salesRecorded = new AtomicLong();
 	private final AtomicLong pollFailures = new AtomicLong();
+	private final AtomicLong bazaarRevision = new AtomicLong();
 
 	public BazaarSnapshot bazaar() {
 		return bazaar.get();
@@ -32,6 +33,16 @@ public final class MarketData {
 	public void setBazaar(BazaarSnapshot snapshot) {
 		bazaar.set(snapshot);
 		bazaarFetchedAt.set(Instant.now());
+		bazaarRevision.incrementAndGet();
+	}
+
+	/**
+	 * Bumped on every book replacement. Readers that cache derived work (the HUD ranks the whole
+	 * market) compare this instead of re-deriving on a timer: candidates cannot change while the
+	 * book has not, so a timer either recomputes identical results or shows stale ones.
+	 */
+	public long bazaarRevision() {
+		return bazaarRevision.get();
 	}
 
 	public ItemCatalog catalog() {
