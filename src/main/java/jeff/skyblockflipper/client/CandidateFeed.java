@@ -47,9 +47,11 @@ public final class CandidateFeed {
 		return new StrategyContext(
 				data.bazaar(),
 				data.catalog(),
+				data.underpriced(),
 				new Fees(config.bazaarFlipperLevel, data.mayor().isDerpy()),
 				config.bankroll,
-				config.minProfitPerFlip);
+				config.minProfitPerFlip,
+				config.minConfidence);
 	}
 
 	/** Fresh ranking across every strategy, or a single one when {@code kind} is non-null. */

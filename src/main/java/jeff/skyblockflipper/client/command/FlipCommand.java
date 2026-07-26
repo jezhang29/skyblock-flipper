@@ -64,6 +64,11 @@ public final class FlipCommand {
 							showTop(ctx.getSource(), StrategyKind.NPC_FLIP, "Bazaar prices below NPC buy price");
 							return 1;
 						}))
+				.then(ClientCommands.literal("snipe")
+						.executes(ctx -> {
+							showSnipes(ctx.getSource());
+							return 1;
+						}))
 				.then(ClientCommands.literal("status")
 						.executes(ctx -> {
 							showStatus(ctx.getSource());
@@ -141,6 +146,38 @@ public final class FlipCommand {
 			source.sendFeedback(Component.literal("Derpy is mayor: auction fees are 4x. Bazaar is unaffected.")
 					.withStyle(ChatFormatting.RED));
 		}
+	}
+
+	/**
+	 * Auction flips get their own explanation of why the list is empty, because there are several
+	 * quite different reasons and "nothing found" reads like a broken feature for all of them.
+	 */
+	private static void showSnipes(FabricClientCommandSource source) {
+		FlipperConfig config = SkyblockFlipperClient.config();
+		MarketData data = MarketDataService.data();
+
+		if (!config.scanAuctions) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Auction scanning is off - set scanAuctions in the config to enable it.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		if (data.values().isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"No valuations yet. Item values are learned from realized sales, so this needs "
+							+ "the game to have been running a while.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		if (!data.hasScannedAuctions()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"First auction sweep has not finished yet.").withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		showTop(source, StrategyKind.AUCTION_VALUE, "Listings below fair value");
 	}
 
 	/** Records the flip on the line the player is looking at, at the numbers they saw. */
@@ -273,6 +310,21 @@ public final class FlipCommand {
 
 		line(source, "sales recorded", data.salesRecorded() + " this session ("
 				+ describeAge(data.salesAge()) + " ago)");
+
+		line(source, "valuations", data.values().isEmpty()
+				? "none yet (learned from realized sales)"
+				: data.values().pricedConfigurations() + " item configurations from "
+						+ data.values().salesConsidered() + " sales");
+
+		String sweep = "disabled";
+
+		if (SkyblockFlipperClient.config().scanAuctions) {
+			sweep = data.hasScannedAuctions()
+					? data.scanSummary() + " (" + describeAge(data.auctionsAge()) + " ago)"
+					: "waiting for first sweep";
+		}
+
+		line(source, "auction sweep", sweep);
 
 		MayorInfo mayor = data.mayor();
 		if (mayor.isKnown()) {

@@ -17,8 +17,6 @@ import java.nio.file.Path;
  * up itself) and start or stop the loop.
  */
 public final class MarketDataService {
-	private static final int TAPE_RETENTION_DAYS = 30;
-
 	private static final MarketData DATA = new MarketData();
 	private static final HypixelApi API = new HypixelApi();
 
@@ -56,8 +54,11 @@ public final class MarketDataService {
 			return;
 		}
 
-		tape = new SalesTape(tapeDirectory(), TAPE_RETENTION_DAYS);
-		poller = new MarketPoller(API, DATA, tape, SkyblockFlipper.LOGGER::info);
+		tape = new SalesTape(tapeDirectory(), SkyblockFlipperClient.config().tapeRetentionDays);
+		// The settings are read through a supplier so /flip reload reaches the next sweep without
+		// restarting the poller.
+		poller = new MarketPoller(API, DATA, tape,
+				() -> SkyblockFlipperClient.config().scanSettings(), SkyblockFlipper.LOGGER::info);
 		poller.start();
 
 		SkyblockFlipper.LOGGER.info("Market poller started; sales tape at {}", tapeDirectory());

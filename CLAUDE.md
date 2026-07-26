@@ -56,6 +56,12 @@ Two packages with a hard boundary between them:
 - **`client`** — everything that touches the game: the entrypoint, commands, HUD, mixins.
   Owns the wiring that `core` refuses to do.
 
+Inside `core`: `api` (HTTP client, poller, shared `MarketData`), `model` + `model/dto` (wire
+shapes and the domain types they translate into), `nbt` + `item` (blob parsing and the decoded
+attributes that move a price), `tape` (realized sales on disk), `valuation` (what items are
+worth, learned from the tape), `pricing` (the fee stack), `strategy` (candidates), `ledger`
+(what the flips actually did), `config`, `text`.
+
 `SkyblockFlipperClient` holds the single mutable `FlipperConfig` instance behind `config()`.
 Config is re-read from disk by `/flip reload`, so **do not cache config field values** — read
 through `SkyblockFlipperClient.config()` at use time or a reload silently won't take effect.
@@ -69,6 +75,22 @@ break downstream math. Config lives at `<.minecraft>/config/skyblock-flipper/con
 `FlipCommand` registers `/flip` through Fabric's `ClientCommandRegistrationCallback`, so it is
 intercepted client-side and never reaches Hypixel. New strategies graft subcommands onto that
 existing tree.
+
+`CandidateFeed` is the only place market state becomes ranked candidates. Commands rank on
+demand; the HUD reads a cache rebuilt only when `MarketData.bazaarRevision()` moves, because
+ranking ~2000 books per frame to draw three lines is waste and a refresh timer would either
+recompute identical results or show stale ones. Config edits that change a ranking without
+changing the book call `CandidateFeed.invalidate()`.
+
+The HUD (`client/hud/FlipHud`) renders through 26.2's `GuiGraphicsExtractor`, not `GuiGraphics`:
+elements implement `HudElement.extractRenderState`. It is attached before
+`VanillaHudElements.CHAT`, which also makes F1 hide it.
+
+`Ledger` is the mod's only feedback loop: flips taken by hand, closed by hand, reported as a
+capture rate (realized over quoted, on filled units only) and a fill rate. Quotes freeze at open
+time — never re-derive them from the current book, since the book has already moved in whatever
+direction made the fill worse. Closing applies fees on the same basis the quote used, dispatched
+by strategy, so the two sides stay comparable.
 
 Mixins: `skyblock-flipper.mixins.json` is wired up but empty, package
 `jeff.skyblockflipper.client.mixin` (not created yet), `compatibilityLevel: JAVA_25`,
@@ -92,7 +114,25 @@ Two verified traps, both of which produce plausible-looking wrong numbers rather
    `components` compound. Parse it as a generic NBT tree — **never build an `ItemStack` from
    it**, since no vanilla codec reads a blob that is half legacy tag, half components.
    `components["minecraft:tooltip_style"]` is `hypixel_skyblock:<rarity>`, which gives rarity
-   without parsing lore.
+   without parsing lore — **except when it is absent**, which measured at 4 of 154 live sales.
+   Those items state their rarity only in the last lore line, so `ItemDecoder` falls back to
+   parsing it. Two more decode traps: stars live under `upgrade_level` *or* the legacy
+   `dungeon_item_level`, and every pet shares the item id `PET` with its identity in a JSON
+   string under `ExtraAttributes.petInfo`.
+
+`/v2/skyblock/auctions` is paged (~51 pages, ~70MB per full sweep) and is the mod's most
+expensive operation by far. Three things keep it affordable, and all three should survive any
+rework: `AuctionsDto` declares only the six fields needed so Gson discards the rest while
+parsing; the sweep is skipped when `lastUpdated` is unchanged, which it is for a minute at a
+time; and listings are pruned on name and rarity — both readable without touching `item_bytes` —
+before anything is decoded. A coarse hit is never enough to recommend a purchase: it must be
+re-checked against the exact decoded signature, or a bare item gets priced off sales of the
+five-star recombobulated version.
+
+Valuation trains on `auctions_ended` only, never on active listings: active listings are
+contaminated by exactly the mispricings the model is hunting, so fitting to them teaches it to
+agree with the mistake. Buy-it-now sales only, and medians rather than means — one fat-fingered
+listing moves a mean enough to make the whole market look cheap.
 
 `/v2/resources/skyblock/items` carries `upgrade_costs` (exact per-star essence costs) and
 `recipes`, so star pricing and craft flips should be computed deterministically from that data

@@ -3,10 +3,12 @@ package jeff.skyblockflipper.core.api;
 import jeff.skyblockflipper.core.item.DecodedItem;
 import jeff.skyblockflipper.core.item.ItemDecoder;
 import jeff.skyblockflipper.core.item.Rarity;
+import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.MayorInfo;
+import jeff.skyblockflipper.core.model.dto.AuctionsDto;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -131,6 +133,31 @@ class LiveApiTest {
 
 		assertTrue(fractional > 0,
 				"expected some sub-coin NPC prices; if this is now zero the field may have changed type");
+	}
+
+	@Test
+	void activeAuctionPagesStillCarryPricedBinListings() throws Exception {
+		// One page, not a sweep: a full sweep is ~51 pages and 70MB, which is not a reasonable
+		// thing to spend on a contract check. Page 0 proves the shape and the paging metadata.
+		AuctionsDto page = api.fetchAuctionPage(0);
+
+		assertTrue(page.totalPages > 1, "expected a paged response, got " + page.totalPages);
+		assertTrue(page.lastUpdated > 0L, "no lastUpdated stamp - sweeps could not be skipped");
+
+		List<ActiveListing> bins = page.binListings();
+		assertFalse(bins.isEmpty(), "no buy-it-now listings on page 0");
+
+		for (ActiveListing listing : bins) {
+			// BIN prices arrive as starting_bid; a zero here would make everything look free.
+			assertTrue(listing.price() > 0L, listing.itemName() + " has no price");
+		}
+
+		// The name and rarity are what the sweep prunes on without decoding anything, so they
+		// have to be present and meaningful on the listing itself.
+		assertTrue(bins.stream().anyMatch(listing -> listing.rarity() != Rarity.UNKNOWN),
+				"no listing carried a readable tier");
+		assertTrue(ItemDecoder.decode(bins.getFirst().itemBytes()).isPresent(),
+				"a live listing's item_bytes did not decode");
 	}
 
 	@Test
