@@ -32,6 +32,9 @@ public final class MarketPoller implements AutoCloseable {
 	/** Elections move on the order of days. */
 	private static final Duration MAYOR_INTERVAL = Duration.ofMinutes(10);
 
+	/** Item definitions only change with game updates. */
+	private static final Duration ITEMS_INTERVAL = Duration.ofHours(6);
+
 	private static final Duration PRUNE_INTERVAL = Duration.ofHours(6);
 
 	private final HypixelApi api;
@@ -63,6 +66,7 @@ public final class MarketPoller implements AutoCloseable {
 		schedule(this::pollBazaar, Duration.ZERO, BAZAAR_INTERVAL);
 		schedule(this::pollSales, Duration.ofSeconds(2), SALES_INTERVAL);
 		schedule(this::pollMayor, Duration.ofSeconds(4), MAYOR_INTERVAL);
+		schedule(this::pollItems, Duration.ofSeconds(6), ITEMS_INTERVAL);
 		schedule(this::pruneTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
 	}
 
@@ -96,6 +100,10 @@ public final class MarketPoller implements AutoCloseable {
 
 	private void pollMayor() throws ApiException {
 		data.setMayor(api.fetchMayor());
+	}
+
+	private void pollItems() throws ApiException {
+		data.setCatalog(api.fetchItems());
 	}
 
 	private void pruneTape() {

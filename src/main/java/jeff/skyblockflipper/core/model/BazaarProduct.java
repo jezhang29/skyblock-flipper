@@ -86,6 +86,31 @@ public record BazaarProduct(
 		return Math.min(movingWeek.instantBought(), movingWeek.instantSold());
 	}
 
+	/**
+	 * Total resting orders across the returned depth of one side.
+	 *
+	 * <p>Use this rather than the {@code orders} count on the top level to judge how manipulable a
+	 * book is: a single price level normally holds one to three orders even on deep, healthy
+	 * markets, so thresholding on the top level alone rejects almost everything.
+	 */
+	public static int totalOrders(List<OrderLevel> side) {
+		int total = 0;
+
+		for (OrderLevel level : side) {
+			total += level.orders();
+		}
+
+		return total;
+	}
+
+	public int sellOfferCount() {
+		return totalOrders(sellOffers);
+	}
+
+	public int buyOrderCount() {
+		return totalOrders(buyOrders);
+	}
+
 	private static OptionalDouble best(List<OrderLevel> side) {
 		return side.isEmpty() ? OptionalDouble.empty() : OptionalDouble.of(side.getFirst().pricePerUnit());
 	}

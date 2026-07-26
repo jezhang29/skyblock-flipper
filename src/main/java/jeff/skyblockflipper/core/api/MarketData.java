@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.core.api;
 
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 
 import java.time.Duration;
@@ -17,6 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class MarketData {
 	private final AtomicReference<BazaarSnapshot> bazaar = new AtomicReference<>(BazaarSnapshot.empty());
 	private final AtomicReference<MayorInfo> mayor = new AtomicReference<>(MayorInfo.unknown());
+	private final AtomicReference<ItemCatalog> catalog = new AtomicReference<>(ItemCatalog.empty());
 	private final AtomicReference<Instant> bazaarFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<Instant> salesFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<String> lastError = new AtomicReference<>("");
@@ -30,6 +32,14 @@ public final class MarketData {
 	public void setBazaar(BazaarSnapshot snapshot) {
 		bazaar.set(snapshot);
 		bazaarFetchedAt.set(Instant.now());
+	}
+
+	public ItemCatalog catalog() {
+		return catalog.get();
+	}
+
+	public void setCatalog(ItemCatalog value) {
+		catalog.set(value);
 	}
 
 	public MayorInfo mayor() {
