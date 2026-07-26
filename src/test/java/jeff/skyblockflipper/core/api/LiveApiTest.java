@@ -1,0 +1,97 @@
+package jeff.skyblockflipper.core.api;
+
+import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.EndedAuction;
+import jeff.skyblockflipper.core.model.MayorInfo;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+
+import java.util.Base64;
+import java.util.List;
+import java.util.zip.GZIPInputStream;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Contract tests against the real Hypixel API. Run with {@code ./gradlew test -PliveApi}.
+ *
+ * <p>Disabled by default on purpose. These assert things about <em>Hypixel's</em> behaviour rather
+ * than ours, so a network outage or an API hiccup must not be able to fail an ordinary build. The
+ * fixture-based tests cover our own code and always run.
+ *
+ * <p>What these are for: catching the day Hypixel renames a field, reorders an order book, or
+ * changes the item blob format. All three would otherwise show up as quietly wrong prices.
+ */
+@EnabledIfSystemProperty(named = "skyblockflipper.liveApi", matches = "true")
+class LiveApiTest {
+	private final HypixelApi api = new HypixelApi();
+
+	@Test
+	void bazaarSidesAreStillInverted() throws Exception {
+		BazaarSnapshot snapshot = api.fetchBazaar();
+
+		assertFalse(snapshot.isEmpty());
+		assertTrue(snapshot.products().size() > 1_000,
+				"expected the full product list, got " + snapshot.products().size());
+
+		int checked = 0;
+
+		for (BazaarProduct product : snapshot.products().values()) {
+			if (product.instantBuyPrice().isEmpty() || product.instantSellPrice().isEmpty()) {
+				continue;
+			}
+
+			// If Hypixel ever swaps the meaning of buy_summary and sell_summary, this inverts
+			// across the whole book at once and every spread in the mod silently flips sign.
+			assertTrue(product.instantBuyPrice().getAsDouble() > product.instantSellPrice().getAsDouble(),
+					product.productId() + " has ask below bid: the two sides may have been swapped");
+			checked++;
+		}
+
+		assertTrue(checked > 500, "only validated " + checked + " books");
+	}
+
+	@Test
+	void orderBooksStillArriveBestPriceFirst() throws Exception {
+		BazaarProduct product = api.fetchBazaar().product("ENCHANTED_DIAMOND").orElseThrow();
+
+		// Asks ascend, bids descend. Reversed sorting would make getFirst() the *worst* price.
+		assertTrue(product.sellOffers().get(0).pricePerUnit() <= product.sellOffers().get(1).pricePerUnit());
+		assertTrue(product.buyOrders().get(0).pricePerUnit() >= product.buyOrders().get(1).pricePerUnit());
+	}
+
+	@Test
+	void endedAuctionsStillCarryDecodableItemBytes() throws Exception {
+		List<EndedAuction> sales = api.fetchEndedAuctions();
+
+		assertFalse(sales.isEmpty());
+
+		EndedAuction sale = sales.getFirst();
+		assertNotNull(sale.auctionId());
+		assertNotNull(sale.itemBytes());
+
+		// Still base64 of gzipped NBT after the 26.2 migration. The 0x1f8b magic is the check
+		// that matters: a format change here breaks all valuation work downstream.
+		byte[] decoded = Base64.getDecoder().decode(sale.itemBytes());
+		assertTrue((decoded[0] & 0xFF) == 0x1F && (decoded[1] & 0xFF) == 0x8B,
+				"item_bytes is no longer gzipped NBT");
+
+		try (var in = new GZIPInputStream(new java.io.ByteArrayInputStream(decoded))) {
+			byte[] head = in.readNBytes(4);
+			// A root TAG_Compound (0x0A) with an empty name, then the "i" item list.
+			assertTrue(head[0] == 0x0A, "unexpected NBT root tag " + head[0]);
+		}
+	}
+
+	@Test
+	void electionEndpointStillNamesAMayor() throws Exception {
+		MayorInfo mayor = api.fetchMayor();
+
+		assertTrue(mayor.isKnown());
+		assertFalse(mayor.name().isBlank());
+	}
+}

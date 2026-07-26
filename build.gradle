@@ -7,6 +7,9 @@ version = project.mod_version
 group = project.maven_group
 
 repositories {
+	// For test-only dependencies. Loom supplies the Minecraft and Fabric repositories itself.
+	mavenCentral()
+
 	// Add repositories to retrieve artifacts from in here.
 	// You should only use this when depending on other mods because
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
@@ -21,6 +24,26 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Tests cover the `core` package only, which by design has no Minecraft on its classpath.
+	testImplementation platform("org.junit:junit-bom:5.11.4")
+	testImplementation "org.junit.jupiter:junit-jupiter"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+	useJUnitPlatform()
+
+	// Tests that hit the live Hypixel API are opt-in: `./gradlew test -PliveApi`.
+	// They verify Hypixel's response shape rather than our code, so they must never be able
+	// to fail a normal build when the network is down or the API is having a bad day.
+	if (project.hasProperty("liveApi")) {
+		systemProperty "skyblockflipper.liveApi", "true"
+	}
+
+	testLogging {
+		events "passed", "skipped", "failed"
+	}
 }
 
 processResources {

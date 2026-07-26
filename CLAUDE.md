@@ -10,9 +10,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./gradlew clean build    # after changing anything in gradle.properties
 ```
 
-There is no `src/test` yet, so `./gradlew build` runs an empty `test` task. When adding tests,
-put them under `src/test/java` — see the `core` rule below for what is testable. Single test:
-`./gradlew test --tests 'jeff.skyblockflipper.core.*'`.
+```bash
+./gradlew test           # JUnit 5, offline only — fixtures under src/test/resources
+./gradlew test -PliveApi # also runs LiveApiTest against the real Hypixel API
+```
+
+Tests live in `src/test/java` and cover `core` only — see the `core` rule below for why that
+is the testable half. Single test: `./gradlew test --tests '*SalesTapeTest'`.
+
+**`LiveApiTest` is opt-in and must stay that way.** It asserts things about *Hypixel's*
+behaviour (field names, order-book sort order, `item_bytes` still being gzipped NBT), so a
+network outage or an API hiccup would otherwise fail an ordinary build. Run it when something
+smells wrong about the numbers, or after a Skyblock update. Everything else runs offline from
+trimmed real captures in `src/test/resources`, so `./gradlew build` never touches the network.
 
 Requires JDK 25. The Gradle toolchain pins this, so the build does not use whatever `java` is
 on PATH, but `runClient` still needs a JDK 25 available for Gradle to find.
