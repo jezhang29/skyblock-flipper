@@ -5,6 +5,7 @@ import jeff.skyblockflipper.client.command.FlipCommand;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
@@ -38,6 +39,11 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		reloadConfig();
 		FlipCommand.register();
+		MarketDataService.start();
+
+		// Daemon poller threads would die with the JVM anyway; this just makes shutdown orderly
+		// so an in-flight tape write is not cut off mid-line.
+		ClientLifecycleEvents.CLIENT_STOPPING.register(client -> MarketDataService.stop());
 
 		SkyblockFlipper.LOGGER.info("Skyblock Flipper ready. Run /flip in game.");
 	}
