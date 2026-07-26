@@ -48,6 +48,16 @@ public final class FlipperConfig {
 	/** Render the top-candidates HUD overlay. */
 	public boolean hudEnabled = true;
 
+	/** How many candidates the HUD lists. Kept short; the full list is what {@code /flip} is for. */
+	public int hudLines = 3;
+
+	/** Corner the HUD hangs from: TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT or BOTTOM_RIGHT. */
+	public String hudAnchor = HudAnchor.TOP_LEFT.name();
+
+	/** Distance from the anchored corner, in scaled GUI pixels. */
+	public int hudMarginX = 4;
+	public int hudMarginY = 4;
+
 	/** Poll the Hypixel API. Turning this off freezes all market data. */
 	public boolean pollingEnabled = true;
 
@@ -75,12 +85,23 @@ public final class FlipperConfig {
 		}
 	}
 
+	/** Resolved once per frame by the HUD, so parsing stays out of the render path's way. */
+	public HudAnchor anchor() {
+		return HudAnchor.parse(hudAnchor);
+	}
+
 	/** Clamps hand-edited values into ranges the rest of the mod can rely on. */
 	public FlipperConfig validated() {
 		bankroll = Math.max(0L, bankroll);
 		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, 6);
 		minProfitPerFlip = Math.max(0L, minProfitPerFlip);
 		minConfidence = Math.clamp(minConfidence, 0.0d, 1.0d);
+		hudLines = Math.clamp(hudLines, 1, 10);
+		// A margin larger than the window would park the overlay off-screen with no way to
+		// discover why, short of hand-editing the file again.
+		hudMarginX = Math.clamp(hudMarginX, 0, 400);
+		hudMarginY = Math.clamp(hudMarginY, 0, 400);
+		hudAnchor = anchor().name();
 		return this;
 	}
 }

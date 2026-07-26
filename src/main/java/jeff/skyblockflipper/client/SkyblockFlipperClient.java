@@ -2,6 +2,7 @@ package jeff.skyblockflipper.client;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.command.FlipCommand;
+import jeff.skyblockflipper.client.hud.FlipHud;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -35,10 +36,23 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 		}
 	}
 
+	/** Writes the in-memory config back out, for the settings toggleable from a command. */
+	public static boolean saveConfig() {
+		try {
+			config.save(configFile());
+			return true;
+		} catch (IOException e) {
+			SkyblockFlipper.LOGGER.error("Failed to save config to {}", configFile(), e);
+			return false;
+		}
+	}
+
 	@Override
 	public void onInitializeClient() {
 		reloadConfig();
 		FlipCommand.register();
+		CandidateFeed.register();
+		FlipHud.register();
 		MarketDataService.start();
 
 		// Daemon poller threads would die with the JVM anyway; this just makes shutdown orderly

@@ -58,6 +58,27 @@ class FlipperConfigTest {
 	}
 
 	@Test
+	void fallsBackToATopLeftHudRatherThanNullingOut(@TempDir Path dir) throws Exception {
+		Path file = dir.resolve("config.json");
+		// hudAnchor is a string precisely so a typo cannot become a null enum that NPEs on
+		// every frame; the HUD is drawn far from where the mistake was made.
+		Files.writeString(file, "{\"hudAnchor\": \"middle-ish\", \"hudLines\": 40}");
+
+		FlipperConfig config = FlipperConfig.load(file);
+
+		assertEquals(HudAnchor.TOP_LEFT, config.anchor());
+		assertEquals(10, config.hudLines);
+	}
+
+	@Test
+	void acceptsAnchorNamesInAnyCase(@TempDir Path dir) throws Exception {
+		Path file = dir.resolve("config.json");
+		Files.writeString(file, "{\"hudAnchor\": \"bottom_right\"}");
+
+		assertEquals(HudAnchor.BOTTOM_RIGHT, FlipperConfig.load(file).anchor());
+	}
+
+	@Test
 	void toleratesAnEmptyFile(@TempDir Path dir) throws Exception {
 		Path file = dir.resolve("config.json");
 		Files.writeString(file, "");
