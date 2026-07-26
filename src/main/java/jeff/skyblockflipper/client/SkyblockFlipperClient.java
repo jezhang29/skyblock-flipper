@@ -1,0 +1,44 @@
+package jeff.skyblockflipper.client;
+
+import jeff.skyblockflipper.SkyblockFlipper;
+import jeff.skyblockflipper.client.command.FlipCommand;
+import jeff.skyblockflipper.core.config.FlipperConfig;
+
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
+
+import java.io.IOException;
+import java.nio.file.Path;
+
+public class SkyblockFlipperClient implements ClientModInitializer {
+	private static FlipperConfig config = new FlipperConfig();
+
+	public static FlipperConfig config() {
+		return config;
+	}
+
+	public static Path configFile() {
+		return FabricLoader.getInstance().getConfigDir()
+				.resolve(SkyblockFlipper.MOD_ID)
+				.resolve("config.json");
+	}
+
+	/** Re-reads the config from disk. Returns false if the file could not be read. */
+	public static boolean reloadConfig() {
+		try {
+			config = FlipperConfig.load(configFile());
+			return true;
+		} catch (IOException e) {
+			SkyblockFlipper.LOGGER.error("Failed to load config from {}", configFile(), e);
+			return false;
+		}
+	}
+
+	@Override
+	public void onInitializeClient() {
+		reloadConfig();
+		FlipCommand.register();
+
+		SkyblockFlipper.LOGGER.info("Skyblock Flipper ready. Run /flip in game.");
+	}
+}
