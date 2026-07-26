@@ -1,5 +1,8 @@
 package jeff.skyblockflipper.core.api;
 
+import jeff.skyblockflipper.core.item.DecodedItem;
+import jeff.skyblockflipper.core.item.ItemDecoder;
+import jeff.skyblockflipper.core.item.Rarity;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.EndedAuction;
@@ -85,6 +88,31 @@ class LiveApiTest {
 			// A root TAG_Compound (0x0A) with an empty name, then the "i" item list.
 			assertTrue(head[0] == 0x0A, "unexpected NBT root tag " + head[0]);
 		}
+	}
+
+	@Test
+	void liveItemBlobsStillDecodeIntoPricedAttributes() throws Exception {
+		List<EndedAuction> sales = api.fetchEndedAuctions();
+
+		List<DecodedItem> decoded = sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.toList();
+
+		// A format change would show up here as a decode rate falling off a cliff rather than as
+		// an exception, since a blob we cannot read is dropped rather than thrown.
+		assertTrue(decoded.size() > sales.size() * 9 / 10,
+				"only decoded " + decoded.size() + " of " + sales.size() + " live sales");
+
+		assertTrue(decoded.stream().anyMatch(item -> item.rarity() != Rarity.UNKNOWN),
+				"no live sale carried a readable rarity");
+
+		// The attributes that carry most of the price on high-value items. If ExtraAttributes is
+		// ever renamed, every item silently prices as if it were bare.
+		assertTrue(decoded.stream().anyMatch(item -> !item.reforge().isEmpty()),
+				"no live sale carried a reforge");
+		assertTrue(decoded.stream().anyMatch(item -> !item.enchantments().isEmpty()),
+				"no live sale carried enchantments");
 	}
 
 	@Test
