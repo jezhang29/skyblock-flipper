@@ -12,6 +12,7 @@ import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
+import jeff.skyblockflipper.client.gui.Settings;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
@@ -90,7 +91,9 @@ public final class FlipCommand {
 						.executes(ctx -> {
 							showConfig(ctx.getSource());
 							return 1;
-						}))
+						})
+						.then(ClientCommands.literal("edit")
+								.executes(ctx -> editConfig(ctx.getSource()))))
 				.then(ClientCommands.literal("take")
 						.then(ClientCommands.argument("rank", IntegerArgumentType.integer(1))
 								.executes(ctx -> take(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "rank")))))
@@ -376,6 +379,27 @@ public final class FlipCommand {
 		}
 	}
 
+	/**
+	 * Opens the settings screen, or explains why there is not one.
+	 *
+	 * <p>Deferred through {@code Minecraft.execute} for the same reason {@code /flip gui} is: the
+	 * chat screen is still tearing down while a command executes, and a screen set during that
+	 * never gets a size.
+	 */
+	private static int editConfig(FabricClientCommandSource source) {
+		if (!Settings.available()) {
+			source.sendError(Component.literal(
+					"The settings screen needs Cloth Config API. Without it, edit "
+							+ SkyblockFlipperClient.configFile() + " and run /flip reload.")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		// No parent: this was opened from chat, so there is nothing to go back to.
+		Minecraft.getInstance().execute(() -> Settings.open(null));
+		return 1;
+	}
+
 	private static void showConfig(FabricClientCommandSource source) {
 		FlipperConfig config = SkyblockFlipperClient.config();
 
@@ -398,6 +422,13 @@ public final class FlipCommand {
 				? "auto"
 				: String.format("%.2f", config.guiZoom));
 		line(source, "polling enabled", String.valueOf(config.pollingEnabled));
+
+		// The file path above is only actionable if you know editing it is the only way, and with
+		// Cloth installed it is not.
+		source.sendFeedback(Component.literal(Settings.available()
+						? "  /flip config edit opens all of these as a screen"
+						: "  edit the file, then /flip reload")
+				.withStyle(ChatFormatting.DARK_GRAY));
 	}
 
 	/**

@@ -10,6 +10,15 @@ repositories {
 	// For test-only dependencies. Loom supplies the Minecraft and Fabric repositories itself.
 	mavenCentral()
 
+	// Cloth Config, which draws the settings screen.
+	maven { url = "https://maven.shedaniel.me/" }
+
+	// Mod Menu, which puts a button on it.
+	maven { url = "https://maven.terraformersmc.com/releases/" }
+
+	// Text Placeholder API - not used here, but Mod Menu will not load without it.
+	maven { url = "https://maven.nucleoid.xyz/" }
+
 	// Add repositories to retrieve artifacts from in here.
 	// You should only use this when depending on other mods because
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
@@ -24,6 +33,22 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// The settings screen. Plain `implementation`, not `modImplementation`: Loom 1.17 removed the
+	// mod* configurations and remaps any dependency it recognises as a mod, which is also why
+	// Fabric API above is declared the same way. Each pulls its own Fabric API, excluded so the
+	// version pinned in gradle.properties is the one on the classpath.
+	implementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+		exclude group: "net.fabricmc.fabric-api"
+	}
+	implementation("com.terraformersmc:modmenu:${project.mod_menu_version}") {
+		exclude group: "net.fabricmc.fabric-api"
+	}
+
+	// Mod Menu's optional Text Placeholder compat: it loads without this, but its mod-description
+	// rendering takes a different path when present, and the dev client should run the path
+	// players see. Runtime only, and never shipped - Mod Menu brings its own.
+	localRuntime "eu.pb4:placeholder-api:${project.placeholder_api_version}"
 
 	// Tests cover the `core` package only, which by design has no Minecraft on its classpath.
 	testImplementation platform("org.junit:junit-bom:5.11.4")

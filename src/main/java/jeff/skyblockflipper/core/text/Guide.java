@@ -28,7 +28,7 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(COLUMNS, STRATEGIES, ROUTES, LIQUIDITY, LEDGER, LIMITS);
+		return List.of(COLUMNS, STRATEGIES, ROUTES, LIQUIDITY, LEDGER, SETTINGS, LIMITS);
 	}
 
 	private static final Section COLUMNS = new Section("columns", "Columns", List.of(
@@ -98,6 +98,26 @@ public final class Guide {
 			new Term("Quotes are frozen", "A position's quote is stored when you take it and never "
 					+ "re-derived, because by the time a fill goes badly the book has already moved "
 					+ "in whichever direction made it go badly")));
+
+	private static final Section SETTINGS = new Section("settings", "Settings that change the list",
+			List.of(
+					new Term("Where they are", "The Settings button on this screen, or /flip config "
+							+ "edit, or the config file with /flip config. Every one of them writes "
+							+ "the same file and re-ranks immediately"),
+					new Term("Bankroll", "Coins you are willing to deploy. It is a cap on capital, "
+							+ "not an instruction to spend it: every plan is sized to fit inside it, "
+							+ "so raising it makes the top of the list bigger flips, not better ones"),
+					new Term("Max adverse drift", "Rejects a bazaar candidate whose price has already "
+							+ "fallen by more than this fraction over the trend window. Buy orders "
+							+ "fill fastest exactly while people are dumping, so the spread you were "
+							+ "quoted is the one you least want to be filled on. 0 turns it off"),
+					new Term("Min snipe discount", "How far under fair value an auction has to be "
+							+ "listed before it is worth a look. It is also what keeps a sweep "
+							+ "affordable - almost every listing fails it before its item data is "
+							+ "parsed at all - so lowering it costs scan time as well as precision"),
+					new Term("Min confidence", "Hides snipes the valuation is less sure of than this. "
+							+ "It has no effect on bazaar or NPC flips, which price off a live book "
+							+ "rather than an estimate")));
 
 	private static final Section LIMITS = new Section("limits", "What this does not do", List.of(
 			new Term("Advisory only", "It surfaces numbers and rankings. It does not click, buy, "
