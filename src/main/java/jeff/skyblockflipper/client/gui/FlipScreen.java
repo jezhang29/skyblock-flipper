@@ -105,6 +105,9 @@ public final class FlipScreen extends Screen {
 	private final TextButton copyButton = new TextButton("Copy name", this::copySelected);
 	private final TextButton closeButton = new TextButton("Close", this::onClose);
 
+	/** Only laid out and drawn when Cloth Config is installed - see {@link Settings}. */
+	private final TextButton settingsButton = new TextButton("Settings", this::openSettings);
+
 	private Tab tab = Tab.ALL;
 	private long renderedRevision = -1L;
 	private String notice = "";
@@ -137,6 +140,12 @@ public final class FlipScreen extends Screen {
 
 		int closeWidth = closeButton.preferredWidth(font);
 		closeButton.setBounds(viewWidth - MARGIN - closeWidth, buttonY, closeWidth, BUTTON_HEIGHT);
+
+		if (Settings.available()) {
+			int settingsWidth = settingsButton.preferredWidth(font);
+			settingsButton.setBounds(viewWidth - MARGIN - closeWidth - 4 - settingsWidth, buttonY,
+					settingsWidth, BUTTON_HEIGHT);
+		}
 
 		refresh(true);
 	}
@@ -533,6 +542,10 @@ public final class FlipScreen extends Screen {
 
 		closeButton.render(graphics, font, mouseX, mouseY, true);
 
+		if (Settings.available()) {
+			settingsButton.render(graphics, font, mouseX, mouseY, true);
+		}
+
 		String hint = notice.isEmpty()
 				? "Click a column to sort, a row to select. " + FlipKeybinds.boundKeyName()
 						+ " or Esc closes. The Guide tab explains every column."
@@ -552,6 +565,17 @@ public final class FlipScreen extends Screen {
 	private void panel(GuiGraphicsExtractor graphics, int x, int y, int panelWidth, int panelHeight) {
 		graphics.fill(x, y, x + panelWidth, y + panelHeight, PANEL);
 		graphics.outline(x, y, panelWidth, panelHeight, PANEL_EDGE);
+	}
+
+	/**
+	 * Hands over to the settings screen, which comes back here when it is done.
+	 *
+	 * <p>Passing {@code this} rather than reopening on close means Cancel returns to the same list,
+	 * scrolled and sorted as it was. Vanilla re-runs {@link #init()} on the way back, so a changed
+	 * {@code guiZoom} is applied without the player having to reopen anything.
+	 */
+	private void openSettings() {
+		Settings.open(this);
 	}
 
 	private void takeSelected() {
@@ -595,6 +619,10 @@ public final class FlipScreen extends Screen {
 		double mouseY = event.y() / zoom;
 
 		if (closeButton.clicked(mouseX, mouseY)) {
+			return true;
+		}
+
+		if (Settings.available() && settingsButton.clicked(mouseX, mouseY)) {
 			return true;
 		}
 

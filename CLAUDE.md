@@ -80,6 +80,13 @@ Key invariants:
   coords divided by `zoom` — hence `TextButton` instead of vanilla `Button`. Scissors *are*
   transformed by the pose. Panels of unknown height draw at `-Scroller.offset()` inside a
   scissor and report their finished y.
+- Every setting is described once in `core/config/ConfigSchema` (label, help, bounds, accessors);
+  `ConfigSchemaTest` fails if a `FlipperConfig` field has no entry or an entry offers a value
+  `validated()` would clamp. `FlipConfigScreen` is a loop over it — don't restate a setting there.
+- **Cloth Config and Mod Menu are optional dependencies.** Loom 1.17 has no `mod*` configurations;
+  they are plain `implementation` and Loom remaps them. `FlipConfigScreen` imports Cloth, so it
+  must only ever be named inside a method body guarded by `Settings.available()` — `Settings` is
+  the single door and imports nothing of Cloth's. Without Cloth the mod runs, minus that screen.
 - Player-facing vocabulary lives once in `core/text/Guide`, rendered by `/flip guide` and the
   Guide tab. A UI term with no entry there is unlookupable.
 - `Ledger` is the only feedback loop: capture rate (realized/quoted on filled units) and fill
