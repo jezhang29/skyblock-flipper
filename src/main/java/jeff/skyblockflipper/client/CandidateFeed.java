@@ -48,10 +48,12 @@ public final class CandidateFeed {
 				data.bazaar(),
 				data.catalog(),
 				data.underpriced(),
+				data.trends(),
 				new Fees(config.bazaarFlipperLevel, data.mayor().isDerpy()),
 				config.bankroll,
 				config.minProfitPerFlip,
-				config.minConfidence);
+				config.minConfidence,
+				config.maxAdverseDrift);
 	}
 
 	/** Fresh ranking across every strategy, or a single one when {@code kind} is non-null. */

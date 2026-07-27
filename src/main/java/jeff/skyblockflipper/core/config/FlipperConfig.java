@@ -72,6 +72,36 @@ public final class FlipperConfig {
 	 */
 	public int tapeRetentionDays = 7;
 
+	/**
+	 * Record bazaar top-of-book to disk. Without it the mod has no memory of prices at all, and
+	 * cannot tell a wide spread on a liquid item from one on an item that is crashing.
+	 */
+	public boolean bazaarTapeEnabled = true;
+
+	/**
+	 * How many days of bazaar tape to keep. Roughly 40MB a day at the default sampling, so two
+	 * weeks is about 565MB - far cheaper than the sales tape, and long enough to cover a full
+	 * mayor term, which is when price regimes actually shift.
+	 */
+	public int bazaarTapeRetentionDays = 14;
+
+	/**
+	 * How far back the trend indicators look. The recent sub-window they compare against is an
+	 * eighth of this, so the default 24 hours is measured against the last 3.
+	 */
+	public int trendWindowHours = 24;
+
+	/**
+	 * Reject bazaar candidates whose price has drifted down by more than this fraction.
+	 *
+	 * <p>Market making into a decline is the standard way a quoted margin becomes a realized loss:
+	 * buy orders fill fastest exactly while people are dumping. Zero disables the filter.
+	 */
+	public double maxAdverseDrift = 0.05d;
+
+	/** Open the flip screen with a keybind. The screen is also reachable however you like via chat. */
+	public boolean guiKeybindEnabled = true;
+
 	/** Render the top-candidates HUD overlay. */
 	public boolean hudEnabled = true;
 
@@ -119,7 +149,8 @@ public final class FlipperConfig {
 
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
-		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll);
+		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll,
+				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours);
 	}
 
 	/** Clamps hand-edited values into ranges the rest of the mod can rely on. */
@@ -134,6 +165,11 @@ public final class FlipperConfig {
 		snipeMinDiscount = Math.clamp(snipeMinDiscount, 0.01d, 0.95d);
 		valuationWindowDays = Math.clamp(valuationWindowDays, 1, 30);
 		tapeRetentionDays = Math.clamp(tapeRetentionDays, 1, 60);
+		bazaarTapeRetentionDays = Math.clamp(bazaarTapeRetentionDays, 1, 60);
+		// Under a few hours the two averages overlap enough that drift is always near zero; past
+		// three days the ring would hold more than the memory budget this was sized for.
+		trendWindowHours = Math.clamp(trendWindowHours, 3, 72);
+		maxAdverseDrift = Math.clamp(maxAdverseDrift, 0.0d, 1.0d);
 		// A margin larger than the window would park the overlay off-screen with no way to
 		// discover why, short of hand-editing the file again.
 		hudMarginX = Math.clamp(hudMarginX, 0, 400);
