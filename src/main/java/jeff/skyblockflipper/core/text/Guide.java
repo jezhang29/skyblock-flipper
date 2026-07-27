@@ -111,7 +111,12 @@ public final class Guide {
 					+ "rarely get"),
 			new Term("Quotes are frozen", "A position's quote is stored when you take it and never "
 					+ "re-derived, because by the time a fill goes badly the book has already moved "
-					+ "in whichever direction made it go badly")));
+					+ "in whichever direction made it go badly"),
+			new Term("Abandon", "Closes a position that never filled, without a realized price. Its "
+					+ "units count against the fill rate and nothing about it reaches the capture "
+					+ "rate, which is the honest answer: an order you gave up on is not a flip that "
+					+ "went badly, it is one that never happened. Select it on the Ledger tab and "
+					+ "press Abandon, or use /flip abandon <id>")));
 
 	private static final Section SETTINGS = new Section("settings", "Settings that change the list",
 			List.of(

@@ -24,6 +24,7 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -60,6 +61,7 @@ public final class FlipScreen extends Screen {
 	private static final int TEXT_WARN = 0xFFFFAA00;
 	private static final int TEXT_GOOD = 0xFF55FF55;
 	private static final int TEXT_NOTE = 0xFF9FD4FF;
+	private static final int ROW_SELECTED = 0x40FFD700;
 
 	private static final int MARGIN = 8;
 	private static final int TAB_HEIGHT = 16;
@@ -105,6 +107,9 @@ public final class FlipScreen extends Screen {
 	private final TextButton copyButton = new TextButton("Copy name", this::copySelected);
 	private final TextButton closeButton = new TextButton("Close", this::onClose);
 
+	/** Shares the Take button's slot: the tab showing one never shows the other. */
+	private final TextButton abandonButton = new TextButton("Abandon", this::abandonSelected);
+
 	/** Only laid out and drawn when Cloth Config is installed - see {@link Settings}. */
 	private final TextButton settingsButton = new TextButton("Settings", this::openSettings);
 
@@ -114,6 +119,15 @@ public final class FlipScreen extends Screen {
 
 	/** Whatever the detail panel was last drawn for, so its scroll can reset when that changes. */
 	private FlipCandidate detailShown;
+
+	/** Ledger tab: the selected open position, and the one Abandon is waiting on a second click for. */
+	private String selectedPosition = "";
+	private String pendingAbandon = "";
+
+	/** Where the open positions were last drawn, so a click can be turned back into one of them. */
+	private final List<String> positionRows = new ArrayList<>();
+	private int positionRowsTop;
+	private int positionRowHeight = 1;
 
 	private float zoom = 1.0f;
 	private int viewWidth;
@@ -137,6 +151,7 @@ public final class FlipScreen extends Screen {
 
 		takeButton.setBounds(MARGIN, buttonY, takeWidth, BUTTON_HEIGHT);
 		copyButton.setBounds(MARGIN + takeWidth + 4, buttonY, copyWidth, BUTTON_HEIGHT);
+		abandonButton.setBounds(MARGIN, buttonY, abandonButton.preferredWidth(font), BUTTON_HEIGHT);
 
 		int closeWidth = closeButton.preferredWidth(font);
 		closeButton.setBounds(viewWidth - MARGIN - closeWidth, buttonY, closeWidth, BUTTON_HEIGHT);
@@ -266,6 +281,12 @@ public final class FlipScreen extends Screen {
 		}
 
 		renderFooter(graphics, vx, vy);
+
+		// Last, so it sits over the detail panel it will usually overlap.
+		if (tab.showsCandidates()) {
+			table.renderHoverName(graphics, font, vx, vy, viewWidth, viewHeight);
+		}
+
 		graphics.pose().popMatrix();
 	}
 
@@ -451,11 +472,21 @@ public final class FlipScreen extends Screen {
 		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
 	}
 
+	/**
+	 * Open positions, selectable so that one taken by mistake can be dropped.
+	 *
+	 * <p>The rows are laid out here and nowhere else, so the geometry is recorded as it is drawn
+	 * rather than recomputed for {@link #positionClicked}. The panel scrolls, and a second copy of
+	 * "where the third row is" would only have to agree with this one.
+	 */
 	private void renderLedger(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
 			int panelHeight) {
 		List<LedgerEntry> open = LedgerService.ledger().openEntries();
 		int startY = y + PANEL_PAD - sideScroll.offset();
 		int cursor = startY;
+
+		positionRows.clear();
+		positionRowHeight = font.lineHeight + 2;
 
 		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
 
@@ -472,19 +503,25 @@ public final class FlipScreen extends Screen {
 			int capitalWidth = font.width(Component.literal("000.00M")) + 8;
 			int nameWidth = panelWidth - 2 * PANEL_PAD - idWidth - capitalWidth;
 
+			positionRowsTop = cursor;
+
 			for (LedgerEntry entry : open) {
+				positionRows.add(entry.id());
+
+				if (entry.id().equals(selectedPosition)) {
+					graphics.fill(x + 1, cursor - 1, x + panelWidth - 1,
+							cursor + positionRowHeight - 1, ROW_SELECTED);
+				}
+
 				graphics.text(font, Component.literal(entry.id()), x + PANEL_PAD, cursor, TEXT_WARN);
 
-				graphics.enableScissor(x + PANEL_PAD + idWidth, cursor,
-						x + PANEL_PAD + idWidth + nameWidth, cursor + font.lineHeight);
-				graphics.text(font, Component.literal(entry.displayName()),
+				graphics.text(font, Component.literal(Labels.fit(font, entry.displayName(), nameWidth)),
 						x + PANEL_PAD + idWidth, cursor, TEXT);
-				graphics.disableScissor();
 
 				Component capital = Component.literal(Coins.format(entry.capital()));
 				graphics.text(font, capital,
 						x + panelWidth - PANEL_PAD - font.width(capital), cursor, TEXT_DIM);
-				cursor += font.lineHeight + 2;
+				cursor += positionRowHeight;
 			}
 
 			cursor += 4;
@@ -526,11 +563,14 @@ public final class FlipScreen extends Screen {
 	}
 
 	/**
-	 * Buttons, then whatever hint fits between them.
+	 * Buttons, then whatever hint fits above them.
 	 *
-	 * <p>The hint is clipped to the gap rather than being allowed to run under the Close button,
-	 * which is what it did before: the two were drawn at fixed positions that only happened not to
-	 * collide at the GUI scale this was first written on.
+	 * <p>The hint row is one line tall by construction - a notice that silently grew to two would
+	 * push the buttons off the bottom of the screen - so something has to give when the text is
+	 * wider than the screen. It used to be given to a scissor, which cut the sentence mid-word and
+	 * left "The Guide tab explains every c" on screen. A hint is a list of clauses, so the ones that
+	 * do not fit are dropped whole; a notice is one sentence with an id in it, so it is cut with an
+	 * ellipsis that at least says it was cut.
 	 */
 	private void renderFooter(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
 		boolean hasSelection = tab.showsCandidates() && table.selection() != null;
@@ -538,6 +578,8 @@ public final class FlipScreen extends Screen {
 		if (tab.showsCandidates()) {
 			takeButton.render(graphics, font, mouseX, mouseY, hasSelection);
 			copyButton.render(graphics, font, mouseX, mouseY, hasSelection);
+		} else if (tab == Tab.LEDGER) {
+			abandonButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
 		}
 
 		closeButton.render(graphics, font, mouseX, mouseY, true);
@@ -546,20 +588,31 @@ public final class FlipScreen extends Screen {
 			settingsButton.render(graphics, font, mouseX, mouseY, true);
 		}
 
-		String hint = notice.isEmpty()
-				? "Click a column to sort, a row to select. " + FlipKeybinds.boundKeyName()
-						+ " or Esc closes. The Guide tab explains every column."
-				: notice;
-
 		int y = viewHeight - MARGIN - BUTTON_HEIGHT - 4 - font.lineHeight;
-		int right = viewWidth - MARGIN;
+		int available = viewWidth - 2 * MARGIN;
 
-		// Clipped rather than wrapped: this row is one line tall by construction, and a notice that
-		// silently grew to two would push the buttons off the bottom of the screen.
-		graphics.enableScissor(MARGIN, y - 1, right, y + font.lineHeight + 1);
+		String hint = notice.isEmpty()
+				? Labels.join(font, hintClauses(), available)
+				: Labels.fit(font, notice, available);
+
 		graphics.text(font, Component.literal(hint), MARGIN, y,
 				notice.isEmpty() ? TEXT_DIM : TEXT_GOOD);
-		graphics.disableScissor();
+	}
+
+	/**
+	 * The idle hint, most useful clause first.
+	 *
+	 * <p>Ordered by what a player cannot work out for themselves. Which mouse button does what is
+	 * guessable; which key closes a screen that is not a menu is not, and neither is the fact that
+	 * every column heading has a definition a tab away.
+	 */
+	private List<String> hintClauses() {
+		return List.of(
+				FlipKeybinds.boundKeyName() + " or Esc closes.",
+				tab == Tab.LEDGER
+						? "Click a position, then Abandon to drop it."
+						: "Click a column to sort, a row to select.",
+				"Guide tab defines every column.");
 	}
 
 	private void panel(GuiGraphicsExtractor graphics, int x, int y, int panelWidth, int panelHeight) {
@@ -597,6 +650,46 @@ public final class FlipScreen extends Screen {
 		}
 	}
 
+	/**
+	 * Drops a position that was never going to fill, on a second click.
+	 *
+	 * <p>Confirmed rather than immediate because it is the one action on this screen that cannot be
+	 * undone and that changes a number the mod is judged by: abandoning counts against the fill
+	 * rate. The confirmation is the Abandon button itself rather than a dialog, which would have to
+	 * live outside the zoomed coordinate space everything else is drawn in.
+	 */
+	private void abandonSelected() {
+		if (selectedPosition.isEmpty()) {
+			notice = "Select an open position first.";
+			return;
+		}
+
+		if (!selectedPosition.equals(pendingAbandon)) {
+			pendingAbandon = selectedPosition;
+			notice = "Abandon " + nameOf(selectedPosition) + "? Press Abandon again to confirm.";
+			return;
+		}
+
+		try {
+			notice = LedgerService.ledger().abandon(selectedPosition)
+					.map(entry -> "Abandoned " + entry.displayName()
+							+ " - its units count against the fill rate.")
+					.orElse("That position is no longer open.");
+		} catch (IOException e) {
+			SkyblockFlipper.LOGGER.error("Ledger write failed", e);
+			notice = "Could not write the ledger - see the log.";
+		}
+
+		selectedPosition = "";
+		pendingAbandon = "";
+	}
+
+	private String nameOf(String positionId) {
+		return LedgerService.ledger().get(positionId)
+				.map(LedgerEntry::displayName)
+				.orElse(positionId);
+	}
+
 	private void copySelected() {
 		FlipCandidate candidate = table.selection();
 
@@ -631,11 +724,40 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
+		if (tab == Tab.LEDGER && abandonButton.clicked(mouseX, mouseY)) {
+			return true;
+		}
+
 		if (tabClicked(mouseX, mouseY)) {
 			return true;
 		}
 
+		if (tab == Tab.LEDGER) {
+			return positionClicked(mouseX, mouseY);
+		}
+
 		return tab.showsCandidates() && table.mouseClicked(mouseX, mouseY);
+	}
+
+	/** @return true when the click landed in the open-positions panel, selected row or not */
+	private boolean positionClicked(double mouseX, double mouseY) {
+		int top = contentTop();
+
+		if (mouseX < MARGIN || mouseX >= MARGIN + listWidth()
+				|| mouseY < top || mouseY >= top + contentHeight()) {
+			return false;
+		}
+
+		int row = (int) ((mouseY - positionRowsTop) / positionRowHeight);
+
+		if (row >= 0 && row < positionRows.size()) {
+			selectedPosition = positionRows.get(row);
+			// A confirmation follows the thing it was asked about, so moving off it withdraws it.
+			pendingAbandon = "";
+			notice = "";
+		}
+
+		return true;
 	}
 
 	private boolean tabClicked(double mouseX, double mouseY) {
@@ -651,6 +773,8 @@ public final class FlipScreen extends Screen {
 			if (mouseX >= tabX && mouseX < tabX + tabWidth) {
 				tab = candidate;
 				notice = "";
+				// The confirmation was for a position on a panel that is no longer on screen.
+				pendingAbandon = "";
 				sideScroll.reset();
 				// Forced: the book has not moved, but the question being asked of it has.
 				refresh(true);
