@@ -1,5 +1,8 @@
 package jeff.skyblockflipper.core.config;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * Which corner the HUD overlay hangs from.
  *
@@ -26,6 +29,11 @@ public enum HudAnchor {
 		}
 
 		return TOP_LEFT;
+	}
+
+	/** The choices a settings UI offers, in the order they are declared. */
+	public static List<String> names() {
+		return Arrays.stream(values()).map(HudAnchor::name).toList();
 	}
 
 	public boolean isRight() {
