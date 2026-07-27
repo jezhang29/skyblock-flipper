@@ -18,13 +18,32 @@ import java.util.Optional;
  */
 public final class ItemCatalog {
 	/**
-	 * @param id           Skyblock item id, e.g. {@code ENCHANTED_DIAMOND}
-	 * @param npcSellPrice fixed price an NPC pays, or null if no NPC buys it
+	 * @param id            Skyblock item id, e.g. {@code ENCHANTED_DIAMOND}
+	 * @param npcSellPrice  fixed price an NPC pays, or null if no NPC buys it
+	 * @param upgradeCosts  what each star level costs, cheapest first; empty for the great majority
+	 *                      of items, which cannot be starred at all
 	 */
-	public record Entry(String id, String name, Double npcSellPrice) {
+	public record Entry(String id, String name, Double npcSellPrice, List<UpgradeCost> upgradeCosts) {
+		public Entry {
+			upgradeCosts = List.copyOf(upgradeCosts);
+		}
+
+		/** For the items and tests that have no star costs to state. */
+		public Entry(String id, String name, Double npcSellPrice) {
+			this(id, name, npcSellPrice, List.of());
+		}
+
 		/** Fractional for cheap items, so this stays a double all the way through the math. */
 		public Optional<Double> npcPrice() {
 			return Optional.ofNullable(npcSellPrice);
+		}
+
+		/**
+		 * How many stars this item can take. Not always five: master stars push the common case to
+		 * ten, and a handful of items define fifteen levels.
+		 */
+		public int maxStars() {
+			return upgradeCosts.size();
 		}
 	}
 

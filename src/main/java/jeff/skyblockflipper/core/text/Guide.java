@@ -63,7 +63,15 @@ public final class Guide {
 					+ "actually been selling for. Fair value is learned from completed sales only, "
 					+ "never from active listings"),
 			new Term("Ledger", "Flips you took, and what they actually did. The only part of this "
-					+ "mod that can tell you whether the rest of it works")));
+					+ "mod that can tell you whether the rest of it works"),
+			new Term("Stars and essence", "Hypixel publishes what every star level costs, and every "
+					+ "ingredient trades on the bazaar, so a starred item's essence bill is "
+					+ "calculated rather than estimated - the only number here with no sample size "
+					+ "behind it. It is quoted at the ask, what starring one yourself would cost "
+					+ "today; a buy order fills a few percent cheaper. Cost is not value: the market "
+					+ "sets its own premium for the work, and sometimes pays under cost when essence "
+					+ "has moved. What it tells you is how much of an asking price is a commodity "
+					+ "you could buy yourself")));
 
 	private static final Section ROUTES = new Section("routes", "Buying: order or instant?", List.of(
 			new Term("Instant buy", "Cross the spread and take the lowest sell offer. You get the "
