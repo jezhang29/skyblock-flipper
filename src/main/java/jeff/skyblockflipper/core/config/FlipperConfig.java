@@ -102,6 +102,18 @@ public final class FlipperConfig {
 	/** Open the flip screen with a keybind. The screen is also reachable however you like via chat. */
 	public boolean guiKeybindEnabled = true;
 
+	/**
+	 * How far to shrink the flip screen relative to the game's GUI scale. 0 picks a factor that
+	 * fits the layout, which is what most people want.
+	 *
+	 * <p>The screen is a dense table beside a panel of prose, and at GUI scale 5 or 6 there are
+	 * only about 330 scaled pixels of width to put it in - the columns collide and the reasoning
+	 * runs off the bottom. Rather than making the player drop their whole interface to a scale that
+	 * suits one screen, this screen draws itself at a fraction of it. Auto targets
+	 * {@code 480x280} of layout space and never shrinks past 0.5.
+	 */
+	public double guiZoom = 0.0d;
+
 	/** Render the top-candidates HUD overlay. */
 	public boolean hudEnabled = true;
 
@@ -170,6 +182,9 @@ public final class FlipperConfig {
 		// three days the ring would hold more than the memory budget this was sized for.
 		trendWindowHours = Math.clamp(trendWindowHours, 3, 72);
 		maxAdverseDrift = Math.clamp(maxAdverseDrift, 0.0d, 1.0d);
+		// Zero means auto. Anything under half is unreadable at any GUI scale, and above 1 the
+		// screen would draw larger than the window and clip against it with no way back.
+		guiZoom = guiZoom <= 0.0d ? 0.0d : Math.clamp(guiZoom, 0.5d, 1.0d);
 		// A margin larger than the window would park the overlay off-screen with no way to
 		// discover why, short of hand-editing the file again.
 		hudMarginX = Math.clamp(hudMarginX, 0, 400);
