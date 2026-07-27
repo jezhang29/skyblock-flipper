@@ -178,14 +178,22 @@ public final class FairValueModel {
 		return window;
 	}
 
-	/** Nothing was added to this item, so there is nothing a name-and-rarity match could miss. */
+	/**
+	 * Nothing was added to this item, so there is nothing a name-and-rarity match could miss.
+	 *
+	 * <p>Attribute rolls count even though nobody added them by hand. An attributed item otherwise
+	 * carries no attributes at all, so without this line it reads as bare and gets priced off the
+	 * coarse pool - which for {@code CRIMSON_BOOTS} mixes 1.9M bare sales with 16M rolled ones and
+	 * calls the gap a snipe.
+	 */
 	private static boolean isBare(DecodedItem item) {
 		return !item.isPet()
 				&& item.stars() == 0
 				&& !item.recombobulated()
 				&& item.hotPotatoBooks() == 0
 				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty();
+				&& item.gemstones().isEmpty()
+				&& item.attributes().isEmpty();
 	}
 
 	private static Map<String, ValueEstimate> estimates(Map<String, List<Double>> prices,

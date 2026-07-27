@@ -22,6 +22,11 @@ import java.util.Optional;
  * reforge, stars, enchantments, recombobulator, hot potatoes - while rarity is only in
  * {@code components["minecraft:tooltip_style"]}, which reads {@code hypixel_skyblock:<rarity>}.
  *
+ * <p>{@code ExtraAttributes.attributes} is the Kuudra and Crimson Isle roll: a compound of two
+ * attribute names to their levels. Only 75 of 26,000 sampled listings carry one, but on those it is
+ * the dominant term in the price - bare {@code CRIMSON_BOOTS} were asking 1.9M against 16M for a
+ * rolled pair - so leaving it unparsed prices attribute gear off sales of a different item.
+ *
  * <p>Except when it is not there at all. Roughly one item in forty carries no tooltip style, and
  * the only remaining statement of its rarity is the last line of its lore. So this falls back to
  * parsing that line, which is exactly the fragile thing the component was supposed to avoid - and
@@ -83,6 +88,7 @@ public final class ItemDecoder {
 				extra.intOr("hot_potato_count", 0),
 				extra.child("enchantments").numericEntries(),
 				gemstones(extra.child("gems")),
+				extra.child("attributes").numericEntries(),
 				pet(skyblockId, extra)));
 	}
 

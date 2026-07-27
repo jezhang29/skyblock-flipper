@@ -62,6 +62,12 @@ public final class Guide {
 			new Term("Snipe", "An auction listed below what that exact item configuration has "
 					+ "actually been selling for. Fair value is learned from completed sales only, "
 					+ "never from active listings"),
+			new Term("Attributes", "Kuudra and Crimson Isle gear rolls two attributes, each with a "
+					+ "level. The level is most of the price - a level 1 roll is worth about what "
+					+ "the bare item is, a high one can be worth several times it - so an item is "
+					+ "only ever priced against sales carrying the same roll at the same level. "
+					+ "That is a small pool, so attribute gear will often show no valuation at all "
+					+ "rather than a confident wrong one"),
 			new Term("Ledger", "Flips you took, and what they actually did. The only part of this "
 					+ "mod that can tell you whether the rest of it works"),
 			new Term("Stars and essence", "Hypixel publishes what every star level costs, and every "

@@ -213,6 +213,9 @@ public final class AuctionValueStrategy implements FlipStrategy {
 			parts.add(String.join(", ", item.gemstones()));
 		}
 
+		// Spelled out per level, because the level is most of what the item is worth.
+		item.attributes().forEach((name, level) -> parts.add(name + " " + level));
+
 		return String.join(", ", parts);
 	}
 }
