@@ -22,9 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decoding is checked against real blobs, not synthetic ones.
  *
- * <p>The fixture is eight trimmed captures chosen to cover the cases that a hand-written sample
+ * <p>The fixture is nine trimmed captures chosen to cover the cases that a hand-written sample
  * would not have thought of: an item with no tooltip style, stars under the legacy attribute name,
- * a pet, gemstones, hot potato books, and a plain item with nothing on it at all. Everything here
+ * a pet, gemstones, hot potato books, a Kuudra attribute roll, and a plain item with nothing on it
+ * at all. Everything here
  * fails loudly if Hypixel changes the blob format, which is the point - a decode that quietly
  * drops an attribute prices a five-star recombobulated item as if it were bare.
  */
@@ -146,14 +147,15 @@ class ItemDecoderTest {
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars(),
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
-				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.pet());
+				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
+				helmet.pet());
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
 		DecodedItem oneStarLess = new DecodedItem(helmet.skyblockId(), helmet.displayName(),
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
-				helmet.gemstones(), helmet.pet());
+				helmet.gemstones(), helmet.attributes(), helmet.pet());
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -163,6 +165,38 @@ class ItemDecoderTest {
 		Map<String, Integer> enchantments = decode("ZOMBIE_SOLDIER_LEGGINGS").enchantments();
 
 		assertEquals(Map.of("thorns", 3, "protection", 5, "growth", 5), enchantments);
+	}
+
+	@Test
+	void readsKuudraAttributeRollsWithTheirLevels() {
+		DecodedItem boots = decode("TERROR_BOOTS");
+
+		// The two levels differ, so reading the names without their levels - or collapsing them to
+		// one number the way stars are - would still fail here.
+		assertEquals(Map.of("mana_regeneration", 5, "lifeline", 4), boots.attributes());
+		assertEquals("ancient", boots.reforge());
+	}
+
+	@Test
+	void anAttributeRollIsADifferentItemFromTheSameGearWithoutOne() {
+		DecodedItem boots = decode("TERROR_BOOTS");
+
+		DecodedItem unrolled = new DecodedItem(boots.skyblockId(), boots.displayName(),
+				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
+				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
+				boots.gemstones(), Map.of(), boots.pet());
+
+		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
+		// with it would price one off sales of the other in whichever direction happens to hurt.
+		assertNotEquals(boots.signature(), unrolled.signature());
+		assertTrue(boots.signature().contains("attrs=lifeline:4,mana_regeneration:5"));
+
+		DecodedItem oneLevelLower = new DecodedItem(boots.skyblockId(), boots.displayName(),
+				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
+				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
+				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.pet());
+
+		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
 
 	@Test

@@ -1,5 +1,6 @@
 package jeff.skyblockflipper.core.item;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +16,7 @@ import java.util.TreeMap;
  *
  * @param reforge      reforge id, or "" for none
  * @param stars        dungeon/master stars, from either the modern or the legacy attribute
+ * @param attributes   Kuudra/Crimson attribute rolls as name to level, empty for most items
  * @param pet          pet detail, or null when this is not a pet
  */
 public record DecodedItem(
@@ -28,11 +30,15 @@ public record DecodedItem(
 		int hotPotatoBooks,
 		Map<String, Integer> enchantments,
 		List<String> gemstones,
+		Map<String, Integer> attributes,
 		PetInfo pet
 ) {
 	public DecodedItem {
-		enchantments = Map.copyOf(new TreeMap<>(enchantments));
+		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
+		// order is salted per JVM - and signature() below promises the same string every time.
+		enchantments = Collections.unmodifiableMap(new TreeMap<>(enchantments));
 		gemstones = List.copyOf(gemstones);
+		attributes = Collections.unmodifiableMap(new TreeMap<>(attributes));
 	}
 
 	public boolean isPet() {
@@ -102,6 +108,14 @@ public record DecodedItem(
 
 		if (!gemstones.isEmpty()) {
 			key.add("gems=" + String.join(",", gemstones));
+		}
+
+		// Level, not just presence: a level 1 roll sits near the bare price and a level 7 roll can be
+		// worth several times the item under it, so banding the two together would price neither.
+		if (!attributes.isEmpty()) {
+			StringJoiner rolls = new StringJoiner(",");
+			attributes.forEach((name, level) -> rolls.add(name + ":" + level));
+			key.add("attrs=" + rolls);
 		}
 
 		return key.toString();

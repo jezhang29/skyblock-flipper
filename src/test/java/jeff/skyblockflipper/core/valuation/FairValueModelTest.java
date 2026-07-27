@@ -138,7 +138,8 @@ class FairValueModelTest {
 		// The plain version is a different item at a different price. Reforge and stars show up in
 		// the name ("Ancient Necron's Helmet ✪✪✪✪✪"), so it does not even share a coarse key.
 		DecodedItem bare = new DecodedItem(upgraded.skyblockId(), "Necron's Helmet",
-				upgraded.count(), Rarity.LEGENDARY, "", 0, false, 0, Map.of(), List.of(), null);
+				upgraded.count(), Rarity.LEGENDARY, "", 0, false, 0, Map.of(), List.of(), Map.of(),
+				null);
 
 		assertTrue(model.valueOf(bare).isEmpty());
 
@@ -146,7 +147,7 @@ class FairValueModelTest {
 		// but hot potato books and a recombobulator the coarse key could never have seen.
 		DecodedItem sameNameQuietlyUpgraded = new DecodedItem(upgraded.skyblockId(),
 				upgraded.displayName(), upgraded.count(), upgraded.rarity(), upgraded.reforge(),
-				upgraded.stars(), true, 10, Map.of(), List.of(), null);
+				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), null);
 
 		assertTrue(model.valueOf(sameNameQuietlyUpgraded).isEmpty());
 	}
@@ -159,10 +160,27 @@ class FairValueModelTest {
 		DecodedItem bare = item("ANITA_TALISMAN");
 		// Same name and rarity, but now carrying enchantments the coarse key cannot see.
 		DecodedItem enchanted = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
-				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), null);
+				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), Map.of(), null);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(enchanted).isEmpty());
+	}
+
+	@Test
+	void willNotPriceAnAttributeRollOffTheCoarsePool() {
+		FairValueModel model = modelOf(sales("ANITA_TALISMAN", 3_000_000L, 3_000_000L, 3_000_000L,
+				3_000_000L, 3_000_000L, 3_000_000L));
+
+		DecodedItem bare = item("ANITA_TALISMAN");
+		// An attribute roll is not something a player bolted on, so it leaves no other trace: no
+		// stars, no books, no gems. It is the one upgrade that would otherwise still look bare, and
+		// on Crimson gear it is worth several times the item under it.
+		DecodedItem rolled = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
+				bare.rarity(), "", 0, false, 0, Map.of(), List.of(),
+				Map.of("mana_pool", 6, "mana_regeneration", 6), null);
+
+		assertTrue(model.valueOf(bare).isPresent());
+		assertTrue(model.valueOf(rolled).isEmpty());
 	}
 
 	@Test
