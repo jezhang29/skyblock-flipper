@@ -27,6 +27,38 @@ trimmed real captures in `src/test/resources`, so `./gradlew build` never touche
 Requires JDK 25. The Gradle toolchain pins this, so the build does not use whatever `java` is
 on PATH, but `runClient` still needs a JDK 25 available for Gradle to find.
 
+## Multi-step work
+
+A long task can be cut short at any point — an `Esc`, a usage limit, a crashed terminal — and
+what is on disk at that moment is all that survives. The in-session todo list does not; it is
+context, not a file. So leave the recovery information in git rather than in the conversation.
+
+**Commit at each checkpoint without being asked.** This overrides the default "only commit when
+asked" behaviour, for this repo. A checkpoint is a step that compiles and whose tests pass —
+roughly one item off the plan, not one file. Use a short subject prefixed `wip:` and no body;
+these are scaffolding. Do not commit a state that does not build. If a step ends broken and
+cannot be finished, say so and leave it uncommitted, so `git status` shows where the work stopped.
+
+**Squash the `wip:` commits into one real commit when the task is done**, written in the style
+below. The published history has no `wip:` in it — check `git log --oneline` before declaring a
+task finished. If the work spans genuinely separate concerns, squash into one commit per concern
+rather than forcing them together.
+
+**Resuming after an interruption** (`claude --continue` or `/resume`): read `git log --oneline`
+and `git diff` first and report the actual state — which plan items are committed, what is
+half-written in the working tree — before touching anything. Do not assume the plan was followed
+to the point it was last discussed.
+
+**Branching.** Never work directly on `main`. Branch first, named for the work
+(`price-history-and-flip-screen`), and stay on it for the whole task. Do not push unless asked.
+
+**Commit messages.** Subject in the imperative, sentence case, no trailing period; comma-joined
+clauses are fine when a change has two halves ("Record bazaar price history, and add a flip
+screen on a keybind"). The body is the point: say what was wrong or missing, why the approach
+chosen is the one that works, and which alternatives were rejected and for what reason. Quote the
+measurements that justify a decision — page counts, timings, hit rates, sizes — and state what was
+verified against the live API versus what runs offline. End with the co-author trailer.
+
 ## Target versions
 
 Minecraft 26.2 / Fabric Loader 0.19.3 / Fabric API 0.155.2+26.2 / Loom 1.17-SNAPSHOT / Java 25.
@@ -86,6 +118,19 @@ The HUD (`client/hud/FlipHud`) renders through 26.2's `GuiGraphicsExtractor`, no
 elements implement `HudElement.extractRenderState`. It is attached before
 `VanillaHudElements.CHAT`, which also makes F1 hide it.
 
+`FlipScreen` draws its whole contents inside a `pose().scale(zoom, zoom)` block and lays out in the
+virtual size that produces, because GUI scale 6 leaves only ~330 scaled pixels of width. Anything
+added to it must be drawn inside that block and hit-tested against mouse coordinates divided by
+`zoom` — which is why the footer buttons are `TextButton` and not vanilla `Button` widgets, since a
+widget renders and hit-tests outside the transform. Scissor rectangles *are* transformed by the
+pose, so clipping works normally. Panels that render text of unknown height (`renderDetail`, the
+guide) draw at `-Scroller.offset()` inside a scissor and report their finished y back, rather than
+measuring the layout twice.
+
+Player-facing vocabulary lives once, in `core/text/Guide`, and is rendered by both `/flip guide` and
+the screen's Guide tab. A term that appears in the UI without an entry there is a term nobody can
+look up.
+
 `Ledger` is the mod's only feedback loop: flips taken by hand, closed by hand, reported as a
 capture rate (realized over quoted, on filled units only) and a fill rate. Quotes freeze at open
 time — never re-derive them from the current book, since the book has already moved in whatever
@@ -137,6 +182,20 @@ listing moves a mean enough to make the whole market look cheap.
 `/v2/resources/skyblock/items` carries `upgrade_costs` (exact per-star essence costs) and
 `recipes`, so star pricing and craft flips should be computed deterministically from that data
 rather than fitted from observed prices.
+
+**Item names in that resource are current but not unique enough to search on.** Hypixel tracks
+modern Minecraft naming, so `ENCHANTED_MELON_BLOCK` is called "Enchanted Melon" and
+`ENCHANTED_MELON` is "Enchanted Melon Slice" — 51200 and 320 coins respectively. Measured live,
+187 of 5549 names are a strict prefix of another name, so typing one into the bazaar search returns
+both. Do not synthesise a better name from the id: the words an id has that its name lacks are
+mostly legacy Minecraft junk (`DOUBLE_PLANT` is "Sunflower", `INK_SACK:3` is "Cocoa Beans"), which
+was tried and is wrong more often than it helps. `ItemCatalog.shadowedBy` reports the collision and
+candidates carry it as a note instead.
+
+Volume lives in `quick_status`: `buyMovingWeek` is units instantly bought (how fast sell offers get
+lifted), `sellMovingWeek` is units instantly sold (how fast buy orders get filled). Every plan is
+sized from those flows, never from resting book depth — depth is a snapshot and does not refill for
+free. `BazaarProduct.instantBuysPerHour()` / `instantSellsPerHour()` are the accessors to use.
 
 Bazaar sales tax is 1.25%, reduced 0.125% per Bazaar Flipper perk level to a floor of 1%.
 `FlipperConfig.bazaarFlipperLevel` (0-6) feeds this; a wrong value silently biases every

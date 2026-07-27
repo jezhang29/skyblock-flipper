@@ -21,6 +21,7 @@ import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import java.io.IOException;
@@ -72,6 +73,14 @@ public final class FlipCommand {
 							showSnipes(ctx.getSource());
 							return 1;
 						}))
+				.then(ClientCommands.literal("guide")
+						.executes(ctx -> {
+							showGuide(ctx.getSource(), null);
+							return 1;
+						})
+						.then(ClientCommands.argument("topic", StringArgumentType.word())
+								.executes(ctx -> showGuide(ctx.getSource(),
+										StringArgumentType.getString(ctx, "topic")))))
 				.then(ClientCommands.literal("status")
 						.executes(ctx -> {
 							showStatus(ctx.getSource());
@@ -385,7 +394,56 @@ public final class FlipCommand {
 		line(source, "hud", config.hudEnabled
 				? config.hudLines + " lines, " + config.anchor() + " +" + config.hudMarginX + "," + config.hudMarginY
 				: "off");
+		line(source, "gui zoom", config.guiZoom <= 0.0d
+				? "auto"
+				: String.format("%.2f", config.guiZoom));
 		line(source, "polling enabled", String.valueOf(config.pollingEnabled));
+	}
+
+	/**
+	 * The vocabulary, in chat.
+	 *
+	 * <p>Whole thing at once is a wall of text in a five-line chat box, so a bare {@code /flip
+	 * guide} lists the sections and a topic prints one. The screen's Guide tab shows the same text
+	 * from the same source with room to read it.
+	 *
+	 * @param topic section heading, matched on its first word; null lists what is available
+	 */
+	private static int showGuide(FabricClientCommandSource source, String topic) {
+		if (topic == null) {
+			source.sendFeedback(Chat.prefixed(Component.literal("Guide").withStyle(ChatFormatting.WHITE)));
+
+			for (Guide.Section section : Guide.sections()) {
+				source.sendFeedback(Component.literal("  /flip guide " + section.keyword())
+						.withStyle(ChatFormatting.YELLOW)
+						.append(Component.literal(" - " + section.heading())
+								.withStyle(ChatFormatting.GRAY)));
+			}
+
+			source.sendFeedback(Component.literal("  or open the flip screen and pick the Guide tab")
+					.withStyle(ChatFormatting.DARK_GRAY));
+			return 1;
+		}
+
+		for (Guide.Section section : Guide.sections()) {
+			if (section.keyword().equalsIgnoreCase(topic)) {
+				source.sendFeedback(Chat.prefixed(Component.literal(section.heading())
+						.withStyle(ChatFormatting.WHITE)));
+
+				for (Guide.Term term : section.terms()) {
+					source.sendFeedback(Component.literal("  " + term.name())
+							.withStyle(ChatFormatting.YELLOW)
+							.append(Component.literal(" - " + term.meaning())
+									.withStyle(ChatFormatting.GRAY)));
+				}
+
+				return 1;
+			}
+		}
+
+		source.sendError(Component.literal("No guide section called " + topic + " - run /flip guide.")
+				.withStyle(ChatFormatting.RED));
+		return 0;
 	}
 
 	private static void line(FabricClientCommandSource source, String key, String value) {

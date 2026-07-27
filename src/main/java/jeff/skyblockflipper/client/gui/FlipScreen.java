@@ -11,11 +11,11 @@ import jeff.skyblockflipper.core.ledger.LedgerStats;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -40,6 +40,15 @@ import java.util.List;
  * <p><b>Rendering is 26.2's extract-render-state pipeline.</b> There is no {@code GuiGraphics} in
  * this version; screens fill a {@link GuiGraphicsExtractor} in
  * {@code extractRenderState}, which is also how {@code FlipHud} draws.
+ *
+ * <p><b>Everything is drawn inside a scaled coordinate space.</b> At GUI scale 6 - a normal choice,
+ * and the one this was reported against - a 1080p window is only about 330 scaled pixels wide,
+ * which is not enough room for a five-column table beside a panel of prose. So the screen picks a
+ * zoom factor, lays itself out in the larger virtual space that produces, and scales the drawing
+ * down to fit. The alternative was asking the player to change their GUI scale for one screen,
+ * which is not a fix. Mouse coordinates are divided by the same factor on the way in, and the
+ * footer buttons are drawn by {@link TextButton} rather than being vanilla widgets, because a
+ * widget renders and hit-tests outside this transform and would not line up with anything.
  */
 public final class FlipScreen extends Screen {
 	private static final int PANEL = 0xB0000000;
@@ -50,10 +59,19 @@ public final class FlipScreen extends Screen {
 	private static final int TEXT_DIM = 0xFFAAAAAA;
 	private static final int TEXT_WARN = 0xFFFFAA00;
 	private static final int TEXT_GOOD = 0xFF55FF55;
+	private static final int TEXT_NOTE = 0xFF9FD4FF;
 
 	private static final int MARGIN = 8;
 	private static final int TAB_HEIGHT = 16;
-	private static final int FOOTER_HEIGHT = 22;
+	private static final int BUTTON_HEIGHT = 16;
+	private static final int PANEL_PAD = 6;
+
+	/** Layout space the screen wants before it starts shrinking itself to get it. */
+	private static final int TARGET_WIDTH = 480;
+	private static final int TARGET_HEIGHT = 280;
+
+	/** Past this the text stops being readable, so the layout has to cope instead. */
+	private static final float MIN_ZOOM = 0.5f;
 
 	/** Deep enough that scrolling has somewhere to go without ranking the entire book. */
 	private static final int RANK_DEPTH = 60;
@@ -63,7 +81,8 @@ public final class FlipScreen extends Screen {
 		BAZAAR("Bazaar", StrategyKind.BAZAAR_SPREAD),
 		NPC("NPC", StrategyKind.NPC_FLIP),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
-		LEDGER("Ledger", null);
+		LEDGER("Ledger", null),
+		GUIDE("Guide", null);
 
 		private final String label;
 		private final StrategyKind kind;
@@ -72,16 +91,30 @@ public final class FlipScreen extends Screen {
 			this.label = label;
 			this.kind = kind;
 		}
+
+		boolean showsCandidates() {
+			return this != LEDGER && this != GUIDE;
+		}
 	}
 
 	private final CandidateTable table = new CandidateTable();
+	private final Scroller detailScroll = new Scroller();
+	private final Scroller sideScroll = new Scroller();
+
+	private final TextButton takeButton = new TextButton("Take", this::takeSelected);
+	private final TextButton copyButton = new TextButton("Copy name", this::copySelected);
+	private final TextButton closeButton = new TextButton("Close", this::onClose);
 
 	private Tab tab = Tab.ALL;
 	private long renderedRevision = -1L;
 	private String notice = "";
 
-	private Button takeButton;
-	private Button copyButton;
+	/** Whatever the detail panel was last drawn for, so its scroll can reset when that changes. */
+	private FlipCandidate detailShown;
+
+	private float zoom = 1.0f;
+	private int viewWidth;
+	private int viewHeight;
 
 	public FlipScreen() {
 		super(Component.literal("Skyblock Flipper"));
@@ -89,29 +122,74 @@ public final class FlipScreen extends Screen {
 
 	@Override
 	protected void init() {
-		int listWidth = (int) (width * 0.58d);
-		int top = MARGIN + TAB_HEIGHT + 4;
-		int listHeight = height - top - FOOTER_HEIGHT - MARGIN;
+		zoom = resolveZoom();
+		viewWidth = Math.round(width / zoom);
+		viewHeight = Math.round(height / zoom);
 
-		table.setBounds(MARGIN, top, listWidth, listHeight);
+		table.setBounds(MARGIN, contentTop(), listWidth(), contentHeight());
 
-		int buttonY = height - FOOTER_HEIGHT - MARGIN + 4;
+		int buttonY = viewHeight - MARGIN - BUTTON_HEIGHT;
+		int takeWidth = takeButton.preferredWidth(font);
+		int copyWidth = copyButton.preferredWidth(font);
 
-		takeButton = addRenderableWidget(Button.builder(
-						Component.literal("Take"), button -> takeSelected())
-				.bounds(MARGIN, buttonY, 54, 16)
-				.build());
+		takeButton.setBounds(MARGIN, buttonY, takeWidth, BUTTON_HEIGHT);
+		copyButton.setBounds(MARGIN + takeWidth + 4, buttonY, copyWidth, BUTTON_HEIGHT);
 
-		copyButton = addRenderableWidget(Button.builder(
-						Component.literal("Copy name"), button -> copySelected())
-				.bounds(MARGIN + 58, buttonY, 74, 16)
-				.build());
-
-		addRenderableWidget(Button.builder(Component.literal("Close"), button -> onClose())
-				.bounds(width - MARGIN - 54, buttonY, 54, 16)
-				.build());
+		int closeWidth = closeButton.preferredWidth(font);
+		closeButton.setBounds(viewWidth - MARGIN - closeWidth, buttonY, closeWidth, BUTTON_HEIGHT);
 
 		refresh(true);
+	}
+
+	/**
+	 * How much to shrink the layout by so it has room to breathe.
+	 *
+	 * <p>A configured value wins outright; otherwise this is whatever it takes to get
+	 * {@link #TARGET_WIDTH} by {@link #TARGET_HEIGHT} of layout space out of the window, and never
+	 * an enlargement - at GUI scale 2 there is already plenty of room and blowing the screen up to
+	 * fill it would just make a small table enormous.
+	 */
+	private float resolveZoom() {
+		double configured = SkyblockFlipperClient.config().guiZoom;
+
+		if (configured > 0.0d) {
+			return (float) configured;
+		}
+
+		float needed = Math.min(width / (float) TARGET_WIDTH, height / (float) TARGET_HEIGHT);
+		return Math.clamp(needed, MIN_ZOOM, 1.0f);
+	}
+
+	private int contentTop() {
+		return MARGIN + TAB_HEIGHT + 4;
+	}
+
+	private int contentHeight() {
+		return viewHeight - contentTop() - footerHeight() - MARGIN;
+	}
+
+	/**
+	 * Two rows: a line of status text, then the buttons.
+	 *
+	 * <p>They used to share one row, which meant the hint ran underneath the Close button and a
+	 * notice as long as "Took Enchanted Melon as a4f1 - close it with /flip close ..." had nowhere
+	 * to go at all. Measured from the font rather than fixed, because the font is the thing that
+	 * decides how tall a line of text is.
+	 */
+	private int footerHeight() {
+		return BUTTON_HEIGHT + font.lineHeight + 8;
+	}
+
+	private int listWidth() {
+		return (int) (viewWidth * 0.55d);
+	}
+
+	private int detailX() {
+		return MARGIN + listWidth() + 6;
+	}
+
+	private int detailWidth() {
+		return viewWidth - detailX() - MARGIN;
 	}
 
 	/**
@@ -136,7 +214,7 @@ public final class FlipScreen extends Screen {
 
 		renderedRevision = revision;
 
-		if (tab != Tab.LEDGER) {
+		if (tab.showsCandidates()) {
 			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH), data.trends());
 		}
 	}
@@ -147,33 +225,50 @@ public final class FlipScreen extends Screen {
 		extractTransparentBackground(graphics);
 		super.extractRenderState(graphics, mouseX, mouseY, partialTick);
 
-		renderTabs(graphics, mouseX, mouseY);
+		int vx = virtual(mouseX);
+		int vy = virtual(mouseY);
 
-		int top = MARGIN + TAB_HEIGHT + 4;
-		int listWidth = (int) (width * 0.58d);
-		int listHeight = height - top - FOOTER_HEIGHT - MARGIN;
-		int detailX = MARGIN + listWidth + 6;
-		int detailWidth = width - detailX - MARGIN;
+		graphics.pose().pushMatrix();
+		graphics.pose().scale(zoom, zoom);
 
-		panel(graphics, MARGIN, top, listWidth, listHeight);
-		panel(graphics, detailX, top, detailWidth, listHeight);
+		renderTabs(graphics, vx, vy);
 
-		if (tab == Tab.LEDGER) {
-			renderLedger(graphics, MARGIN + 6, top + 6, listWidth - 12);
-			renderLedgerStats(graphics, detailX + 6, top + 6, detailWidth - 12);
-		} else {
-			table.render(graphics, font, mouseX, mouseY);
-			renderDetail(graphics, detailX + 6, top + 6, detailWidth - 12);
+		int top = contentTop();
+		int panelHeight = contentHeight();
+
+		switch (tab) {
+			case GUIDE -> {
+				panel(graphics, MARGIN, top, viewWidth - 2 * MARGIN, panelHeight);
+				renderGuide(graphics, MARGIN, top, viewWidth - 2 * MARGIN, panelHeight);
+			}
+			case LEDGER -> {
+				panel(graphics, MARGIN, top, listWidth(), panelHeight);
+				panel(graphics, detailX(), top, detailWidth(), panelHeight);
+				renderLedger(graphics, MARGIN, top, listWidth(), panelHeight);
+				renderLedgerStats(graphics, detailX() + PANEL_PAD, top + PANEL_PAD,
+						detailWidth() - 2 * PANEL_PAD);
+			}
+			default -> {
+				panel(graphics, MARGIN, top, listWidth(), panelHeight);
+				panel(graphics, detailX(), top, detailWidth(), panelHeight);
+				table.render(graphics, font, vx, vy);
+				renderDetail(graphics, detailX(), top, detailWidth(), panelHeight);
+			}
 		}
 
-		renderFooter(graphics);
+		renderFooter(graphics, vx, vy);
+		graphics.pose().popMatrix();
+	}
+
+	private int virtual(int screenCoordinate) {
+		return Math.round(screenCoordinate / zoom);
 	}
 
 	private void renderTabs(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
 		int tabX = MARGIN;
 
 		for (Tab candidate : Tab.values()) {
-			int tabWidth = font.width(Component.literal(candidate.label)) + 14;
+			int tabWidth = tabWidth(candidate);
 			boolean hovered = mouseX >= tabX && mouseX < tabX + tabWidth
 					&& mouseY >= MARGIN && mouseY < MARGIN + TAB_HEIGHT;
 
@@ -188,57 +283,90 @@ public final class FlipScreen extends Screen {
 		}
 	}
 
+	private int tabWidth(Tab candidate) {
+		return font.width(Component.literal(candidate.label)) + 14;
+	}
+
 	/**
-	 * The reasoning behind the selected candidate.
+	 * The reasoning behind the selected candidate, scrollable because it does not fit.
 	 *
-	 * <p>Renders the {@code steps} and {@code risks} the strategy already produced, which is the
-	 * same text {@code /flip}'s hover tooltip shows. Two views of one flip must never be able to
-	 * disagree, so neither of them writes its own explanation.
+	 * <p>Renders the {@code steps}, {@code risks} and {@code notes} the strategy already produced,
+	 * which is the same text {@code /flip}'s hover tooltip shows. Two views of one flip must never
+	 * be able to disagree, so neither of them writes its own explanation. That also means the panel
+	 * cannot assume a length: a bazaar candidate with three risks and an NPC one that has to
+	 * explain which of two routes it picked are not the same height, and the panel used to simply
+	 * draw the overflow across the footer.
 	 */
-	private void renderDetail(GuiGraphicsExtractor graphics, int x, int y, int listWidth) {
+	private void renderDetail(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
 		FlipCandidate candidate = table.selection();
 
+		if (candidate != detailShown) {
+			detailShown = candidate;
+			detailScroll.reset();
+		}
+
+		int contentWidth = panelWidth - 2 * PANEL_PAD;
+		int startY = y + PANEL_PAD - detailScroll.offset();
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+		int endY = drawDetail(graphics, candidate, x + PANEL_PAD, startY, contentWidth);
+		graphics.disableScissor();
+
+		detailScroll.measured(endY - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		detailScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	/** @return the y the content finished at, so the caller can work out how far it overflowed */
+	private int drawDetail(GuiGraphicsExtractor graphics, FlipCandidate candidate, int x, int y,
+			int wrapWidth) {
 		if (candidate == null) {
-			graphics.textWithWordWrap(font, Component.literal(table.isEmpty()
-							? "No candidates clear the fee stack right now. That is a normal answer."
-							: "Select a row to see the plan and the risks.")
-					.withStyle(ChatFormatting.DARK_GRAY), x, y, listWidth, TEXT_DIM);
-			return;
+			Component message = Component.literal(table.isEmpty()
+					? "No candidates clear the fee stack right now. That is a normal answer."
+					: "Select a row to see the plan and the risks.");
+
+			graphics.textWithWordWrap(font, message, x, y, wrapWidth, TEXT_DIM);
+			return y + font.wordWrapHeight(message, wrapWidth);
 		}
 
 		int cursor = y;
 
-		graphics.text(font, Component.literal(candidate.displayName()), x, cursor, 0xFF55FFFF);
-		cursor += font.lineHeight + 1;
+		Component name = Component.literal(candidate.displayName());
+		graphics.textWithWordWrap(font, name, x, cursor, wrapWidth, 0xFF55FFFF);
+		cursor += font.wordWrapHeight(name, wrapWidth) + 1;
 
 		graphics.text(font, Component.literal(
 						candidate.kind().label() + " - paid for " + candidate.kind().edge()),
 				x, cursor, TEXT_DIM);
 		cursor += font.lineHeight + 5;
 
-		cursor = field(graphics, x, cursor, "Buy", String.format("%.1f", candidate.unitBuyPrice()));
-		cursor = field(graphics, x, cursor, "Sell", String.format("%.1f", candidate.unitSellPrice()));
-		cursor = field(graphics, x, cursor, "Net/unit",
+		cursor = field(graphics, x, cursor, wrapWidth, "Buy", String.format("%.1f", candidate.unitBuyPrice()));
+		cursor = field(graphics, x, cursor, wrapWidth, "Sell", String.format("%.1f", candidate.unitSellPrice()));
+		cursor = field(graphics, x, cursor, wrapWidth, "Net/unit",
 				String.format("%.1f after fees", candidate.unitNetProfit()));
-		cursor = field(graphics, x, cursor, "Units", String.valueOf(candidate.units()));
-		cursor = field(graphics, x, cursor, "Capital", Coins.format(candidate.capitalRequired()));
-		cursor = field(graphics, x, cursor, "Total", Coins.format(candidate.totalNetProfit()));
-		cursor = field(graphics, x, cursor, "Per hour", Coins.format(candidate.profitPerHour()));
-		cursor = field(graphics, x, cursor, "Confidence",
+		cursor = field(graphics, x, cursor, wrapWidth, "Units", String.valueOf(candidate.units()));
+		cursor = field(graphics, x, cursor, wrapWidth, "Capital", Coins.format(candidate.capitalRequired()));
+		cursor = field(graphics, x, cursor, wrapWidth, "Total", Coins.format(candidate.totalNetProfit()));
+		cursor = field(graphics, x, cursor, wrapWidth, "Per hour", Coins.format(candidate.profitPerHour()));
+		cursor = field(graphics, x, cursor, wrapWidth, "ROC",
+				String.format("%.0f%%", candidate.returnOnCapital() * 100.0d));
+		cursor = field(graphics, x, cursor, wrapWidth, "Confidence",
 				String.format("%.2f", candidate.confidence()));
 
 		PriceTrend trend = MarketDataService.data().trends().trendFor(candidate.itemId()).orElse(null);
 
 		if (trend != null) {
-			cursor = field(graphics, x, cursor, "Trend",
+			cursor = field(graphics, x, cursor, wrapWidth, "Trend",
 					String.format("%+.1f%% over %dh", trend.drift() * 100.0d,
 							MarketDataService.data().trends().window().toHours()));
 		}
 
 		cursor += 4;
-		cursor = section(graphics, x, cursor, listWidth, "Steps", candidate.steps(), TEXT);
+		cursor = section(graphics, x, cursor, wrapWidth, "Notes", candidate.notes(), TEXT_NOTE);
 		cursor += 2;
-		section(graphics, x, cursor, listWidth, "Risks", candidate.risks(), TEXT_WARN);
+		cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
+		cursor += 2;
+		return section(graphics, x, cursor, wrapWidth, "Risks", candidate.risks(), TEXT_WARN);
 	}
 
 	private int section(GuiGraphicsExtractor graphics, int x, int y, int wrapWidth, String heading,
@@ -261,37 +389,106 @@ public final class FlipScreen extends Screen {
 		return cursor;
 	}
 
-	private int field(GuiGraphicsExtractor graphics, int x, int y, String key, String value) {
+	/**
+	 * A label and a value on one line, with the value wrapped rather than run off the panel.
+	 *
+	 * <p>The label column is measured from the widest label rather than fixed at 66 pixels, which
+	 * was a number picked at one GUI scale and wrong at every other.
+	 */
+	private int field(GuiGraphicsExtractor graphics, int x, int y, int wrapWidth, String key,
+			String value) {
+		int labelWidth = Math.min(font.width(Component.literal("Net/unit")) + 8, wrapWidth / 2);
+		Component text = Component.literal(value);
+
 		graphics.text(font, Component.literal(key), x, y, TEXT_DIM);
-		graphics.text(font, Component.literal(value), x + 66, y, TEXT);
-		return y + font.lineHeight + 1;
+		graphics.textWithWordWrap(font, text, x + labelWidth, y, wrapWidth - labelWidth, TEXT);
+
+		return y + Math.max(font.lineHeight, font.wordWrapHeight(text, wrapWidth - labelWidth)) + 1;
 	}
 
-	private void renderLedger(GuiGraphicsExtractor graphics, int x, int y, int panelWidth) {
+	/** Everything the mod means by the words it uses, from the same source {@code /flip guide} reads. */
+	private void renderGuide(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		int contentWidth = panelWidth - 2 * PANEL_PAD;
+		int startY = y + PANEL_PAD - sideScroll.offset();
+		int cursor = startY;
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+
+		for (Guide.Section section : Guide.sections()) {
+			graphics.text(font, Component.literal(section.heading())
+					.withStyle(ChatFormatting.GOLD), x + PANEL_PAD, cursor, TEXT);
+			cursor += font.lineHeight + 3;
+
+			for (Guide.Term term : section.terms()) {
+				// Term on its own line, meaning indented under it. Putting both on one wrapped
+				// block would read better on a wide panel and hang off the term on a narrow one,
+				// and this panel is whatever width the window left it.
+				graphics.text(font, Component.literal(term.name()), x + PANEL_PAD, cursor, TEXT);
+				cursor += font.lineHeight + 1;
+
+				Component meaning = Component.literal(term.meaning());
+				graphics.textWithWordWrap(font, meaning, x + PANEL_PAD + 8, cursor,
+						contentWidth - 8, TEXT_DIM);
+				cursor += font.wordWrapHeight(meaning, contentWidth - 8) + 4;
+			}
+
+			cursor += 5;
+		}
+
+		graphics.disableScissor();
+
+		sideScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	private void renderLedger(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
 		List<LedgerEntry> open = LedgerService.ledger().openEntries();
+		int startY = y + PANEL_PAD - sideScroll.offset();
+		int cursor = startY;
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
 
 		graphics.text(font, Component.literal("Open positions").withStyle(ChatFormatting.GOLD),
-				x, y, TEXT);
-		int cursor = y + font.lineHeight + 4;
+				x + PANEL_PAD, cursor, TEXT);
+		cursor += font.lineHeight + 4;
 
 		if (open.isEmpty()) {
 			graphics.text(font, Component.literal("Nothing open. Take a flip to start tracking."),
-					x, cursor, TEXT_DIM);
-			return;
+					x + PANEL_PAD, cursor, TEXT_DIM);
+			cursor += font.lineHeight;
+		} else {
+			int idWidth = font.width(Component.literal("0000")) + 8;
+			int capitalWidth = font.width(Component.literal("000.00M")) + 8;
+			int nameWidth = panelWidth - 2 * PANEL_PAD - idWidth - capitalWidth;
+
+			for (LedgerEntry entry : open) {
+				graphics.text(font, Component.literal(entry.id()), x + PANEL_PAD, cursor, TEXT_WARN);
+
+				graphics.enableScissor(x + PANEL_PAD + idWidth, cursor,
+						x + PANEL_PAD + idWidth + nameWidth, cursor + font.lineHeight);
+				graphics.text(font, Component.literal(entry.displayName()),
+						x + PANEL_PAD + idWidth, cursor, TEXT);
+				graphics.disableScissor();
+
+				Component capital = Component.literal(Coins.format(entry.capital()));
+				graphics.text(font, capital,
+						x + panelWidth - PANEL_PAD - font.width(capital), cursor, TEXT_DIM);
+				cursor += font.lineHeight + 2;
+			}
+
+			cursor += 4;
+			graphics.text(font, Component.literal(
+							"Committed: " + Coins.format(LedgerService.ledger().committedCapital())),
+					x + PANEL_PAD, cursor, TEXT_DIM);
+			cursor += font.lineHeight;
 		}
 
-		for (LedgerEntry entry : open) {
-			graphics.text(font, Component.literal(entry.id()), x, cursor, TEXT_WARN);
-			graphics.text(font, Component.literal(entry.displayName()), x + 60, cursor, TEXT);
-			graphics.text(font, Component.literal(Coins.format(entry.capital())),
-					x + panelWidth - 50, cursor, TEXT_DIM);
-			cursor += font.lineHeight + 2;
-		}
+		graphics.disableScissor();
 
-		cursor += 4;
-		graphics.text(font, Component.literal(
-						"Committed: " + Coins.format(LedgerService.ledger().committedCapital())),
-				x, cursor, TEXT_DIM);
+		sideScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
 	}
 
 	private void renderLedgerStats(GuiGraphicsExtractor graphics, int x, int y, int panelWidth) {
@@ -309,26 +506,47 @@ public final class FlipScreen extends Screen {
 			return;
 		}
 
-		cursor = field(graphics, x, cursor, "Capture",
+		cursor = field(graphics, x, cursor, panelWidth, "Capture",
 				stats.captureRate().isPresent()
 						? String.format("%.0f%%", stats.captureRate().getAsDouble() * 100.0d)
 						: "n/a");
-		field(graphics, x, cursor, "Fill",
+		field(graphics, x, cursor, panelWidth, "Fill",
 				stats.fillRate().isPresent()
 						? String.format("%.0f%%", stats.fillRate().getAsDouble() * 100.0d)
 						: "n/a");
 	}
 
-	private void renderFooter(GuiGraphicsExtractor graphics) {
-		int y = height - MARGIN - font.lineHeight;
+	/**
+	 * Buttons, then whatever hint fits between them.
+	 *
+	 * <p>The hint is clipped to the gap rather than being allowed to run under the Close button,
+	 * which is what it did before: the two were drawn at fixed positions that only happened not to
+	 * collide at the GUI scale this was first written on.
+	 */
+	private void renderFooter(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+		boolean hasSelection = tab.showsCandidates() && table.selection() != null;
+
+		if (tab.showsCandidates()) {
+			takeButton.render(graphics, font, mouseX, mouseY, hasSelection);
+			copyButton.render(graphics, font, mouseX, mouseY, hasSelection);
+		}
+
+		closeButton.render(graphics, font, mouseX, mouseY, true);
 
 		String hint = notice.isEmpty()
 				? "Click a column to sort, a row to select. " + FlipKeybinds.boundKeyName()
-						+ " or Esc to close. Closing a position is /flip close."
+						+ " or Esc closes. The Guide tab explains every column."
 				: notice;
 
-		graphics.text(font, Component.literal(hint),
-				MARGIN + 140, y, notice.isEmpty() ? TEXT_DIM : TEXT_GOOD);
+		int y = viewHeight - MARGIN - BUTTON_HEIGHT - 4 - font.lineHeight;
+		int right = viewWidth - MARGIN;
+
+		// Clipped rather than wrapped: this row is one line tall by construction, and a notice that
+		// silently grew to two would push the buttons off the bottom of the screen.
+		graphics.enableScissor(MARGIN, y - 1, right, y + font.lineHeight + 1);
+		graphics.text(font, Component.literal(hint), MARGIN, y,
+				notice.isEmpty() ? TEXT_DIM : TEXT_GOOD);
+		graphics.disableScissor();
 	}
 
 	private void panel(GuiGraphicsExtractor graphics, int x, int y, int panelWidth, int panelHeight) {
@@ -373,11 +591,23 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
-		if (tabClicked(event.x(), event.y())) {
+		double mouseX = event.x() / zoom;
+		double mouseY = event.y() / zoom;
+
+		if (closeButton.clicked(mouseX, mouseY)) {
 			return true;
 		}
 
-		return tab != Tab.LEDGER && table.mouseClicked(event.x(), event.y());
+		if (tab.showsCandidates()
+				&& (takeButton.clicked(mouseX, mouseY) || copyButton.clicked(mouseX, mouseY))) {
+			return true;
+		}
+
+		if (tabClicked(mouseX, mouseY)) {
+			return true;
+		}
+
+		return tab.showsCandidates() && table.mouseClicked(mouseX, mouseY);
 	}
 
 	private boolean tabClicked(double mouseX, double mouseY) {
@@ -388,11 +618,12 @@ public final class FlipScreen extends Screen {
 		int tabX = MARGIN;
 
 		for (Tab candidate : Tab.values()) {
-			int tabWidth = font.width(Component.literal(candidate.label)) + 14;
+			int tabWidth = tabWidth(candidate);
 
 			if (mouseX >= tabX && mouseX < tabX + tabWidth) {
 				tab = candidate;
 				notice = "";
+				sideScroll.reset();
 				// Forced: the book has not moved, but the question being asked of it has.
 				refresh(true);
 				return true;
@@ -406,7 +637,17 @@ public final class FlipScreen extends Screen {
 
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-		if (tab != Tab.LEDGER && table.mouseScrolled(scrollY)) {
+		double vx = mouseX / zoom;
+
+		if (!tab.showsCandidates()) {
+			if (sideScroll.scroll(scrollY)) {
+				return true;
+			}
+		} else if (vx >= detailX()) {
+			if (detailScroll.scroll(scrollY)) {
+				return true;
+			}
+		} else if (table.mouseScrolled(scrollY)) {
 			return true;
 		}
 
@@ -422,7 +663,7 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
-		if (tab != Tab.LEDGER) {
+		if (tab.showsCandidates()) {
 			if (event.key() == GLFW.GLFW_KEY_DOWN) {
 				table.moveSelection(1);
 				return true;

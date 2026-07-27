@@ -12,7 +12,9 @@ import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The scrollable, sortable list of candidates.
@@ -24,6 +26,13 @@ import java.util.List;
  * <p>Sorting happens here and nowhere else. The list handed in is already ranked by profit per
  * hour - {@link FlipCandidate}'s natural order - and re-sorting is a view concern; the ranking
  * itself still belongs to {@code CandidateFeed}.
+ *
+ * <p><b>Columns are measured, not placed at fixed fractions.</b> The numeric columns are as wide as
+ * their widest actual value plus their header, right-aligned against their own edge, and the item
+ * name gets whatever is left over and is cut to fit it. Fractional positions were what let
+ * "Enchanted Golden Carrot" run underneath its own profit figure: a fraction that works at one GUI
+ * scale, in one language, for one set of numbers does not work for the next, and the failure mode
+ * is two numbers drawn on top of each other with no indication which is which.
  */
 final class CandidateTable {
 	static final int ROW_HEIGHT = 12;
@@ -38,10 +47,13 @@ final class CandidateTable {
 	private static final int TEXT_NAME = 0xFF55FFFF;
 	private static final int TEXT_PROFIT = 0xFF55FF55;
 
-	/** Long names would otherwise push the numeric columns off the panel. */
-	private static final int MAX_NAME_CHARS = 24;
-
 	private static final int SPARK_WIDTH = 14;
+
+	/** Gap between one column's text and the next column's, and either edge of the panel. */
+	private static final int GAP = 6;
+
+	/** Where the rank number ends and the name may start. */
+	private static final int RANK_WIDTH = 16;
 
 	/** What a column click sorts by. Every one of these is already on {@link FlipCandidate}. */
 	enum Column {
@@ -77,11 +89,16 @@ final class CandidateTable {
 	private int width;
 	private int height;
 
+	/** Right edge of each numeric column's text, measured from the data. */
+	private final Map<Column, Integer> rightEdge = new EnumMap<>(Column.class);
+	private boolean layoutStale = true;
+
 	void setBounds(int x, int y, int width, int height) {
 		this.x = x;
 		this.y = y;
 		this.width = width;
 		this.height = height;
+		this.layoutStale = true;
 	}
 
 	/**
@@ -96,6 +113,7 @@ final class CandidateTable {
 
 		this.candidates = new ArrayList<>(candidates);
 		this.trends = trends;
+		this.layoutStale = true;
 		applySort();
 
 		selected = -1;
@@ -129,6 +147,7 @@ final class CandidateTable {
 	}
 
 	void render(GuiGraphicsExtractor graphics, Font font, int mouseX, int mouseY) {
+		layout(font);
 		renderHeader(graphics, font, mouseX, mouseY);
 
 		int rows = visibleRows();
@@ -165,24 +184,22 @@ final class CandidateTable {
 		graphics.text(font, Component.literal(String.valueOf(index + 1))
 				.withStyle(ChatFormatting.DARK_GRAY), x + 3, textY, TEXT_DIM);
 
-		graphics.text(font, Component.literal(shorten(candidate.displayName())),
-				columnX(Column.NAME), textY, TEXT_NAME);
+		graphics.text(font, Component.literal(fitName(font, candidate.displayName())),
+				x + RANK_WIDTH, textY, TEXT_NAME);
 
-		graphics.text(font, Component.literal(Coins.format(candidate.profitPerHour())),
-				columnX(Column.PROFIT), textY, TEXT_PROFIT);
-
-		graphics.text(font, Component.literal(Coins.format(candidate.capitalRequired())),
-				columnX(Column.CAPITAL), textY, TEXT);
-
-		graphics.text(font, Component.literal(
-						String.format("%.0f%%", candidate.returnOnCapital() * 100.0d)),
-				columnX(Column.RETURN), textY, TEXT_DIM);
-
-		graphics.text(font, Component.literal(String.format("%.2f", candidate.confidence())),
-				columnX(Column.CONFIDENCE), textY, TEXT_DIM);
+		rightAligned(graphics, font, Column.PROFIT, cell(Column.PROFIT, candidate), textY, TEXT_PROFIT);
+		rightAligned(graphics, font, Column.CAPITAL, cell(Column.CAPITAL, candidate), textY, TEXT);
+		rightAligned(graphics, font, Column.RETURN, cell(Column.RETURN, candidate), textY, TEXT_DIM);
+		rightAligned(graphics, font, Column.CONFIDENCE, cell(Column.CONFIDENCE, candidate), textY, TEXT_DIM);
 
 		PriceTrend trend = trends.trendFor(candidate.itemId()).orElse(null);
 		Sparkline.draw(graphics, trend, x + width - SPARK_WIDTH - 4, rowY + 3, SPARK_WIDTH);
+	}
+
+	private void rightAligned(GuiGraphicsExtractor graphics, Font font, Column column, String text,
+			int textY, int colour) {
+		Component component = Component.literal(text);
+		graphics.text(font, component, rightEdge(column) - font.width(component), textY, colour);
 	}
 
 	private void renderHeader(GuiGraphicsExtractor graphics, Font font, int mouseX, int mouseY) {
@@ -193,17 +210,22 @@ final class CandidateTable {
 				x + 3, textY, TEXT_DIM);
 
 		for (Column column : Column.values()) {
-			int columnX = columnX(column);
-			int columnWidth = font.width(Component.literal(column.label())) + 8;
-			boolean hovered = overHeader && mouseX >= columnX && mouseX < columnX + columnWidth;
+			Component label = Component.literal(headerLabel(column));
+			int left = columnLeft(column);
+			boolean hovered = overHeader && mouseX >= left && mouseX < columnRight(column);
+			int colour = column == sortColumn || hovered ? TEXT : TEXT_DIM;
 
-			String label = column.label() + (column == sortColumn ? (descending ? " v" : " ^") : "");
-			int colour = column == sortColumn ? TEXT : (hovered ? TEXT : TEXT_DIM);
-
-			graphics.text(font, Component.literal(label), columnX, textY, colour);
+			// Headers sit over their own cells: the name reads from the left like the names below
+			// it, the numbers from the right like the numbers below them.
+			int at = column == Column.NAME ? left : rightEdge(column) - font.width(label);
+			graphics.text(font, label, at, textY, colour);
 		}
 
 		graphics.fill(x, y + HEADER_HEIGHT - 1, x + width, y + HEADER_HEIGHT, HEADER_RULE);
+	}
+
+	private String headerLabel(Column column) {
+		return column.label() + (column == sortColumn ? (descending ? " v" : " ^") : "");
 	}
 
 	private void renderScrollbar(GuiGraphicsExtractor graphics) {
@@ -246,10 +268,7 @@ final class CandidateTable {
 
 	private boolean headerClicked(double mouseX) {
 		for (Column column : Column.values()) {
-			int columnX = columnX(column);
-			int columnWidth = columnWidthFor(column);
-
-			if (mouseX >= columnX && mouseX < columnX + columnWidth) {
+			if (mouseX >= columnLeft(column) && mouseX < columnRight(column)) {
 				// Clicking the active column reverses it; a new column starts descending, which
 				// is what "best first" means for every column except the name.
 				if (column == sortColumn) {
@@ -260,6 +279,8 @@ final class CandidateTable {
 				}
 
 				applySort();
+				// The arrow moves with the sort column, which changes how wide the headers are.
+				layoutStale = true;
 				scroll = 0;
 				return true;
 			}
@@ -313,29 +334,87 @@ final class CandidateTable {
 	}
 
 	/**
-	 * Column positions as fractions of the panel, so the table reflows with the window instead of
-	 * clipping on small GUI scales.
+	 * Measures the numeric columns and packs them against the right edge.
+	 *
+	 * <p>Recomputed only when the data, the sort arrow or the panel size changes, not per frame:
+	 * this walks every candidate rather than only the visible ones, so that scrolling does not make
+	 * the columns twitch as longer values come into view.
 	 */
-	private int columnX(Column column) {
+	private void layout(Font font) {
+		if (!layoutStale) {
+			return;
+		}
+
+		layoutStale = false;
+
+		int edge = x + width - SPARK_WIDTH - GAP;
+
+		// Right to left, because it is the right-hand edge each column is aligned to.
+		for (Column column : List.of(Column.CONFIDENCE, Column.RETURN, Column.CAPITAL, Column.PROFIT)) {
+			int widest = font.width(Component.literal(column.label() + " v"));
+
+			for (FlipCandidate candidate : candidates) {
+				widest = Math.max(widest, font.width(Component.literal(cell(column, candidate))));
+			}
+
+			rightEdge.put(column, edge);
+			edge -= widest + GAP;
+		}
+
+		rightEdge.put(Column.NAME, edge);
+	}
+
+	private int rightEdge(Column column) {
+		return rightEdge.getOrDefault(column, x + width);
+	}
+
+	private int columnLeft(Column column) {
+		return column == Column.NAME
+				? x + RANK_WIDTH
+				: rightEdge(Column.values()[column.ordinal() - 1]) + GAP;
+	}
+
+	private int columnRight(Column column) {
+		return column == Column.NAME ? rightEdge(Column.NAME) : rightEdge(column);
+	}
+
+	private static String cell(Column column, FlipCandidate candidate) {
 		return switch (column) {
-			case NAME -> x + 16;
-			case PROFIT -> x + (int) (width * 0.42d);
-			case CAPITAL -> x + (int) (width * 0.60d);
-			case RETURN -> x + (int) (width * 0.76d);
-			case CONFIDENCE -> x + (int) (width * 0.86d);
+			case NAME -> candidate.displayName();
+			case PROFIT -> Coins.format(candidate.profitPerHour());
+			case CAPITAL -> Coins.format(candidate.capitalRequired());
+			case RETURN -> String.format("%.0f%%", candidate.returnOnCapital() * 100.0d);
+			case CONFIDENCE -> String.format("%.2f", candidate.confidence());
 		};
 	}
 
-	private int columnWidthFor(Column column) {
-		Column[] all = Column.values();
-		int index = column.ordinal();
+	/**
+	 * Cuts a name to the space the numeric columns left it, in pixels rather than characters.
+	 *
+	 * <p>A character budget is the wrong unit: "Whipped Magma Cream" and "IIIIIIIIIIIIIIIIIII" are
+	 * the same length and nothing like the same width.
+	 */
+	private String fitName(Font font, String name) {
+		int available = rightEdge(Column.NAME) - (x + RANK_WIDTH);
+		Component full = Component.literal(name);
 
-		return index + 1 < all.length
-				? columnX(all[index + 1]) - columnX(column)
-				: x + width - columnX(column);
-	}
+		if (font.width(full) <= available) {
+			return name;
+		}
 
-	private static String shorten(String name) {
-		return name.length() <= MAX_NAME_CHARS ? name : name.substring(0, MAX_NAME_CHARS - 1) + "…";
+		String ellipsis = "...";
+		int budget = available - font.width(Component.literal(ellipsis));
+
+		if (budget <= 0) {
+			return "";
+		}
+
+		int end = name.length();
+
+		while (end > 0 && font.width(Component.literal(name.substring(0, end))) > budget) {
+			end--;
+		}
+
+		return name.substring(0, end) + ellipsis;
 	}
 }
