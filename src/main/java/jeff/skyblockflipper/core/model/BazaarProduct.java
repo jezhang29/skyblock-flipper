@@ -28,6 +28,8 @@ public record BazaarProduct(
 	public record MovingWeek(long instantBought, long instantSold) {
 	}
 
+	private static final double HOURS_PER_WEEK = 168.0d;
+
 	public BazaarProduct {
 		sellOffers = List.copyOf(sellOffers);
 		buyOrders = List.copyOf(buyOrders);
@@ -84,6 +86,27 @@ public record BazaarProduct(
 	 */
 	public long bottleneckWeeklyVolume() {
 		return Math.min(movingWeek.instantBought(), movingWeek.instantSold());
+	}
+
+	/**
+	 * Units per hour other players instantly buy, i.e. the rate sell offers get lifted.
+	 *
+	 * <p>This is the ceiling on how fast <b>you</b> can keep instant-buying: what is resting on the
+	 * ask side right now is a snapshot, not a supply. Sizing an hourly plan off the visible book
+	 * assumes it refills for free, which on a thin item it does not.
+	 */
+	public double instantBuysPerHour() {
+		return movingWeek.instantBought() / HOURS_PER_WEEK;
+	}
+
+	/**
+	 * Units per hour other players instantly sell, i.e. the rate buy orders get filled.
+	 *
+	 * <p>The ceiling on a resting buy order: an order only fills as fast as people dump into it,
+	 * however good the price looks.
+	 */
+	public double instantSellsPerHour() {
+		return movingWeek.instantSold() / HOURS_PER_WEEK;
 	}
 
 	/**
