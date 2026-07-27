@@ -4,6 +4,7 @@ import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.core.api.HypixelApi;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.api.MarketPoller;
+import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
 
 import net.fabricmc.loader.api.FabricLoader;
@@ -22,6 +23,7 @@ public final class MarketDataService {
 
 	private static MarketPoller poller;
 	private static SalesTape tape;
+	private static BazaarTape bazaarTape;
 
 	private MarketDataService() {
 	}
@@ -38,10 +40,26 @@ public final class MarketDataService {
 		return poller != null && poller.isRunning();
 	}
 
+	public static BazaarTape bazaarTape() {
+		return bazaarTape;
+	}
+
 	public static Path tapeDirectory() {
 		return FabricLoader.getInstance().getConfigDir()
 				.resolve(SkyblockFlipper.MOD_ID)
 				.resolve("tape");
+	}
+
+	/**
+	 * A sibling of the sales tape, never a child of it.
+	 *
+	 * <p>The two have their own retention windows and their own prune passes, and a shared
+	 * directory would let either one delete the other's files.
+	 */
+	public static Path bazaarTapeDirectory() {
+		return FabricLoader.getInstance().getConfigDir()
+				.resolve(SkyblockFlipper.MOD_ID)
+				.resolve("bazaar-tape");
 	}
 
 	public static synchronized void start() {
@@ -55,13 +73,16 @@ public final class MarketDataService {
 		}
 
 		tape = new SalesTape(tapeDirectory(), SkyblockFlipperClient.config().tapeRetentionDays);
+		bazaarTape = new BazaarTape(bazaarTapeDirectory(),
+				SkyblockFlipperClient.config().bazaarTapeRetentionDays);
 		// The settings are read through a supplier so /flip reload reaches the next sweep without
 		// restarting the poller.
-		poller = new MarketPoller(API, DATA, tape,
+		poller = new MarketPoller(API, DATA, tape, bazaarTape,
 				() -> SkyblockFlipperClient.config().scanSettings(), SkyblockFlipper.LOGGER::info);
 		poller.start();
 
-		SkyblockFlipper.LOGGER.info("Market poller started; sales tape at {}", tapeDirectory());
+		SkyblockFlipper.LOGGER.info("Market poller started; sales tape at {}, bazaar tape at {}",
+				tapeDirectory(), bazaarTapeDirectory());
 	}
 
 	public static synchronized void stop() {

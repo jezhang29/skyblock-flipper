@@ -1,8 +1,12 @@
 package jeff.skyblockflipper.core.api;
 
 import jeff.skyblockflipper.core.config.ScanSettings;
+import jeff.skyblockflipper.core.model.BazaarSample;
+import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
+import jeff.skyblockflipper.core.valuation.PriceHistory;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
 
 import java.io.IOException;
@@ -55,22 +59,43 @@ public final class MarketPoller implements AutoCloseable {
 	 */
 	private static final Duration VALUATION_INTERVAL = Duration.ofMinutes(10);
 
+	/**
+	 * How often bazaar top-of-book is written to the tape.
+	 *
+	 * <p>Far slower than the book is fetched, and that is the point: the trend indicators cannot
+	 * resolve twenty-second granularity, so taping every poll would cost roughly fifteen times the
+	 * disk to answer exactly the same questions.
+	 */
+	private static final Duration BAZAAR_TAPE_INTERVAL = Duration.ofMinutes(5);
+
 	private final HypixelApi api;
 	private final MarketData data;
 	private final SalesTape tape;
+	private final BazaarTape bazaarTape;
 	private final Supplier<ScanSettings> settings;
 	private final Consumer<String> log;
 
+	/**
+	 * The live price series. Mutable and owned by this class alone - readers get the immutable
+	 * {@code TrendSnapshot} published onto {@link MarketData} after every append.
+	 */
+	private final PriceHistory history;
+
 	private ScheduledExecutorService executor;
 
-	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape,
+	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape, BazaarTape bazaarTape,
 			Supplier<ScanSettings> settings, Consumer<String> log) {
 		this.api = api;
 		this.data = data;
 		this.tape = tape;
+		this.bazaarTape = bazaarTape;
 		// A supplier rather than a copy: /flip reload then changes what the next sweep does.
 		this.settings = settings;
 		this.log = log;
+		// Read once instead: the ring's capacity is derived from the window, so it cannot change
+		// under a running poller. /flip reload restarts the poller, which is where a new window
+		// takes effect.
+		this.history = new PriceHistory(Duration.ofHours(settings.get().trendWindowHours()));
 	}
 
 	public synchronized void start() {
@@ -90,6 +115,11 @@ public final class MarketPoller implements AutoCloseable {
 		schedule(this::pollMayor, Duration.ofSeconds(4), MAYOR_INTERVAL);
 		schedule(this::pollItems, Duration.ofSeconds(6), ITEMS_INTERVAL);
 		schedule(this::pruneTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
+
+		// Replays yesterday's tape into the ring before the first live sample, so trends are
+		// available immediately on a client that has run before rather than three hours in.
+		scheduleOnce(this::warmPriceHistory, Duration.ofSeconds(8));
+		schedule(this::recordBazaarSample, Duration.ofSeconds(45), BAZAAR_TAPE_INTERVAL);
 
 		// Valuation runs first and early: the auction sweep is skipped entirely until there is
 		// something to compare listings against, so there is no point starting it sooner.
@@ -122,6 +152,67 @@ public final class MarketPoller implements AutoCloseable {
 		} catch (IOException e) {
 			data.recordFailure("could not write sales tape: " + e.getMessage());
 			log.accept("Failed writing sales tape: " + e);
+		}
+	}
+
+	/**
+	 * Tapes the current book and folds it into the live price series.
+	 *
+	 * <p>Reads the snapshot the bazaar poll already fetched rather than making a request of its
+	 * own, so history costs disk and nothing else. An unchanged book writes nothing: the tape
+	 * dedupes on Hypixel's own stamp, and a duplicate sample would weight one frozen moment as
+	 * heavily as a real move.
+	 */
+	private void recordBazaarSample() {
+		if (!settings.get().bazaarTapeEnabled()) {
+			return;
+		}
+
+		BazaarSnapshot snapshot = data.bazaar();
+
+		if (snapshot.isEmpty()) {
+			return;
+		}
+
+		try {
+			List<BazaarSample> written = bazaarTape.record(snapshot);
+
+			if (written.isEmpty()) {
+				return;
+			}
+
+			written.forEach(history::append);
+			data.setTrends(history.snapshot());
+		} catch (IOException e) {
+			data.recordFailure("could not write bazaar tape: " + e.getMessage());
+			log.accept("Failed writing bazaar tape: " + e);
+		}
+	}
+
+	/**
+	 * Replays the recent tape into the price ring, once, at startup.
+	 *
+	 * <p>Only the window's worth is read back. The tape holds far more so that longer-horizon
+	 * questions stay answerable later, but the ring would evict anything older on the way in, so
+	 * reading it would be work thrown away.
+	 */
+	private void warmPriceHistory() {
+		ScanSettings config = settings.get();
+
+		if (!config.bazaarTapeEnabled()) {
+			return;
+		}
+
+		try {
+			int days = (int) Math.max(1L, Math.ceilDiv(config.trendWindowHours(), 24));
+			int read = bazaarTape.forEachRecent(days, history::append);
+			history.setDailyStats(bazaarTape.readDailyIndex());
+			data.setTrends(history.snapshot());
+
+			log.accept("Price history warmed from " + read + " taped samples across "
+					+ history.productsTracked() + " products");
+		} catch (IOException e) {
+			log.accept("Failed reading the bazaar tape to warm price history: " + e);
 		}
 	}
 
@@ -194,6 +285,24 @@ public final class MarketPoller implements AutoCloseable {
 		} catch (IOException e) {
 			log.accept("Failed pruning sales tape: " + e);
 		}
+
+		try {
+			// Summarise before deleting, so a day that ages out still leaves its rollup behind.
+			int rolled = bazaarTape.rollUpCompletedDays();
+			int removed = bazaarTape.prune();
+
+			if (rolled > 0) {
+				history.setDailyStats(bazaarTape.readDailyIndex());
+				data.setTrends(history.snapshot());
+			}
+
+			if (rolled > 0 || removed > 0) {
+				log.accept("Bazaar tape: rolled up " + rolled + " day(s), pruned " + removed
+						+ " expired file(s)");
+			}
+		} catch (IOException e) {
+			log.accept("Failed maintaining bazaar tape: " + e);
+		}
 	}
 
 	/**
@@ -202,7 +311,17 @@ public final class MarketPoller implements AutoCloseable {
 	 * one transient network blip into a permanently dead poller.
 	 */
 	private void schedule(PollTask task, Duration initialDelay, Duration interval) {
-		executor.scheduleAtFixedRate(() -> {
+		executor.scheduleAtFixedRate(guarded(task),
+				initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
+	}
+
+	/** For work that only makes sense once, like replaying the tape into an empty ring. */
+	private void scheduleOnce(PollTask task, Duration delay) {
+		executor.schedule(guarded(task), delay.toMillis(), TimeUnit.MILLISECONDS);
+	}
+
+	private Runnable guarded(PollTask task) {
+		return () -> {
 			try {
 				task.run();
 				data.clearError();
@@ -217,7 +336,7 @@ public final class MarketPoller implements AutoCloseable {
 				data.recordFailure(e.toString());
 				log.accept("Unexpected poll error: " + e);
 			}
-		}, initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
+		};
 	}
 
 	@FunctionalInterface

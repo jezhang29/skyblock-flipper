@@ -5,6 +5,7 @@ import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.PricedListing;
+import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -25,6 +26,7 @@ public final class MarketData {
 	private final AtomicReference<Instant> bazaarFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<Instant> salesFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<FairValueModel> values = new AtomicReference<>(FairValueModel.empty());
+	private final AtomicReference<TrendSnapshot> trends = new AtomicReference<>(TrendSnapshot.empty());
 	private final AtomicReference<List<PricedListing>> underpriced = new AtomicReference<>(List.of());
 	private final AtomicReference<Instant> auctionsScannedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<String> scanSummary = new AtomicReference<>("");
@@ -67,6 +69,21 @@ public final class MarketData {
 
 	public void setValues(FairValueModel model) {
 		values.set(model);
+	}
+
+	/**
+	 * Which way bazaar prices have been moving.
+	 *
+	 * <p>Published as a frozen snapshot rather than as the live {@code PriceHistory}, which is a
+	 * mutable ring the poller thread owns. Everything in this class is an immutable snapshot for
+	 * the same reason, and a trend is no different.
+	 */
+	public TrendSnapshot trends() {
+		return trends.get();
+	}
+
+	public void setTrends(TrendSnapshot snapshot) {
+		trends.set(snapshot);
 	}
 
 	/** Live listings found below fair value by the last sweep. */

@@ -11,6 +11,7 @@ import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
+import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
@@ -20,6 +21,7 @@ import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import java.io.IOException;
 
@@ -28,6 +30,7 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 
 import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
@@ -102,6 +105,14 @@ public final class FlipCommand {
 				.then(ClientCommands.literal("hud")
 						.executes(ctx -> {
 							toggleHud(ctx.getSource());
+							return 1;
+						}))
+				.then(ClientCommands.literal("gui")
+						.executes(ctx -> {
+							// Deferred rather than opened inline: the chat screen is still closing
+							// when a command executes, and replacing it mid-teardown leaves the
+							// new screen without a size.
+							Minecraft.getInstance().execute(FlipKeybinds::open);
 							return 1;
 						}))
 				.then(ClientCommands.literal("reload")
@@ -316,6 +327,21 @@ public final class FlipCommand {
 				: data.values().pricedConfigurations() + " item configurations from "
 						+ data.values().salesConsidered() + " sales");
 
+		TrendSnapshot trends = data.trends();
+		String history = "off (bazaarTapeEnabled=false)";
+
+		if (SkyblockFlipperClient.config().bazaarTapeEnabled) {
+			history = trends.isEmpty()
+					? "warming up (sampled every 5m)"
+					: trends.samples() + " samples over " + trends.size() + " products, "
+							+ trends.window().toHours() + "h window"
+							+ (trends.productsWithDailyHistory() > 0
+									? ", " + trends.productsWithDailyHistory() + " with daily rollup"
+									: "");
+		}
+
+		line(source, "price history", history);
+
 		String sweep = "disabled";
 
 		if (SkyblockFlipperClient.config().scanAuctions) {
@@ -350,6 +376,12 @@ public final class FlipCommand {
 		line(source, "bazaar flipper level", String.valueOf(config.bazaarFlipperLevel));
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
 		line(source, "min confidence", String.format("%.2f", config.minConfidence));
+		line(source, "max adverse drift", config.maxAdverseDrift <= 0.0d
+				? "off"
+				: String.format("%.1f%%", config.maxAdverseDrift * 100.0d));
+		line(source, "bazaar tape", config.bazaarTapeEnabled
+				? config.bazaarTapeRetentionDays + "d retained, " + config.trendWindowHours + "h trend window"
+				: "off");
 		line(source, "hud", config.hudEnabled
 				? config.hudLines + " lines, " + config.anchor() + " +" + config.hudMarginX + "," + config.hudMarginY
 				: "off");

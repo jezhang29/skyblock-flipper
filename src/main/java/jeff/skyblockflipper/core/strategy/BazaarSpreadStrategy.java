@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.valuation.PriceTrend;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,13 +24,18 @@ import java.util.List;
  *       a whale's buy wall evaporates the moment you commit.</li>
  *   <li><b>Implausible spreads.</b> A 40% spread on a liquid item is not free money nobody noticed,
  *       it is a signal that something is wrong with the data or the item.</li>
+ *   <li><b>Direction.</b> A spread quoted on a falling market is not the spread you will realize.
+ *       Your buy orders fill fastest exactly when people are dumping, and your sell offers fill
+ *       slowest at the same moment, so adverse selection makes realized P&amp;L systematically worse
+ *       than the number measured at order time.</li>
+ *   <li><b>Manipulation.</b> A thin book that has abruptly left its own normal range is usually
+ *       someone building a trap rather than a market repricing.</li>
  * </ul>
  *
- * <p>What this cannot see is adverse selection: your buy orders fill fastest exactly when the price
- * is falling, because that is when people are dumping, and your sell offers fill slowest at the
- * same moment. Realized P&L is therefore systematically worse than the spread measured at order
- * time. Detecting it needs price history, which arrives with the sales tape, so for now it is
- * surfaced as a standing risk note on every candidate rather than silently ignored.
+ * <p>The last two need price history, which the bazaar tape now provides. Before enough of it
+ * accumulates - a fresh install, or a window the client was closed for - {@code trends} is empty
+ * and both tests stand down rather than guessing. That case is reported as a risk in its own right:
+ * "cannot tell" is honest, and silently behaving as though the market were stable is not.
  */
 public final class BazaarSpreadStrategy implements FlipStrategy {
 	/** Below this weekly volume on the thinner side, fills are too slow to model. */
@@ -51,6 +57,30 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 	private static final double MIN_UNIT_PRICE = 1.0d;
 
 	private static final double HOURS_PER_WEEK = 168.0d;
+
+	/**
+	 * Above this weekly volume a book is too expensive to push around, so an abrupt move is far
+	 * more likely to be real news than someone building a trap.
+	 */
+	private static final long MANIPULATION_VOLUME_CEILING = 500_000L;
+
+	/** Standard deviations from the item's own recent mean before a move counts as abrupt. */
+	private static final double SPIKE_SIGMA = 3.0d;
+
+	/**
+	 * How far above its multi-day normal a thin item may sit before it is treated as manipulated.
+	 *
+	 * <p>Checked in addition to {@link #SPIKE_SIGMA} because the two catch different things: a
+	 * scheme that has been running longer than the in-memory window is already inside that
+	 * window's average and no longer looks abrupt against it. The daily rollup does not move.
+	 */
+	private static final double MANIPULATION_DAILY_MULTIPLE = 0.5d;
+
+	/** Drift worth warning about, well below the level that gets a candidate rejected outright. */
+	private static final double FALLING_RISK_THRESHOLD = 0.01d;
+
+	/** Per-sample log-return deviation above which a book is worth calling choppy. */
+	private static final double VOLATILE_THRESHOLD = 0.015d;
 
 	/**
 	 * You are one participant among many, so you cannot expect to capture the whole flow. Assume a
@@ -109,6 +139,21 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 			return java.util.Optional.empty();
 		}
 
+		// Empty until the tape has enough history, and every use below has to cope with that.
+		PriceTrend trend = context.trends().trendFor(product.productId()).orElse(null);
+
+		if (trend != null) {
+			// Posting a buy order into a decline is the single most reliable way to turn a quoted
+			// margin into a realized loss, and it is invisible in the book you are quoting off.
+			if (context.maxAdverseDrift() > 0.0d && trend.isFalling(context.maxAdverseDrift())) {
+				return java.util.Optional.empty();
+			}
+
+			if (looksManipulated(product, trend, context)) {
+				return java.util.Optional.empty();
+			}
+		}
+
 		// Throughput is the lesser of what the market can absorb and what your coins can fund.
 		double marketUnitsPerHour = weeklyVolume / HOURS_PER_WEEK * ASSUMED_VOLUME_SHARE;
 		long affordableUnits = (long) (context.bankroll() / buyPrice);
@@ -139,21 +184,65 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 				units,
 				capital,
 				profitPerHour,
-				confidence(weeklyVolume, product),
+				confidence(weeklyVolume, product, trend),
 				steps(name, buyPrice, sellPrice, units),
-				risks(product)));
+				risks(product, trend, context)));
+	}
+
+	/**
+	 * A thin book that has abruptly left its own normal range.
+	 *
+	 * <p>Both halves are required. An abrupt move on a deep market is news; the same move on a book
+	 * a single player can shift is usually bait, priced to look like an opportunity right up until
+	 * the wall it is resting on disappears.
+	 */
+	private static boolean looksManipulated(BazaarProduct product, PriceTrend trend,
+			StrategyContext context) {
+		if (product.bottleneckWeeklyVolume() > MANIPULATION_VOLUME_CEILING) {
+			return false;
+		}
+
+		if (trend.isSpiking(SPIKE_SIGMA)) {
+			return true;
+		}
+
+		java.util.OptionalDouble daily = context.trends().dailyMedianFor(product.productId());
+
+		return daily.isPresent()
+				&& trend.latest() > daily.getAsDouble() * (1.0d + MANIPULATION_DAILY_MULTIPLE);
 	}
 
 	/**
 	 * Confidence rises with liquidity and book depth, because both make the quoted prices more
-	 * likely to still be there when you act on them.
+	 * likely to still be there when you act on them, and falls with adverse drift and volatility,
+	 * because both make it less likely that the spread you measured is the spread you collect.
+	 *
+	 * <p>A candidate with no history is not penalised, and neither is one whose history turns out
+	 * to be calm. Both must score the same: if merely having been measured cost confidence, the
+	 * ranking would drift toward whichever items the tape happened not to cover yet, which is the
+	 * opposite of what recording history is for. Only an actual decline or actual choppiness
+	 * costs anything, and the unmeasured case is said out loud in the risks instead.
 	 */
-	private static double confidence(long weeklyVolume, BazaarProduct product) {
+	private static double confidence(long weeklyVolume, BazaarProduct product, PriceTrend trend) {
 		double volumeScore = Math.min(1.0d, weeklyVolume / 2_000_000.0d);
 		int depth = Math.min(product.sellOfferCount(), product.buyOrderCount());
 		double depthScore = Math.min(1.0d, depth / 60.0d);
+		double base = 0.35d + 0.4d * volumeScore + 0.25d * depthScore;
 
-		return 0.35d + 0.4d * volumeScore + 0.25d * depthScore;
+		if (trend == null) {
+			return base;
+		}
+
+		double driftPenalty = trend.drift() < 0.0d
+				? Math.min(0.30d, -trend.drift() * 4.0d)
+				: 0.0d;
+
+		// Measured against the same threshold that earns a candidate the "choppy" risk note, so
+		// the number and the warning cannot disagree about what counts as choppy.
+		double excessVolatility = Math.max(0.0d, trend.volatility() - VOLATILE_THRESHOLD);
+		double volatilityPenalty = Math.min(0.20d, excessVolatility * 10.0d);
+
+		return Math.clamp(base - driftPenalty - volatilityPenalty, 0.05d, 1.0d);
 	}
 
 	private static List<String> steps(String name, double buyPrice, double sellPrice, long units) {
@@ -165,11 +254,21 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 				"Cancel and reprice if the book moves against you rather than holding stock");
 	}
 
-	private static List<String> risks(BazaarProduct product) {
+	private static List<String> risks(BazaarProduct product, PriceTrend trend, StrategyContext context) {
 		List<String> risks = new ArrayList<>();
 
-		// Always present, never currently measurable. Saying so beats implying it is absent.
-		risks.add("Buy orders fill fastest while the price is falling; realized margin runs below quoted");
+		if (trend == null) {
+			// Unmeasured, not absent. This used to be an unconditional note on every candidate
+			// because there was no way to tell; now it means the tape has not seen this product
+			// for long enough, which is a different and much narrower claim.
+			risks.add("No price history for this item yet: a falling market would not be visible here");
+		} else if (trend.isFalling(FALLING_RISK_THRESHOLD)) {
+			risks.add(String.format(
+					"Price down %.1f%% against its %dh average; buy orders fill fastest into a decline",
+					-trend.drift() * 100.0d, context.trends().window().toHours()));
+		} else if (trend.volatility() > VOLATILE_THRESHOLD) {
+			risks.add("Choppy price series: the book you quoted against may not be there on the fill");
+		}
 
 		if (product.bottleneckWeeklyVolume() < 250_000L) {
 			risks.add("Thin two-sided flow: fills may take hours");
