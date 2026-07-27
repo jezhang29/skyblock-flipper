@@ -123,8 +123,15 @@ Other rules:
   recombobulated sales.
 - Valuation trains on `auctions_ended` only, never active listings (contaminated by the very
   mispricings being hunted). BIN sales only, medians not means.
-- `/v2/resources/skyblock/items` carries `upgrade_costs` and `recipes`, so star pricing and craft
-  flips are computed deterministically from that, not fitted.
+- `/v2/resources/skyblock/items` carries `upgrade_costs`, so star pricing is computed
+  deterministically from that, not fitted: 544 items, 9 essence types and 43 item ingredients, and
+  **every one of those ingredients is a bazaar product**, so any star tier prices off the book.
+  `UpgradePricing` quotes at the ask and returns empty rather than a partial total.
+  **It does not carry recipes** — one entry in 5549 (`PRECURSOR_APPARATUS`) has `recipes` and none
+  has `recipe`, so craft flips have no deterministic source here. Don't plan around one.
+- **The auction house and the bazaar trade disjoint sets of items**, so there is no AH→BZ
+  arbitrage: of 4351 live BINs sampled across the house, 4 carried a bazaar product's name and all
+  four were `DIRT_BOTTLE`, whose book is empty on both sides. Enchanted books are bazaar-only now.
 - **Item names there are not unique enough to search on.** `ENCHANTED_MELON_BLOCK` is "Enchanted
   Melon", `ENCHANTED_MELON` is "Enchanted Melon Slice"; 187 of 5549 names are a strict prefix of
   another. Do not synthesise a name from the id — tried, and wrong more often than it helps

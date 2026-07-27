@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
+import jeff.skyblockflipper.core.pricing.UpgradePricing;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.ValueEstimate;
@@ -27,6 +28,9 @@ import java.util.Optional;
  * tool talks you into parking your bankroll in something illiquid.
  */
 public final class AuctionValueStrategy implements FlipStrategy {
+	/** Above this share of the price coming from star ingredients, it is essence you are buying. */
+	private static final double ESSENCE_HEAVY = 0.3d;
+
 	@Override
 	public StrategyKind kind() {
 		return StrategyKind.AUCTION_VALUE;
@@ -71,6 +75,10 @@ public final class AuctionValueStrategy implements FlipStrategy {
 
 		double hours = value.hoursToSell();
 
+		// Derived from the catalog's published star costs and the live book, so it is exact where
+		// everything else on this candidate is a median of past sales.
+		Optional<UpgradePricing.StarQuote> stars = quoteStars(priced, context);
+
 		return Optional.of(new FlipCandidate(
 				priced.item().skyblockId(),
 				priced.item().displayName(),
@@ -83,7 +91,21 @@ public final class AuctionValueStrategy implements FlipStrategy {
 				net / hours,
 				confidence,
 				steps(priced, resale),
-				risks(priced, hours)));
+				risks(priced, hours, stars, price),
+				notes(stars, price)));
+	}
+
+	/** The essence and materials bill for the stars this item already carries, if it has any. */
+	private static Optional<UpgradePricing.StarQuote> quoteStars(PricedListing priced,
+			StrategyContext context) {
+		int stars = priced.item().stars();
+
+		if (stars <= 0) {
+			return Optional.empty();
+		}
+
+		return context.catalog().get(priced.item().skyblockId())
+				.flatMap(entry -> UpgradePricing.quoteStars(entry, stars, context.bazaar()));
 	}
 
 	private static List<String> steps(PricedListing priced, long resale) {
@@ -100,8 +122,43 @@ public final class AuctionValueStrategy implements FlipStrategy {
 		return steps;
 	}
 
-	private static List<String> risks(PricedListing priced, double hours) {
+	/**
+	 * What the stars are worth as ingredients.
+	 *
+	 * <p>Stated as a fact rather than folded into the valuation, because cost is not value: the
+	 * market pays its own premium for the work of starring, and occasionally pays less than the
+	 * essence came to. What it does let a player see is how much of the asking price is a commodity
+	 * they could buy themselves, which is the difference between a mispriced item and a correctly
+	 * priced pile of essence.
+	 */
+	private static List<String> notes(Optional<UpgradePricing.StarQuote> stars, long price) {
+		if (stars.isEmpty()) {
+			return List.of();
+		}
+
+		UpgradePricing.StarQuote quote = stars.get();
+		List<String> notes = new ArrayList<>(2);
+
+		notes.add(String.format("%d stars cost %s in essence and materials at current bazaar asks",
+				quote.stars(), Coins.format(quote.coins())));
+
+		if (price > 0L) {
+			notes.add(String.format("That is %.0f%% of the asking price; a buy order for the essence "
+					+ "would come in a few percent under it",
+					100.0d * quote.coins() / price));
+		}
+
+		return notes;
+	}
+
+	private static List<String> risks(PricedListing priced, double hours,
+			Optional<UpgradePricing.StarQuote> stars, long price) {
 		List<String> risks = new ArrayList<>();
+
+		if (stars.isPresent() && price > 0L && stars.get().coins() > ESSENCE_HEAVY * price) {
+			risks.add("Most of this price is star ingredients, so it revalues with the essence "
+					+ "book rather than with the item");
+		}
 
 		// Always true, and the honest reason a "free" 40% discount is still sitting there.
 		risks.add("The mod does not buy for you; a real underprice is often gone within seconds");

@@ -7,7 +7,9 @@ import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.EndedAuction;
+import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
+import jeff.skyblockflipper.core.model.UpgradeCost;
 import jeff.skyblockflipper.core.model.dto.AuctionsDto;
 
 import org.junit.jupiter.api.Test;
@@ -133,6 +135,37 @@ class LiveApiTest {
 
 		assertTrue(fractional > 0,
 				"expected some sub-coin NPC prices; if this is now zero the field may have changed type");
+	}
+
+	@Test
+	void everyStarIngredientIsStillABazaarProduct() throws Exception {
+		// The assumption UpgradePricing rests on. Measured when it was written: 544 items carry
+		// upgrade costs, drawing on 9 essence types and 43 distinct item ingredients, and all 43 of
+		// those items trade on the bazaar - so every star tier in the game is priceable from the
+		// book. If Hypixel ever adds an ingredient that is not bazaar-traded, star quotes for that
+		// item stop appearing rather than come out wrong, which is a failure nobody would notice.
+		var catalog = api.fetchItems();
+		BazaarSnapshot bazaar = api.fetchBazaar();
+
+		List<ItemCatalog.Entry> starrable = catalog.items().values().stream()
+				.filter(entry -> entry.maxStars() > 0)
+				.toList();
+
+		assertTrue(starrable.size() > 400,
+				"only " + starrable.size() + " items carry upgrade_costs; the field may have moved");
+
+		for (ItemCatalog.Entry entry : starrable) {
+			for (UpgradeCost level : entry.upgradeCosts()) {
+				assertFalse(level.ingredients().isEmpty(),
+						entry.id() + " has a star level with no ingredients");
+
+				for (UpgradeCost.Ingredient ingredient : level.ingredients()) {
+					assertTrue(bazaar.product(ingredient.productId()).isPresent(),
+							entry.id() + " needs " + ingredient.productId()
+									+ ", which is not a bazaar product");
+				}
+			}
+		}
 	}
 
 	@Test

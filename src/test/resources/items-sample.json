@@ -1,0 +1,250 @@
+{
+ "success": true,
+ "lastUpdated": 1,
+ "items": [
+  {
+   "id": "ARACK",
+   "name": "Arack",
+   "npc_sell_price": 5000,
+   "upgrade_costs": [
+    [
+     {
+      "type": "ESSENCE",
+      "essence_type": "SPIDER",
+      "amount": 15
+     }
+    ],
+    [
+     {
+      "type": "ESSENCE",
+      "essence_type": "SPIDER",
+      "amount": 25
+     }
+    ],
+    [
+     {
+      "type": "ESSENCE",
+      "essence_type": "SPIDER",
+      "amount": 35
+     }
+    ],
+    [
+     {
+      "type": "ESSENCE",
+      "essence_type": "SPIDER",
+      "amount": 45
+     }
+    ],
+    [
+     {
+      "type": "ESSENCE",
+      "essence_type": "SPIDER",
+      "amount": 65
+     }
+    ]
+   ]
+  },
+  {
+   "id": "HELLFIRE_ROD",
+   "name": "Hellfire Rod",
+   "npc_sell_price": 5634000,
+   "upgrade_costs": [
+    [
+     {
+      "type": "ITEM",
+      "item_id": "LUMP_OF_MAGMA",
+      "amount": 20
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 1
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 50
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "MOOGMA_PELT",
+      "amount": 20
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 2
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 80
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "PYROCLASTIC_SCALE",
+      "amount": 20
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 3
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 100
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "CUP_OF_BLOOD",
+      "amount": 50
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 40
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 160
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "FLAMING_HEART",
+      "amount": 70
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 50
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 200
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "ORB_OF_ENERGY",
+      "amount": 80
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 60
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 300
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "HORN_OF_TAURUS",
+      "amount": 90
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_SILVER",
+      "amount": 70
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 400
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "THUNDER_SHARDS",
+      "amount": 30
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_GOLD",
+      "amount": 30
+     },
+     {
+      "type": "ITEM",
+      "item_id": "HEAVY_PEARL",
+      "amount": 3
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 1000
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_LORD_FRAGMENT",
+      "amount": 25
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_GOLD",
+      "amount": 40
+     },
+     {
+      "type": "ITEM",
+      "item_id": "HEAVY_PEARL",
+      "amount": 4
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 1200
+     }
+    ],
+    [
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_LORD_FRAGMENT",
+      "amount": 30
+     },
+     {
+      "type": "ITEM",
+      "item_id": "MAGMA_FISH_GOLD",
+      "amount": 50
+     },
+     {
+      "type": "ITEM",
+      "item_id": "HEAVY_PEARL",
+      "amount": 5
+     },
+     {
+      "type": "ESSENCE",
+      "essence_type": "CRIMSON",
+      "amount": 1600
+     }
+    ]
+   ]
+  },
+  {
+   "id": "ENCHANTED_MELON_BLOCK",
+   "name": "Enchanted Melon",
+   "npc_sell_price": 51200
+  },
+  {
+   "id": "ENCHANTED_MELON",
+   "name": "Enchanted Melon Slice",
+   "npc_sell_price": 320
+  }
+ ]
+}
