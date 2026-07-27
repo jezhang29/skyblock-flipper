@@ -153,11 +153,61 @@ class StrategyTest {
 		assertEquals(StrategyKind.NPC_FLIP, candidate.kind());
 		assertEquals(80.0d, candidate.unitSellPrice(), 1e-9);
 
-		// Both ask levels (50 and 51) sit below the NPC price, so both are worth taking:
-		// 20000 units at a blended 50.5, leaving 29.5 a unit untaxed.
-		assertEquals(20_000L, candidate.units());
+		// Both ask levels (50 and 51) sit below the NPC price, so both are worth taking, at a
+		// blended 50.5 leaving 29.5 a unit untaxed.
 		assertEquals(50.5d, candidate.unitBuyPrice(), 1e-9);
 		assertEquals(29.5d, candidate.unitNetProfit(), 1e-9);
+
+		// 20000 units rest below the NPC price, but the book only turns over 5M a week, which is
+		// 29761 an hour; taking half of that is 14880. Sizing off resting depth would claim the
+		// full 20000 and an hour that does not exist.
+		assertEquals(14_880L, candidate.units());
+	}
+
+	@Test
+	void npcFlipPrefersABuyOrderWhenItPaysMore() {
+		// Shaped like ENCHANTED_MELON_BLOCK on the live bazaar: a wide book under a fixed NPC bid,
+		// where the ask is barely under the NPC price and the bid is far under it.
+		BazaarProduct wide = new BazaarProduct(
+				"TEST_ITEM",
+				List.of(new OrderLevel(50_933.5d, 500L, 1)),
+				List.of(new OrderLevel(49_654.1d, 15_000L, 1)),
+				new BazaarProduct.MovingWeek(1_200_000L, 3_380_000L));
+
+		ItemCatalog catalog = new ItemCatalog(Map.of(
+				"TEST_ITEM", new ItemCatalog.Entry("TEST_ITEM", "Test Item", 51_200.0d)));
+
+		FlipCandidate candidate = new NpcFlipStrategy()
+				.findCandidates(new StrategyContext(
+						new BazaarSnapshot(Instant.now(), Map.of("TEST_ITEM", wide)),
+						catalog, new Fees(0, false), 10_000_000_000L, 0L))
+				.getFirst();
+
+		// Outbidding the best bid costs 49654.2, against 50933.5 to cross the spread: 1545.8 a unit
+		// instead of 266.5, which is the whole reason the route is worth evaluating.
+		assertEquals(49_654.2d, candidate.unitBuyPrice(), 1e-6);
+		assertEquals(1_545.8d, candidate.unitNetProfit(), 1e-6);
+
+		assertTrue(candidate.steps().stream().anyMatch(s -> s.contains("Create Buy Order")),
+				"a buy-order plan should say so: " + candidate.steps());
+		assertTrue(candidate.notes().stream().anyMatch(n -> n.startsWith("Instant buy route instead")),
+				"the rejected route should be reported: " + candidate.notes());
+	}
+
+	@Test
+	void npcFlipRefusesAnItemNobodyTrades() {
+		// Deep, cheap and under the NPC price, but 40 units a week change hands. An hourly plan on
+		// this is fiction whichever route it uses.
+		BazaarProduct illiquid = new BazaarProduct(
+				"TEST_ITEM",
+				List.of(new OrderLevel(50.0d, 100_000L, 3)),
+				List.of(new OrderLevel(40.0d, 100_000L, 3)),
+				new BazaarProduct.MovingWeek(40L, 40L));
+
+		ItemCatalog catalog = new ItemCatalog(Map.of(
+				"TEST_ITEM", new ItemCatalog.Entry("TEST_ITEM", "Test Item", 80.0d)));
+
+		assertTrue(new NpcFlipStrategy().findCandidates(contextFor(illiquid, catalog, 0L)).isEmpty());
 	}
 
 	@Test
@@ -170,12 +220,14 @@ class StrategyTest {
 
 	@Test
 	void npcFlipStopsAtTheFirstUnprofitableBookLevel() {
-		// Only the first level is below the NPC price of 60; the second at 105 is not.
+		// Only the first level is below the NPC price of 60; the second at 105 is not. Nothing is
+		// ever instant-sold into this book, so the buy-order route is off the table and the
+		// instant-buy walk is what gets measured.
 		BazaarProduct book = new BazaarProduct(
 				"TEST_ITEM",
 				List.of(new OrderLevel(50.0d, 100L, 20), new OrderLevel(105.0d, 100_000L, 20)),
 				List.of(new OrderLevel(40.0d, 100L, 20)),
-				new BazaarProduct.MovingWeek(5_000_000L, 5_000_000L));
+				new BazaarProduct.MovingWeek(5_000_000L, 0L));
 
 		ItemCatalog catalog = new ItemCatalog(Map.of(
 				"TEST_ITEM", new ItemCatalog.Entry("TEST_ITEM", "Test Item", 60.0d)));
@@ -222,9 +274,10 @@ class StrategyTest {
 				.getFirst();
 
 		// 36 slots x 64 x 12 trips = 27648 units an hour. Without the cap this would claim the
-		// full 10M-unit book and an hourly profit no player could physically realize.
+		// full 10M-unit book and an hourly profit no player could physically realize. Both
+		// acquisition routes hit the same ceiling, since it is the manual sell leg that binds.
 		assertEquals(27_648L, candidate.units());
-		assertEquals(27_648L * 3.0d, candidate.profitPerHour(), 1e-6);
+		assertEquals(27_648L * candidate.unitNetProfit(), candidate.profitPerHour(), 1e-6);
 		assertTrue(candidate.risks().stream().anyMatch(r -> r.contains("trips")),
 				"a multi-trip plan should say so: " + candidate.risks());
 	}
