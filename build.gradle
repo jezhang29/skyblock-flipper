@@ -26,6 +26,13 @@ repositories {
 	// for more information about repositories.
 }
 
+configurations {
+	// Everything the headless collector needs that Minecraft would otherwise have supplied.
+	// Kept off the mod's own classpath: inside the game these classes are already there, and a
+	// second copy is exactly the sort of thing that loads fine and then behaves differently.
+	collector
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -49,6 +56,10 @@ dependencies {
 	// rendering takes a different path when present, and the dev client should run the path
 	// players see. Runtime only, and never shipped - Mod Menu brings its own.
 	localRuntime "eu.pb4:placeholder-api:${project.placeholder_api_version}"
+
+	// Pinned to the version Minecraft 26.2 resolves to, so the collector runs the same Gson the
+	// game does and a config file cannot parse two ways depending on where it was read.
+	collector "com.google.code.gson:gson:${project.gson_version}"
 
 	// Tests cover the `core` package only, which by design has no Minecraft on its classpath.
 	testImplementation platform("org.junit:junit-bom:5.11.4")
@@ -116,6 +127,38 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_$projectName"}
 	}
+}
+
+/**
+ * A runnable jar of the data pipeline alone, for collecting tape on a machine with no game on it.
+ *
+ * <p>Deliberately not the mod jar with a Main-Class bolted on. It packs `core` and nothing else,
+ * which works only because `core` imports no Minecraft or Fabric class - so if this task ever
+ * starts producing something that will not run, the cause is that the layering broke, and the
+ * NoClassDefFoundError is the report. It is not remapped, because there is nothing to remap.
+ */
+tasks.register("collectorJar", Jar) {
+	description = "Builds a standalone jar that collects market data without Minecraft"
+	group = "build"
+
+	archiveClassifier = "collector"
+
+	manifest {
+		attributes "Main-Class": "jeff.skyblockflipper.core.headless.HeadlessCollector",
+				"Implementation-Version": project.version
+	}
+
+	from(sourceSets.main.output) {
+		include "jeff/skyblockflipper/core/**"
+	}
+
+	from({ configurations.collector.collect { it.isDirectory() ? it : zipTree(it) } }) {
+		// Signatures over a jar's original contents stop verifying once it is repacked, and
+		// module descriptors from a dependency describe a module this jar is not.
+		exclude "META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class"
+	}
+
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 // configure the maven publication

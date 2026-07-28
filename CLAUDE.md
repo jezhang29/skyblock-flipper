@@ -7,6 +7,7 @@
 ./gradlew test                           # JUnit 5, offline; fixtures in src/test/resources
 ./gradlew test -PliveApi                 # also runs LiveApiTest against the real Hypixel API
 ./gradlew test --tests '*SalesTapeTest'  # single test
+./gradlew collectorJar                   # standalone tape collector, no Minecraft (docs/headless-collector.md)
 ```
 
 Run `build` before each checkpoint commit. After editing `gradle.properties`, `clean build`.
@@ -58,7 +59,12 @@ common entrypoint would be a design change, not a fill-in-the-blank.
 
 Inside `core`: `api` (HTTP, poller, shared `MarketData`), `model` + `model/dto`, `nbt` + `item`
 (blob parsing and priced attributes), `tape` (realized sales on disk), `valuation`, `pricing`
-(fee stack), `strategy`, `ledger`, `config`, `text`.
+(fee stack), `strategy`, `ledger`, `config`, `text`, `headless`.
+
+`core/headless/HeadlessCollector` is a `main` that runs the poller with no game, so the tapes keep
+filling while Minecraft is closed — `auctions_ended` is a ~60s non-recoverable window, so downtime
+costs history permanently. It is packed by `collectorJar` with Gson and nothing else, which only
+works while `core` stays Minecraft-free: if that jar stops running, the layering broke.
 
 Key invariants:
 

@@ -210,6 +210,13 @@ public final class ConfigSchema {
 					"Fetch market data from Hypixel. Turning this off freezes every number the mod "
 							+ "shows.",
 					c -> c.pollingEnabled, (c, v) -> c.pollingEnabled = v),
+			new Entry.IntRange("bazaarPollSeconds", "Bazaar poll interval (seconds)",
+					"How often to refetch the bazaar book. This is the largest ongoing download "
+							+ "once auction scanning is off - the book is about 434KB, so 20 seconds "
+							+ "is roughly 56GB a month. Raising it trades price freshness for "
+							+ "bandwidth, and takes effect on the next reload.",
+					10, 600, 5,
+					c -> c.bazaarPollSeconds, (c, v) -> c.bazaarPollSeconds = v),
 			new Entry.Text("apiKey", "API key",
 					"Unused. Every endpoint this mod reads is public and unauthenticated; the field "
 							+ "exists for profile-aware features that do not exist yet.",

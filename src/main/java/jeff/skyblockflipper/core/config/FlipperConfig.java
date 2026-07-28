@@ -92,6 +92,17 @@ public final class FlipperConfig {
 	public int trendWindowHours = 24;
 
 	/**
+	 * How often to refetch the bazaar book.
+	 *
+	 * <p>The default keeps the book fresh enough to act on, which is what a playing client needs.
+	 * It is also the mod's largest ongoing download once the auction sweep is off: the book is
+	 * about 434KB, so 20 seconds is roughly 56GB a month. A headless collector that only wants the
+	 * tape should raise this to the 5-minute tape cadence and spend about 4GB instead - the extra
+	 * fetches are deduped away before they reach disk.
+	 */
+	public int bazaarPollSeconds = 20;
+
+	/**
 	 * Reject bazaar candidates whose price has drifted down by more than this fraction.
 	 *
 	 * <p>Market making into a decline is the standard way a quoted margin becomes a realized loss:
@@ -173,7 +184,7 @@ public final class FlipperConfig {
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
 		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll,
-				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours);
+				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds);
 	}
 
 	/** Clamps hand-edited values into ranges the rest of the mod can rely on. */
@@ -192,6 +203,9 @@ public final class FlipperConfig {
 		// Under a few hours the two averages overlap enough that drift is always near zero; past
 		// three days the ring would hold more than the memory budget this was sized for.
 		trendWindowHours = Math.clamp(trendWindowHours, 3, 72);
+		// Faster than ten seconds is below Hypixel's own cache and spends rate limit re-downloading
+		// identical bytes; past ten minutes the book on screen is older than the spread it describes.
+		bazaarPollSeconds = Math.clamp(bazaarPollSeconds, 10, 600);
 		maxAdverseDrift = Math.clamp(maxAdverseDrift, 0.0d, 1.0d);
 		// Under five minutes nothing but the very deepest books clears anything, and past twelve
 		// hours the horizon is longer than a session and the throughput it implies is fiction.
