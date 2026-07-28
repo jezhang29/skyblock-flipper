@@ -32,6 +32,10 @@ bin/
 
 run/
 
+# the running collector: a built jar, its tuned config, and the tapes it fills
+
+collector/
+
 # java
 
 hs_err_*.log
