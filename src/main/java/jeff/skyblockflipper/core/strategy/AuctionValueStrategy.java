@@ -163,8 +163,11 @@ public final class AuctionValueStrategy implements FlipStrategy {
 		// Always true, and the honest reason a "free" 40% discount is still sitting there.
 		risks.add("The mod does not buy for you; a real underprice is often gone within seconds");
 
-		if (!priced.value().exact()) {
-			risks.add("Priced from name and rarity only - verify nothing was added to this item");
+		switch (priced.value().basis()) {
+			case COARSE -> risks.add(
+					"Priced from name and rarity only - verify nothing was added to this item");
+			case BANDED -> risks.add(bandedRisk(priced));
+			case EXACT -> { }
 		}
 
 		if (priced.value().samples() < 12) {
@@ -180,11 +183,32 @@ public final class AuctionValueStrategy implements FlipStrategy {
 			risks.add("Comparable sales disagree by more than 40%, so the median is a weak guide");
 		}
 
-		if (priced.item().isPet()) {
-			risks.add("Pet level is not modelled yet: check the level matches before buying");
+		return risks;
+	}
+
+	/**
+	 * Why a widened match is weaker, in the terms of the thing that was widened.
+	 *
+	 * <p>Only pets reach this today. Which rung was used is readable off the key, and it matters:
+	 * a pet priced from its level band is close, while one priced off every level of that pet is
+	 * the weakest rung there is and should be said plainly rather than left to the confidence
+	 * number to imply.
+	 */
+	private static String bandedRisk(PricedListing priced) {
+		String key = priced.value().key();
+
+		if (key.contains("lvlBand=")) {
+			return "Priced from a range of pet levels, not this exact level - the closer it sits to "
+					+ "the edge of the range, the weaker the estimate";
 		}
 
-		return risks;
+		if (priced.item().isPet() && !priced.item().petInfo().map(p -> p.hasLevel()).orElse(false)) {
+			return "This pet's level could not be read from its name, so it is priced off sales at "
+					+ "every level - which for most pets spans a factor of two or more";
+		}
+
+		return "Priced off sales at every level of this pet, not its own - a level 1 and a level 100 "
+				+ "of the same pet differ by 2x to 12x";
 	}
 
 	/** The attributes a human has to eyeball before clicking buy. */
@@ -192,6 +216,9 @@ public final class AuctionValueStrategy implements FlipStrategy {
 		List<String> parts = new ArrayList<>();
 
 		parts.add(item.rarity().name().toLowerCase(java.util.Locale.ROOT));
+
+		// First after the rarity, because for a pet it is most of the price.
+		item.petInfo().filter(pet -> pet.hasLevel()).ifPresent(pet -> parts.add("level " + pet.level()));
 
 		if (item.stars() > 0) {
 			parts.add(item.stars() + " stars");

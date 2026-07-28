@@ -68,6 +68,13 @@ public final class Guide {
 					+ "only ever priced against sales carrying the same roll at the same level. "
 					+ "That is a small pool, so attribute gear will often show no valuation at all "
 					+ "rather than a confident wrong one"),
+			new Term("Pet level", "Hypixel writes a pet's level into its name, and it is most of "
+					+ "what the pet is worth - the same pet at level 1 and level 100 differs by two "
+					+ "to twelve times. Pets are priced against their own level first, then against "
+					+ "a band of nearby levels, then against sales at any level, taking the first "
+					+ "with enough sales behind it. Anything below the first rung is discounted for "
+					+ "confidence and says so in the risks, because a pet priced off every level at "
+					+ "once is the mistake this replaced"),
 			new Term("Ledger", "Flips you took, and what they actually did. The only part of this "
 					+ "mod that can tell you whether the rest of it works"),
 			new Term("Stars and essence", "Hypixel publishes what every star level costs, and every "

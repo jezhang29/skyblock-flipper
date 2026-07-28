@@ -76,10 +76,12 @@ public final class ItemDecoder {
 		}
 
 		NbtCompound display = tag.child("display");
+		// Read once: the pet level is in here too, and it is the only place it is stated.
+		String name = stripFormatting(display.string("Name").orElse(skyblockId));
 
 		return Optional.of(new DecodedItem(
 				skyblockId,
-				stripFormatting(display.string("Name").orElse(skyblockId)),
+				name,
 				item.intOr("Count", 1),
 				rarity(item, display),
 				extra.string("modifier").orElse(""),
@@ -89,7 +91,7 @@ public final class ItemDecoder {
 				extra.child("enchantments").numericEntries(),
 				gemstones(extra.child("gems")),
 				extra.child("attributes").numericEntries(),
-				pet(skyblockId, extra)));
+				pet(skyblockId, extra, name)));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
@@ -176,8 +178,12 @@ public final class ItemDecoder {
 	/**
 	 * Pets are all one item id with their identity in a JSON string. Without unpacking it, every
 	 * pet in the game looks like the same item trading anywhere from 10k to 500M.
+	 *
+	 * <p>The level is the one part that is not in that JSON. It is in the display name instead, so
+	 * {@code name} is passed in rather than the level being derived from {@code petInfo.exp} - see
+	 * {@link PetInfo#level()}.
 	 */
-	private static PetInfo pet(String skyblockId, NbtCompound extra) {
+	private static PetInfo pet(String skyblockId, NbtCompound extra, String name) {
 		if (!skyblockId.equals("PET")) {
 			return null;
 		}
@@ -199,6 +205,7 @@ public final class ItemDecoder {
 					json.get("type").getAsString(),
 					Rarity.fromName(string(json, "tier")),
 					json.has("exp") ? json.get("exp").getAsDouble() : 0.0d,
+					levelFromName(name),
 					string(json, "heldItem"),
 					json.has("candyUsed") ? json.get("candyUsed").getAsInt() : 0,
 					string(json, "skin"));
@@ -206,6 +213,35 @@ public final class ItemDecoder {
 			return null;
 		}
 	}
+
+	/**
+	 * Reads the {@code [Lvl 100]} prefix Hypixel puts on every pet name.
+	 *
+	 * <p>Hand-rolled rather than a regex because this runs once per decoded listing on a sweep of
+	 * tens of thousands, and because the shape is fixed enough not to need one. Returns 0 for
+	 * anything unexpected: an unreadable prefix should cost the level, not the whole pet.
+	 *
+	 * @param name display name with formatting codes already stripped
+	 */
+	static int levelFromName(String name) {
+		if (!name.startsWith(LEVEL_PREFIX)) {
+			return 0;
+		}
+
+		int end = name.indexOf(']', LEVEL_PREFIX.length());
+
+		if (end < 0) {
+			return 0;
+		}
+
+		try {
+			return Math.max(0, Integer.parseInt(name.substring(LEVEL_PREFIX.length(), end).trim()));
+		} catch (NumberFormatException e) {
+			return 0;
+		}
+	}
+
+	private static final String LEVEL_PREFIX = "[Lvl ";
 
 	private static String string(JsonObject json, String key) {
 		return json.has(key) && json.get(key).isJsonPrimitive() ? json.get(key).getAsString() : "";

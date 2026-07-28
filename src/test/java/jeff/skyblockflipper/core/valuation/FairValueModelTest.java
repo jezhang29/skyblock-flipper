@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
 import jeff.skyblockflipper.core.item.ItemDecoder;
+import jeff.skyblockflipper.core.item.PetInfo;
 import jeff.skyblockflipper.core.item.Rarity;
 import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
@@ -183,6 +184,106 @@ class FairValueModelTest {
 		assertTrue(model.valueOf(rolled).isEmpty());
 	}
 
+	/**
+	 * The fixture pet is a level 100 Mole holding a mining skill boost. Six sales of it, so its
+	 * exact-level key clears MIN_SAMPLES on its own.
+	 */
+	private static FairValueModel molesSoldAtLevelOneHundred() {
+		return modelOf(sales("PET", 15_000_000L, 15_000_000L, 14_500_000L, 15_500_000L,
+				15_000_000L, 15_200_000L));
+	}
+
+	private static DecodedItem moleAtLevel(int level) {
+		DecodedItem real = item("PET");
+		PetInfo pet = real.petInfo().orElseThrow();
+
+		return new DecodedItem(real.skyblockId(), "[Lvl " + level + "] Mole", real.count(),
+				real.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(),
+				new PetInfo(pet.type(), pet.tier(), pet.exp(), level, pet.heldItem(),
+						pet.candyUsed(), pet.skin()));
+	}
+
+	@Test
+	void pricesAPetAgainstItsOwnLevelBeforeAnythingWider() {
+		FairValueModel model = molesSoldAtLevelOneHundred();
+
+		// The item that actually sold: its own level has sales behind it, so nothing is widened.
+		ValueEstimate exact = model.valueOf(item("PET")).orElseThrow();
+
+		assertEquals(ValueEstimate.Basis.EXACT, exact.basis());
+		assertTrue(exact.exact());
+		assertEquals(15_000_000.0d, exact.median(), 100_000.0d);
+	}
+
+	@Test
+	void willNotPriceALevelOnePetOffLevelOneHundredSalesWithoutSayingSo() {
+		FairValueModel model = molesSoldAtLevelOneHundred();
+
+		// This is the mistake the level rungs exist to stop being silent. A level 1 Mole is worth a
+		// fraction of a level 100 one, and before the level was read they shared a single key and a
+		// single median - so a fresh pet looked like a 15M item listed at 3M, which is not a snipe.
+		ValueEstimate widened = model.valueOf(moleAtLevel(1)).orElseThrow();
+
+		// It still gets a number, because no number at all prices nothing. What it does not get is
+		// the claim that the sales behind it describe this pet.
+		assertEquals(ValueEstimate.Basis.BANDED, widened.basis());
+		assertFalse(widened.exact());
+
+		// And the discount is real, not cosmetic: the same figures priced exactly would clear the
+		// default minConfidence of 0.6, and widened they must be worth measurably less.
+		assertTrue(widened.confidence() < widened.withBasis(ValueEstimate.Basis.EXACT).confidence());
+	}
+
+	@Test
+	void fallsThroughTheLevelBandBeforeGivingUpOnTheLevelEntirely() {
+		FairValueModel model = molesSoldAtLevelOneHundred();
+
+		// Level 95 and level 99 share the 90-99 band, so a 95 can be priced off a 99 - close enough
+		// to be evidence, and labelled as widened either way. Level 100 is a band of its own, so it
+		// never lends its sales to a 99 through the band rung.
+		DecodedItem ninetyFive = moleAtLevel(95);
+
+		assertEquals(
+				List.of("PET|MOLE|LEGENDARY|held=PET_ITEM_MINING_SKILL_BOOST_RARE|lvl=95",
+						"PET|MOLE|LEGENDARY|held=PET_ITEM_MINING_SKILL_BOOST_RARE|lvlBand=90-99",
+						"PET|MOLE|LEGENDARY|held=PET_ITEM_MINING_SKILL_BOOST_RARE"),
+				ninetyFive.valuationKeys());
+
+		// A band of one level adds a key with an identical pool behind it, so it is left out.
+		assertEquals(2, moleAtLevel(100).valuationKeys().size());
+
+		// The held item survives every rung. It can be worth more than the pet under it, so widening
+		// the level must never quietly widen the pet as well.
+		ninetyFive.valuationKeys()
+				.forEach(key -> assertTrue(key.contains("held=PET_ITEM_MINING_SKILL_BOOST_RARE")));
+	}
+
+	@Test
+	void aPetWithNoReadableLevelIsNeverCalledAnExactMatch() {
+		FairValueModel model = molesSoldAtLevelOneHundred();
+
+		DecodedItem unknownLevel = moleAtLevel(0);
+
+		// Its only key is the levelless one, which pools every level of the pet. That is the single
+		// median across a distribution with peaks at 1 and at 100, so calling it exact - which it
+		// technically is, being the item's whole signature - would sell the worst estimate here as
+		// the best kind.
+		assertEquals(List.of("PET|MOLE|LEGENDARY|held=PET_ITEM_MINING_SKILL_BOOST_RARE"),
+				unknownLevel.valuationKeys());
+		assertFalse(unknownLevel.isFullyDescribed());
+		assertEquals(ValueEstimate.Basis.BANDED, model.valueOf(unknownLevel).orElseThrow().basis());
+	}
+
+	@Test
+	void nonPetsStillHaveExactlyOneKey() {
+		// The ladder is a pet feature. Everything else must key on its signature and nothing else,
+		// or a five-star helmet acquires a rung that prices it off the bare one.
+		DecodedItem helmet = item("POWER_WITHER_HELMET");
+
+		assertEquals(List.of(helmet.signature()), helmet.valuationKeys());
+		assertTrue(helmet.isFullyDescribed());
+	}
+
 	@Test
 	void roughValuesAreAvailableWithoutDecodingAnything() {
 		FairValueModel model = modelOf(sales("ANITA_TALISMAN", 3_000_000L, 3_000_000L, 3_000_000L,
@@ -199,15 +300,15 @@ class FairValueModelTest {
 	@Test
 	void confidenceFallsWithDisagreementAndRisesWithSamples() {
 		ValueEstimate tight = ValueEstimate.of("k", List.of(100.0d, 100.0d, 101.0d, 99.0d, 100.0d,
-				100.0d, 100.0d, 100.0d), 48.0d, true);
+				100.0d, 100.0d, 100.0d), 48.0d, ValueEstimate.Basis.EXACT);
 		ValueEstimate scattered = ValueEstimate.of("k", List.of(10.0d, 50.0d, 100.0d, 150.0d,
-				400.0d, 900.0d, 30.0d, 700.0d), 48.0d, true);
+				400.0d, 900.0d, 30.0d, 700.0d), 48.0d, ValueEstimate.Basis.EXACT);
 
 		assertTrue(tight.confidence() > scattered.confidence());
 
 		// A coarse estimate is penalised on top of everything else: it matched a name, not an item.
 		ValueEstimate coarse = ValueEstimate.of("k", List.of(100.0d, 100.0d, 101.0d, 99.0d, 100.0d,
-				100.0d, 100.0d, 100.0d), 48.0d, false);
+				100.0d, 100.0d, 100.0d), 48.0d, ValueEstimate.Basis.COARSE);
 		assertTrue(coarse.confidence() < tight.confidence());
 	}
 
@@ -215,12 +316,12 @@ class FairValueModelTest {
 	void resaleTimeComesFromTheObservedSaleRate() {
 		// Eight sales over two days is roughly one every six hours.
 		ValueEstimate slow = ValueEstimate.of("k", List.of(1.0d, 1.0d, 1.0d, 1.0d, 1.0d, 1.0d,
-				1.0d, 1.0d), 48.0d, true);
+				1.0d, 1.0d), 48.0d, ValueEstimate.Basis.EXACT);
 		assertEquals(6.0d, slow.hoursToSell(), 0.01d);
 
 		// Nothing is credited with selling faster than it takes to find, buy and relist.
 		ValueEstimate fast = ValueEstimate.of("k",
-				java.util.Collections.nCopies(1000, 1.0d), 1.0d, true);
+				java.util.Collections.nCopies(1000, 1.0d), 1.0d, ValueEstimate.Basis.EXACT);
 		assertEquals(0.25d, fast.hoursToSell(), 1e-9);
 	}
 
@@ -228,7 +329,7 @@ class FairValueModelTest {
 	void pricesPerUnitOnStackedSales() {
 		// The fixture item is a single, so build the stacked case directly.
 		ValueEstimate estimate = ValueEstimate.of("k", List.of(50.0d, 50.0d, 50.0d, 50.0d, 50.0d,
-				50.0d), 48.0d, true);
+				50.0d), 48.0d, ValueEstimate.Basis.EXACT);
 
 		assertEquals(50.0d, estimate.median(), 1e-9);
 	}
