@@ -5,6 +5,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.valuation.FillStats;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -322,8 +323,13 @@ class StrategyTest {
 
 	private static StrategyContext contextWith(BazaarProduct product, PriceTrend trend,
 			Map<String, Double> dailyMedians, double maxAdverseDrift) {
+		return contextWith(product, trend, Map.of(), dailyMedians, maxAdverseDrift);
+	}
+
+	private static StrategyContext contextWith(BazaarProduct product, PriceTrend trend,
+			Map<String, FillStats> fills, Map<String, Double> dailyMedians, double maxAdverseDrift) {
 		TrendSnapshot snapshot = new TrendSnapshot(
-				Map.of(product.productId(), trend), dailyMedians,
+				Map.of(product.productId(), trend), fills, dailyMedians,
 				Duration.ofHours(24), trend.samples(), Instant.now());
 
 		return new StrategyContext(
@@ -441,5 +447,77 @@ class StrategyTest {
 
 		// Unmeasured is not the same as untrustworthy. The gap is reported as a risk instead.
 		assertEquals(stable, unmeasured, 1e-9d);
+	}
+
+	// --- Fill-aware ranking ------------------------------------------------------------------
+	//
+	// The ranking axis is profit per hour, and until the tape could measure displacement the
+	// "per hour" half was a flat guess at what share of the flow a resting order collects. These
+	// cover what changes once it is measured, and that nothing changes where it is not.
+
+	private static FillStats fills(double displacementsPerHour) {
+		return new FillStats("TEST_ITEM", displacementsPerHour, displacementsPerHour, 24.0d, 288);
+	}
+
+	private static FlipCandidate withFills(BazaarProduct product, FillStats stats) {
+		return new BazaarSpreadStrategy()
+				.findCandidates(contextWith(product, trend(100.0d, 100.0d, 100.0d, 0.01d),
+						Map.of(product.productId(), stats), Map.of(), 0.0d))
+				.getFirst();
+	}
+
+	@Test
+	void anOrderThatKeepsGettingOutbidIsWorthLessPerHourThanOneThatDoesNot() {
+		double quiet = withFills(healthy(), fills(0.0d)).profitPerHour();
+		double contested = withFills(healthy(), fills(30.0d)).profitPerHour();
+
+		// Same book, same spread, same volume: the only difference is how long your order stays at
+		// the front of it. Before this was measured the two ranked identically.
+		assertTrue(contested < quiet,
+				"a contested book should rank below a quiet one: " + contested + " vs " + quiet);
+	}
+
+	@Test
+	void aMeasuredSlowBookLosesToAThinnerSpreadThatActuallyFills() {
+		// 2 coins of spread that fills against 4 that does not. Ranking on margin alone - the
+		// classic way a flipping tool sends people after illiquid junk - would invert this.
+		double wideButStuck = withFills(product(100.0d, 104.0d, 40, 5_000_000L), fills(120.0d))
+				.profitPerHour();
+		double thinButLiquid = withFills(product(100.0d, 102.0d, 40, 5_000_000L), fills(0.0d))
+				.profitPerHour();
+
+		assertTrue(thinButLiquid > wideButStuck,
+				"expected the fillable spread to win: " + thinButLiquid + " vs " + wideButStuck);
+	}
+
+	@Test
+	void anUnmeasuredProductRanksExactlyWhereItDidBeforeFillsWereModelled() {
+		// The fallback is the same share of the same flow the strategy assumed unconditionally
+		// before the tape could answer this, so a fresh install's ranking is unchanged.
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(healthy())).getFirst();
+
+		// 5% of the bottleneck weekly volume spread over a week, in whole units - the plan is
+		// sized in units you can actually place, and always was.
+		long expectedUnits = (long) (5_000_000L / 168.0d * 0.05d);
+
+		assertEquals(expectedUnits, candidate.units());
+		assertEquals(candidate.unitNetProfit() * expectedUnits, candidate.profitPerHour(), 1e-9d);
+	}
+
+	@Test
+	void saysHowLongTheFillTakesWhenItHasMeasuredIt() {
+		FlipCandidate measured = withFills(healthy(), fills(1.0d));
+
+		assertTrue(measured.notes().stream().anyMatch(note -> note.contains("to buy")),
+				"a measured candidate should state its fill time, got " + measured.notes());
+
+		// And says nothing of the sort when it has not, rather than quoting the fallback as fact.
+		FlipCandidate unmeasured = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(healthy())).getFirst();
+
+		assertTrue(unmeasured.notes().stream().noneMatch(note -> note.contains("to buy")),
+				"an unmeasured candidate must not present a guess as a measurement, got "
+						+ unmeasured.notes());
 	}
 }

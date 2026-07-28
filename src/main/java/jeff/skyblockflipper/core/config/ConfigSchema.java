@@ -125,7 +125,14 @@ public final class ConfigSchema {
 							+ "fraction. Buy orders fill fastest exactly while people are dumping, "
 							+ "which is how a quoted margin becomes a realized loss. 0 disables it.",
 					0.0d, 1.0d, 0.01d,
-					c -> c.maxAdverseDrift, (c, v) -> c.maxAdverseDrift = v)));
+					c -> c.maxAdverseDrift, (c, v) -> c.maxAdverseDrift = v),
+			new Entry.IntRange("fillHorizonMinutes", "Fill horizon (minutes)",
+					"How long you are willing to leave an order resting. Bazaar plans are sized on "
+							+ "what the book is expected to fill inside this window, so a longer "
+							+ "horizon ranks slower items higher and a shorter one keeps only what "
+							+ "fills while you watch.",
+					5, 720, 5,
+					c -> c.fillHorizonMinutes, (c, v) -> c.fillHorizonMinutes = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Scan auctions",

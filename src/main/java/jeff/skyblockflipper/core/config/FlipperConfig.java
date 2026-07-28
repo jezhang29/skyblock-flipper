@@ -99,6 +99,17 @@ public final class FlipperConfig {
 	 */
 	public double maxAdverseDrift = 0.05d;
 
+	/**
+	 * How long you are willing to leave an order resting before you would rather have the coins
+	 * back.
+	 *
+	 * <p>Sizes every bazaar plan: throughput is what the book is expected to fill inside this
+	 * window, not what it would eventually fill given forever. A longer horizon accepts slower
+	 * items and ranks them higher; a shorter one keeps only what fills while you watch. It changes
+	 * the ranking without changing the book, so edits to it must invalidate the candidate cache.
+	 */
+	public int fillHorizonMinutes = 60;
+
 	/** Open the flip screen with a keybind. The screen is also reachable however you like via chat. */
 	public boolean guiKeybindEnabled = true;
 
@@ -182,6 +193,9 @@ public final class FlipperConfig {
 		// three days the ring would hold more than the memory budget this was sized for.
 		trendWindowHours = Math.clamp(trendWindowHours, 3, 72);
 		maxAdverseDrift = Math.clamp(maxAdverseDrift, 0.0d, 1.0d);
+		// Under five minutes nothing but the very deepest books clears anything, and past twelve
+		// hours the horizon is longer than a session and the throughput it implies is fiction.
+		fillHorizonMinutes = Math.clamp(fillHorizonMinutes, 5, 720);
 		// Zero means auto. Anything under half is unreadable at any GUI scale, and above 1 the
 		// screen would draw larger than the window and clip against it with no way back.
 		guiZoom = guiZoom <= 0.0d ? 0.0d : Math.clamp(guiZoom, 0.5d, 1.0d);

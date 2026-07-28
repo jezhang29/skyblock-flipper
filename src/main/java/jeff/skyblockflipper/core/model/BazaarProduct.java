@@ -30,6 +30,17 @@ public record BazaarProduct(
 
 	private static final double HOURS_PER_WEEK = 168.0d;
 
+	/**
+	 * The smallest price step the bazaar accepts, and so the amount by which you outbid or undercut
+	 * to take the top of the book.
+	 *
+	 * <p>Public because measuring how often you get displaced from the top means asking whether the
+	 * book moved past the price this increment would have put you at - see {@code FillStats}. The
+	 * two must agree on what "posting inside you" means, and a second copy of 0.1 elsewhere is how
+	 * they would eventually stop agreeing.
+	 */
+	public static final double PRICE_INCREMENT = 0.1d;
+
 	public BazaarProduct {
 		sellOffers = List.copyOf(sellOffers);
 		buyOrders = List.copyOf(buyOrders);
@@ -56,13 +67,17 @@ public record BazaarProduct(
 	 */
 	public OptionalDouble undercutSellOffer() {
 		OptionalDouble best = instantBuyPrice();
-		return best.isPresent() ? OptionalDouble.of(best.getAsDouble() - 0.1d) : OptionalDouble.empty();
+		return best.isPresent()
+				? OptionalDouble.of(best.getAsDouble() - PRICE_INCREMENT)
+				: OptionalDouble.empty();
 	}
 
 	/** Price to outbid the current best bid, i.e. where you would post a buy order. */
 	public OptionalDouble outbidBuyOrder() {
 		OptionalDouble best = instantSellPrice();
-		return best.isPresent() ? OptionalDouble.of(best.getAsDouble() + 0.1d) : OptionalDouble.empty();
+		return best.isPresent()
+				? OptionalDouble.of(best.getAsDouble() + PRICE_INCREMENT)
+				: OptionalDouble.empty();
 	}
 
 	/**

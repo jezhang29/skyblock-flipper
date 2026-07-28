@@ -100,7 +100,18 @@ public final class Guide {
 					+ "weekly turnover is not a 4000-unit opportunity, it is a week of holding "
 					+ "something nobody wants. Every plan is sized from the flow, not the depth"),
 			new Term("Trips", "NPC flips are also capped by hand: 36 inventory slots at a 64 stack, "
-					+ "twelve round trips an hour. Buying is instant, selling is not")));
+					+ "twelve round trips an hour. Buying is instant, selling is not"),
+			new Term("Time to fill", "How long your order is expected to take at the size the plan "
+					+ "quotes. Two things set it: how fast people trade with that side of the book, "
+					+ "and how long you stay at the front of it"),
+			new Term("Outbid rate", "How often somebody posts inside your price, measured from "
+					+ "recorded history rather than assumed. Once you are outbid your order stops "
+					+ "collecting anything until the market comes back to it, so a wide spread on a "
+					+ "heavily contested book is worth much less an hour than it looks"),
+			new Term("Measured or assumed", "Where the mod has enough recorded history for an item "
+					+ "it says how fast fills actually arrive. Where it does not, it falls back to a "
+					+ "flat assumption and says so in the risks. The number is never presented as "
+					+ "measured when it is not")));
 
 	private static final Section LEDGER = new Section("ledger", "Ledger", List.of(
 			new Term("Capture rate", "Coins you realized divided by coins the mod quoted, on filled "
@@ -136,7 +147,12 @@ public final class Guide {
 							+ "parsed at all - so lowering it costs scan time as well as precision"),
 					new Term("Min confidence", "Hides snipes the valuation is less sure of than this. "
 							+ "It has no effect on bazaar or NPC flips, which price off a live book "
-							+ "rather than an estimate")));
+							+ "rather than an estimate"),
+					new Term("Fill horizon", "How long you are willing to leave an order resting. "
+							+ "Plans are sized on what is expected to fill inside it, so a long "
+							+ "horizon promotes slow items you would have to be patient with and a "
+							+ "short one keeps only what fills while you are watching. It changes "
+							+ "the order of the list without hiding anything from it")));
 
 	private static final Section LIMITS = new Section("limits", "What this does not do", List.of(
 			new Term("Advisory only", "It surfaces numbers and rankings. It does not click, buy, "

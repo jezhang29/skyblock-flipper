@@ -6,6 +6,7 @@ import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -26,6 +27,10 @@ import java.util.List;
  * @param minConfidence    floor for valuation-derived candidates, which are the only ones resting
  *                         on an estimate rather than on a live order book
  * @param maxAdverseDrift  reject bazaar candidates falling faster than this fraction; 0 disables
+ * @param fillHorizon      how long an order may rest before the player would rather have the coins
+ *                         back. Plans are sized on what fills inside it, so it is a statement of
+ *                         patience rather than a filter: it changes what ranks highest, not what is
+ *                         allowed through
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -36,10 +41,29 @@ public record StrategyContext(
 		long bankroll,
 		long minProfitPerFlip,
 		double minConfidence,
-		double maxAdverseDrift
+		double maxAdverseDrift,
+		Duration fillHorizon
 ) {
+	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
+	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
+
 	public StrategyContext {
 		underpriced = List.copyOf(underpriced);
+
+		if (fillHorizon == null || fillHorizon.isZero() || fillHorizon.isNegative()) {
+			fillHorizon = DEFAULT_FILL_HORIZON;
+		}
+	}
+
+	/**
+	 * The canonical shape before a fill horizon existed, kept so the callers that have no opinion
+	 * on how long they will wait do not have to invent one.
+	 */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, DEFAULT_FILL_HORIZON);
 	}
 
 	/**

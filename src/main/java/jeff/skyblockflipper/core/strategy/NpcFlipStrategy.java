@@ -3,6 +3,8 @@ package jeff.skyblockflipper.core.strategy;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
+import jeff.skyblockflipper.core.pricing.FillModel;
+import jeff.skyblockflipper.core.pricing.FillModel.FillEstimate;
 import jeff.skyblockflipper.core.text.Coins;
 
 import java.util.ArrayList;
@@ -209,7 +211,8 @@ public final class NpcFlipStrategy implements FlipStrategy {
 
 		return unitNet <= 0.0d
 				? null
-				: new Route(false, averageCost, unitNet, units, units * averageCost, 0.95d);
+				: new Route(false, averageCost, unitNet, units, units * averageCost, 0.95d,
+						flowPerHour, false);
 	}
 
 	/**
@@ -228,7 +231,16 @@ public final class NpcFlipStrategy implements FlipStrategy {
 			return null;
 		}
 
-		double fillPerHour = product.instantSellsPerHour() * ORDER_FILL_SHARE;
+		// Measured where the tape has covered this product, and the old flat share where it has
+		// not. The unit cap stays hourly regardless: this route is bounded by how many inventory
+		// trips a player makes, not only by how fast the order fills.
+		FillEstimate fill = FillModel.estimate(
+				product,
+				context.trends().fillStatsFor(product.productId()).orElse(null),
+				context.fillHorizon(),
+				ORDER_FILL_SHARE);
+
+		double fillPerHour = fill.buyUnitsPerHour();
 		long affordable = (long) (context.bankroll() / bid);
 		long units = Math.min(affordable, Math.min(UNITS_PER_HOUR, (long) fillPerHour));
 
@@ -241,7 +253,8 @@ public final class NpcFlipStrategy implements FlipStrategy {
 		double confidence = 0.55d + 0.30d
 				* Math.min(1.0d, product.instantSellsPerHour() / LIQUID_FILL_RATE);
 
-		return new Route(true, bid, unitNet, units, units * bid, confidence);
+		return new Route(true, bid, unitNet, units, units * bid, confidence, fillPerHour,
+				fill.measured());
 	}
 
 	private static Route better(Route a, Route b) {
@@ -257,11 +270,15 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	}
 
 	/**
-	 * @param viaOrder true when the stock is acquired with a resting buy order rather than by
-	 *                 crossing the spread
+	 * @param viaOrder      true when the stock is acquired with a resting buy order rather than by
+	 *                      crossing the spread
+	 * @param fillPerHour   units an hour the acquisition leg is expected to bring in
+	 * @param fillMeasured  whether {@code fillPerHour} came from recorded displacement or from an
+	 *                      assumed share of volume. Always false for the instant route, which rests
+	 *                      no order and so has nothing to be displaced from
 	 */
 	private record Route(boolean viaOrder, double unitCost, double unitNetProfit, long units,
-			double capital, double confidence) {
+			double capital, double confidence, double fillPerHour, boolean fillMeasured) {
 		double profitPerHour() {
 			return unitNetProfit * units;
 		}
@@ -293,9 +310,14 @@ public final class NpcFlipStrategy implements FlipStrategy {
 		List<String> risks = new ArrayList<>();
 
 		if (route.viaOrder()) {
-			risks.add(String.format(
-					"Fill is not immediate: about %.0f units an hour get dumped into this book",
-					product.instantSellsPerHour()));
+			// The measured figure is what the order is expected to collect; the raw dump rate is
+			// what the book sees. Quoting the first where it exists stops the risk line from
+			// promising a fill the ranking never assumed.
+			risks.add(route.fillMeasured()
+					? String.format("Fill is not immediate: your order collects about %.0f units an "
+							+ "hour of what gets dumped here", route.fillPerHour())
+					: String.format("Fill is not immediate: about %.0f units an hour get dumped "
+							+ "into this book", product.instantSellsPerHour()));
 			risks.add("Anyone can outbid you; reprice or cancel rather than sitting behind the queue");
 		} else {
 			risks.add("Edge closes fast once others notice; verify prices before committing");
