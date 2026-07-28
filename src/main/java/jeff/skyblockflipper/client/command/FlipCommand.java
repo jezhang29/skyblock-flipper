@@ -349,7 +349,13 @@ public final class FlipCommand {
 							+ trends.window().toHours() + "h window"
 							+ (trends.productsWithDailyHistory() > 0
 									? ", " + trends.productsWithDailyHistory() + " with daily rollup"
-									: "");
+									: "")
+							// Fills need an hour of uninterrupted sampling before they mean
+							// anything, so a player who has just started the client would otherwise
+							// have no way to tell whether the ranking is measured or assumed.
+							+ (trends.productsWithMeasuredFills() > 0
+									? ", " + trends.productsWithMeasuredFills() + " with measured fills"
+									: ", fills still assumed (needs ~1h of uptime)");
 		}
 
 		line(source, "price history", history);

@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.model.BazaarDailyStat;
+import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSample;
 
 import java.time.Duration;
@@ -23,6 +24,13 @@ import java.util.Map;
  * products with a few hundred samples each, boxing every price would roughly triple the footprint
  * for no benefit - nothing here ever needs a sample as an object.
  *
+ * <p>Each series keeps the two book sides alongside the midpoint, which is the one place this
+ * structure pays for something the midpoint cannot answer: {@link FillStats} counts how often the
+ * bid or the ask moved past where you would have posted, and a midpoint hides exactly that. Three
+ * double arrays instead of one costs on the order of ten megabytes at a full day of history across
+ * the whole bazaar, which is the price of the mod being able to say how fast an order fills rather
+ * than assuming it.
+ *
  * <p>Not thread-safe, and deliberately so: the poller owns it and appends from a single thread,
  * exactly like {@code SalesTape}. Readers on other threads get {@link #snapshot()}, which is
  * immutable. Nothing else should hold a reference to this.
@@ -41,6 +49,30 @@ public final class PriceHistory {
 	 * a trend out of noise.
 	 */
 	private static final int SHORT_WINDOW_DIVISOR = 8;
+
+	private static final double MILLIS_PER_HOUR = 3_600_000.0d;
+
+	/**
+	 * Slack on the displacement test, to absorb floating-point representation error.
+	 *
+	 * <p>Prices arrive as JSON doubles and 0.1 is not exactly representable, so a bid that steps up
+	 * by exactly one increment lands either side of it essentially at random. Without this, roughly
+	 * half of the most common move on the book - someone matching the price you would have posted -
+	 * counts as having got in front of you, and every displacement rate comes out inflated.
+	 *
+	 * <p>Absolute rather than relative: it only has to clear the error in a difference of two
+	 * doubles, which stays around 1e-8 even at the tens of millions the priciest products trade at.
+	 */
+	private static final double DISPLACEMENT_TOLERANCE = 1e-6d;
+
+	/**
+	 * The longest gap between two samples that still counts as having watched the book.
+	 *
+	 * <p>Six times the nominal cadence, so an ordinary missed poll or a slow snapshot still counts
+	 * and a closed client does not. Generous on purpose: a caller sampling slower than nominal
+	 * should lose precision, not lose the measurement entirely.
+	 */
+	private static final long MAX_OBSERVED_GAP_MILLIS = NOMINAL_SAMPLE_MINUTES * 6L * 60_000L;
 
 	private final Map<String, Series> series = new HashMap<>();
 	private final Duration window;
@@ -71,7 +103,7 @@ public final class PriceHistory {
 		newestTimestamp = Math.max(newestTimestamp, sample.timestamp());
 
 		Series product = series.computeIfAbsent(sample.productId(), key -> new Series(capacity));
-		product.add(sample.timestamp(), sample.mid());
+		product.add(sample.timestamp(), sample.mid(), sample.bidPrice(), sample.askPrice());
 		product.evictBefore(newestTimestamp - window.toMillis());
 	}
 
@@ -104,6 +136,7 @@ public final class PriceHistory {
 	public TrendSnapshot snapshot() {
 		long shortCutoff = newestTimestamp - shortWindow.toMillis();
 		Map<String, PriceTrend> trends = new HashMap<>();
+		Map<String, FillStats> fills = new HashMap<>();
 		int samples = 0;
 
 		for (Map.Entry<String, Series> entry : series.entrySet()) {
@@ -111,11 +144,12 @@ public final class PriceHistory {
 
 			if (trend != null) {
 				trends.put(entry.getKey(), trend);
+				fills.put(entry.getKey(), entry.getValue().toFillStats(entry.getKey()));
 				samples += trend.samples();
 			}
 		}
 
-		return new TrendSnapshot(trends, dailyMedians, window, samples, Instant.now());
+		return new TrendSnapshot(trends, fills, dailyMedians, window, samples, Instant.now());
 	}
 
 	public Duration window() {
@@ -150,6 +184,8 @@ public final class PriceHistory {
 	 */
 	private static final class Series {
 		private final double[] mids;
+		private final double[] bids;
+		private final double[] asks;
 		private final long[] times;
 
 		private int start;
@@ -157,12 +193,16 @@ public final class PriceHistory {
 
 		Series(int capacity) {
 			this.mids = new double[capacity];
+			this.bids = new double[capacity];
+			this.asks = new double[capacity];
 			this.times = new long[capacity];
 		}
 
-		void add(long time, double mid) {
+		void add(long time, double mid, double bid, double ask) {
 			int index = (start + size) % mids.length;
 			mids[index] = mid;
+			bids[index] = bid;
+			asks[index] = ask;
 			times[index] = time;
 
 			if (size == mids.length) {
@@ -260,6 +300,57 @@ public final class PriceHistory {
 					volatility,
 					dispersion,
 					size);
+		}
+
+		/**
+		 * How often the top of each side moved past where you would have posted.
+		 *
+		 * <p>Kept apart from {@link #toTrend} rather than folded into its pass: the two answer
+		 * different questions off different columns, and a ring of a few hundred entries is not
+		 * where this class spends anything worth saving.
+		 *
+		 * <p>A step is counted only when the book moved strictly further than
+		 * {@link BazaarProduct#PRICE_INCREMENT}. Moving to exactly your price is someone matching
+		 * you, and time priority means you are still in front of them.
+		 */
+		FillStats toFillStats(String productId) {
+			double threshold = BazaarProduct.PRICE_INCREMENT + DISPLACEMENT_TOLERANCE;
+			int bidLifts = 0;
+			int askDrops = 0;
+			int intervals = 0;
+			double hours = 0.0d;
+
+			for (int i = 1; i < size; i++) {
+				int previous = (start + i - 1) % mids.length;
+				int current = (start + i) % mids.length;
+				long elapsed = times[current] - times[previous];
+
+				// A gap this long is the client having been closed, not a book that stood still
+				// for eleven hours. Counting it would put the whole gap in the denominator and
+				// almost nothing in the numerator, which reports a contested book as a quiet one.
+				if (elapsed <= 0L || elapsed > MAX_OBSERVED_GAP_MILLIS) {
+					continue;
+				}
+
+				intervals++;
+				hours += elapsed / MILLIS_PER_HOUR;
+
+				if (bids[current] - bids[previous] > threshold) {
+					bidLifts++;
+				}
+
+				if (asks[previous] - asks[current] > threshold) {
+					askDrops++;
+				}
+			}
+
+			// Nothing contiguous to measure over. isUsable() reads that as unmeasured, which sends
+			// the caller to its stated fallback rather than to a rate divided by nearly zero.
+			if (hours <= 0.0d) {
+				return new FillStats(productId, 0.0d, 0.0d, 0.0d, 0);
+			}
+
+			return new FillStats(productId, bidLifts / hours, askDrops / hours, hours, intervals);
 		}
 	}
 }

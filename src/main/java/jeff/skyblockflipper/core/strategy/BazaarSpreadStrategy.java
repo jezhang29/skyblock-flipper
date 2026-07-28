@@ -1,10 +1,16 @@
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.pricing.FillModel;
+import jeff.skyblockflipper.core.pricing.FillModel.FillEstimate;
+import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.text.Waits;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Bazaar market making: post a buy order, wait, then post a sell offer.
@@ -56,8 +62,6 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 	/** Ignore sub-coin items: rounding and the 0.1 undercut dominate the economics. */
 	private static final double MIN_UNIT_PRICE = 1.0d;
 
-	private static final double HOURS_PER_WEEK = 168.0d;
-
 	/**
 	 * Above this weekly volume a book is too expensive to push around, so an abrupt move is far
 	 * more likely to be real news than someone building a trap.
@@ -87,6 +91,23 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 	 * modest share of the thinner side's volume actually routes through your orders.
 	 */
 	private static final double ASSUMED_VOLUME_SHARE = 0.05d;
+
+	/** A round trip slower than this is worth saying out loud, whatever the profit per hour. */
+	private static final Duration SLOW_FILL = Duration.ofMinutes(45);
+
+	/**
+	 * The leg that finishes last, or null if either never finishes.
+	 *
+	 * <p>Null rather than an arbitrarily large duration: "does not clear at all" and "clears in
+	 * nine hours" deserve different sentences, and collapsing them loses the one that matters.
+	 */
+	private static Duration slower(Optional<Duration> first, Optional<Duration> second) {
+		if (first.isEmpty() || second.isEmpty()) {
+			return null;
+		}
+
+		return first.get().compareTo(second.get()) >= 0 ? first.get() : second.get();
+	}
 
 	@Override
 	public StrategyKind kind() {
@@ -154,18 +175,34 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 			}
 		}
 
-		// Throughput is the lesser of what the market can absorb and what your coins can fund.
-		double marketUnitsPerHour = weeklyVolume / HOURS_PER_WEEK * ASSUMED_VOLUME_SHARE;
+		// What the two legs are expected to fill, from recorded displacement where there is any.
+		// Without it this falls back to a flat share of the flow, which is what this strategy
+		// assumed unconditionally before the tape could answer the question - so a product the
+		// tape has not covered yet ranks exactly where it used to.
+		FillEstimate fill = FillModel.estimate(
+				product,
+				context.trends().fillStatsFor(product.productId()).orElse(null),
+				context.fillHorizon(),
+				ASSUMED_VOLUME_SHARE);
+
+		double unitsPerHour = fill.throughputPerHour();
+
+		if (unitsPerHour <= 0.0d) {
+			return java.util.Optional.empty();
+		}
+
+		double horizonHours = hoursOf(context.fillHorizon());
 		long affordableUnits = (long) (context.bankroll() / buyPrice);
 
 		if (affordableUnits <= 0L) {
 			return java.util.Optional.empty();
 		}
 
-		// One hour of inventory is the position we are willing to hold, which also caps how much
-		// adverse selection can hurt on any single item.
-		long units = Math.max(1L, Math.min(affordableUnits, (long) marketUnitsPerHour));
-		double profitPerHour = netPerUnit * Math.min(marketUnitsPerHour, units);
+		// Size the plan at what the horizon is expected to clear, capped by what the coins fund.
+		// A horizon's worth of inventory is the position we are willing to hold, which also caps
+		// how much adverse selection can hurt on any single item.
+		long units = Math.max(1L, Math.min(affordableUnits, (long) (unitsPerHour * horizonHours)));
+		double profitPerHour = netPerUnit * Math.min(unitsPerHour, units / horizonHours);
 		long capital = Math.round(buyPrice * units);
 
 		if (netPerUnit * units < context.minProfitPerFlip()) {
@@ -186,7 +223,12 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 				profitPerHour,
 				confidence(weeklyVolume, product, trend),
 				steps(name, buyPrice, sellPrice, units),
-				risks(product, trend, context)));
+				risks(product, trend, fill, units, context),
+				notes(fill, units)));
+	}
+
+	private static double hoursOf(Duration horizon) {
+		return horizon.toMillis() / 3_600_000.0d;
 	}
 
 	/**
@@ -254,14 +296,44 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 				"Cancel and reprice if the book moves against you rather than holding stock");
 	}
 
-	private static List<String> risks(BazaarProduct product, PriceTrend trend, StrategyContext context) {
+	/**
+	 * What the fill estimate says, stated as fact rather than as a warning.
+	 *
+	 * <p>The two legs are reported separately because they fail differently: a buy order that never
+	 * fills costs nothing but the wait, while a sell offer that never fills leaves you holding the
+	 * item, which is the position this strategy exists to avoid.
+	 */
+	private static List<String> notes(FillEstimate fill, long units) {
+		if (!fill.measured()) {
+			return List.of();
+		}
+
+		List<String> notes = new ArrayList<>();
+
+		notes.add(String.format("Fills about %s units an hour: %s to buy %d, %s to sell them",
+				Coins.format(fill.throughputPerHour()),
+				Waits.formatOrNever(fill.buyTimeToFill(units).orElse(null)), units,
+				Waits.formatOrNever(fill.sellTimeToFill(units).orElse(null))));
+
+		if (fill.outbidsPerHour() > 0.0d) {
+			notes.add(String.format(
+					"Measured from history: your buy order gets outbid about %.1f times an hour",
+					fill.outbidsPerHour()));
+		}
+
+		return notes;
+	}
+
+	private static List<String> risks(BazaarProduct product, PriceTrend trend, FillEstimate fill,
+			long units, StrategyContext context) {
 		List<String> risks = new ArrayList<>();
 
 		if (trend == null) {
 			// Unmeasured, not absent. This used to be an unconditional note on every candidate
 			// because there was no way to tell; now it means the tape has not seen this product
 			// for long enough, which is a different and much narrower claim.
-			risks.add("No price history for this item yet: a falling market would not be visible here");
+			risks.add("No price history for this item yet: a falling market would not be visible "
+					+ "here, and the fill rate is an assumed share of volume rather than a measured one");
 		} else if (trend.isFalling(FALLING_RISK_THRESHOLD)) {
 			risks.add(String.format(
 					"Price down %.1f%% against its %dh average; buy orders fill fastest into a decline",
@@ -270,7 +342,19 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 			risks.add("Choppy price series: the book you quoted against may not be there on the fill");
 		}
 
-		if (product.bottleneckWeeklyVolume() < 250_000L) {
+		// Measured where possible, inferred from volume only where it is not. The old unconditional
+		// "fills may take hours" was a guess dressed as a warning; a measured wait can say which
+		// leg is slow and how slow, and stays quiet when the fill is brisk.
+		if (fill.measured()) {
+			Duration slowest = slower(fill.buyTimeToFill(units), fill.sellTimeToFill(units));
+
+			if (slowest == null) {
+				risks.add("At this size one leg does not clear inside your fill horizon at all");
+			} else if (slowest.compareTo(SLOW_FILL) >= 0) {
+				risks.add("Slow to complete: about " + Waits.format(slowest)
+						+ " for the round trip, during which the spread you quoted can close");
+			}
+		} else if (product.bottleneckWeeklyVolume() < 250_000L) {
 			risks.add("Thin two-sided flow: fills may take hours");
 		}
 

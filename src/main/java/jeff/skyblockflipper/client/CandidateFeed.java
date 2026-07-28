@@ -10,6 +10,7 @@ import jeff.skyblockflipper.core.strategy.StrategyKind;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -53,7 +54,8 @@ public final class CandidateFeed {
 				config.bankroll,
 				config.minProfitPerFlip,
 				config.minConfidence,
-				config.maxAdverseDrift);
+				config.maxAdverseDrift,
+				Duration.ofMinutes(config.fillHorizonMinutes));
 	}
 
 	/** Fresh ranking across every strategy, or a single one when {@code kind} is non-null. */

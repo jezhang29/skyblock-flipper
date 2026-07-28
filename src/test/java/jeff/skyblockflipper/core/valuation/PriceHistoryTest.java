@@ -209,4 +209,149 @@ class PriceHistoryTest {
 		assertEquals(100, snapshot.samples());
 		assertEquals(WINDOW, snapshot.window());
 	}
+
+	// --- Displacement ------------------------------------------------------------------------
+	//
+	// How often the top of each side moves past where you would have posted. This is the half of
+	// the fill question a midpoint cannot answer, so these check it against series built to move
+	// one side at a time.
+
+	/** Both sides stated independently, for the cases where the midpoint is beside the point. */
+	private static PriceHistory bookHistory(double[] bids, double[] asks) {
+		PriceHistory history = new PriceHistory(WINDOW);
+		long start = Instant.now().toEpochMilli() - (long) bids.length * STEP;
+
+		for (int i = 0; i < bids.length; i++) {
+			history.append(new BazaarSample(ITEM, start + i * STEP, asks[i], bids[i], 1_000_000L, 900_000L));
+		}
+
+		return history;
+	}
+
+	private static double[] climbing(int count, double from, double step) {
+		double[] out = new double[count];
+
+		for (int i = 0; i < count; i++) {
+			out[i] = from + step * i;
+		}
+
+		return out;
+	}
+
+	private static double[] flat(int count, double level) {
+		double[] out = new double[count];
+		java.util.Arrays.fill(out, level);
+		return out;
+	}
+
+	@Test
+	void aBidThatStepsUpEverySampleIsADisplacementEverySample() {
+		// 60 samples five minutes apart is just under five hours, with 59 steps between them.
+		// Every step lifts the bid a full coin, well past the 0.1 increment you would have posted
+		// inside, so every one of them puts someone in front of you.
+		FillStats stats = bookHistory(climbing(60, 100.0d, 1.0d), flat(60, 200.0d))
+				.snapshot().fillStatsFor(ITEM).orElseThrow();
+
+		assertEquals(59.0d / stats.hoursObserved(), stats.bidLiftsPerHour(), 1e-9);
+		assertEquals(0.0d, stats.askDropsPerHour(), 1e-9);
+	}
+
+	@Test
+	void aBookThatDoesNotMoveDisplacesNobody() {
+		FillStats stats = bookHistory(flat(60, 100.0d), flat(60, 104.0d))
+				.snapshot().fillStatsFor(ITEM).orElseThrow();
+
+		assertEquals(0.0d, stats.bidLiftsPerHour(), 1e-9);
+		assertEquals(0.0d, stats.askDropsPerHour(), 1e-9);
+	}
+
+	@Test
+	void aMoveWithinTheIncrementIsNotADisplacement() {
+		// Someone matching your price exactly does not get in front of you: time priority means
+		// you were there first. Only a strictly larger step counts.
+		FillStats stats = bookHistory(climbing(60, 100.0d, 0.1d), flat(60, 200.0d))
+				.snapshot().fillStatsFor(ITEM).orElseThrow();
+
+		assertEquals(0.0d, stats.bidLiftsPerHour(), 1e-9);
+	}
+
+	@Test
+	void countsTheTwoSidesSeparatelyBecauseTheyDisplaceDifferentOrders() {
+		// The ask falls while the bid holds: sell offers are being undercut, buy orders are not.
+		// A midpoint series would report this as a price move and could not tell you which.
+		double[] fallingAsks = climbing(60, 200.0d, -1.0d);
+
+		FillStats stats = bookHistory(flat(60, 100.0d), fallingAsks)
+				.snapshot().fillStatsFor(ITEM).orElseThrow();
+
+		assertEquals(0.0d, stats.bidLiftsPerHour(), 1e-9);
+		assertEquals(59.0d / stats.hoursObserved(), stats.askDropsPerHour(), 1e-9);
+	}
+
+	@Test
+	void reportsNoDisplacementRateUntilEnoughSamplesBackIt() {
+		// Same bar as the trend indicators: a rate measured across three samples is not a rate,
+		// and a caller handed one would size a plan off it.
+		assertTrue(bookHistory(flat(3, 100.0d), flat(3, 104.0d))
+				.snapshot().fillStatsFor(ITEM).isEmpty());
+	}
+
+	@Test
+	void timeTheClientWasClosedIsNotTimeTheBookStoodStill() {
+		// Two half-hour sittings either side of an eleven-hour gap, with the bid stepping up every
+		// sample throughout. Measured end to end the gap swamps the denominator and the book looks
+		// quiet; measured over what was actually watched it is as contested as it plainly is.
+		//
+		// This is not hypothetical: on the recorded tape from a client that ran twice in a day,
+		// WHEAT scored 0.23 outbids an hour end to end against 4.86 over the observed intervals.
+		PriceHistory history = new PriceHistory(WINDOW);
+		long start = Instant.now().toEpochMilli() - Duration.ofHours(12).toMillis();
+		double bid = 100.0d;
+
+		for (int i = 0; i < 7; i++) {
+			history.append(new BazaarSample(ITEM, start + i * STEP, 200.0d, bid, 1L, 1L));
+			bid += 1.0d;
+		}
+
+		long afterGap = start + 7 * STEP + Duration.ofHours(11).toMillis();
+
+		for (int i = 0; i < 7; i++) {
+			history.append(new BazaarSample(ITEM, afterGap + i * STEP, 200.0d, bid, 1L, 1L));
+			bid += 1.0d;
+		}
+
+		FillStats stats = history.snapshot().fillStatsFor(ITEM).orElseThrow();
+
+		// Twelve five-minute intervals were observed; the eleven-hour one was not.
+		assertEquals(12, stats.intervals());
+		assertEquals(1.0d, stats.hoursObserved(), 1e-9);
+		assertEquals(12.0d, stats.bidLiftsPerHour(), 1e-9);
+	}
+
+	@Test
+	void aSeriesThatIsAllGapsIsNotAMeasurement() {
+		// A client opened once a day for a minute has samples but has never watched anything.
+		PriceHistory history = new PriceHistory(Duration.ofDays(30));
+		long start = Instant.now().toEpochMilli() - Duration.ofDays(20).toMillis();
+
+		for (int i = 0; i < 20; i++) {
+			history.append(new BazaarSample(ITEM,
+					start + i * Duration.ofDays(1).toMillis(), 200.0d, 100.0d + i, 1L, 1L));
+		}
+
+		assertTrue(history.snapshot().fillStatsFor(ITEM).isEmpty(),
+				"samples spread across days are not an observed rate");
+	}
+
+	@Test
+	void oneSidedBooksContributeNoDisplacementEither() {
+		PriceHistory history = new PriceHistory(WINDOW);
+		long now = Instant.now().toEpochMilli();
+
+		for (int i = 0; i < 50; i++) {
+			history.append(new BazaarSample(ITEM, now + i * STEP, 100.0d, 0.0d, 1L, 1L));
+		}
+
+		assertTrue(history.snapshot().fillStatsFor(ITEM).isEmpty());
+	}
 }
