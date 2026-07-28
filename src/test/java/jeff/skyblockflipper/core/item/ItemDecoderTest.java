@@ -118,6 +118,66 @@ class ItemDecoderTest {
 	}
 
 	@Test
+	void readsThePetLevelOffTheNameRatherThanTheExperienceCurve() {
+		PetInfo info = decode("PET").petInfo().orElseThrow();
+
+		// The level is what a pet is worth - the same pet at level 1 and level 100 differs by 2x to
+		// 12x - and deriving it from exp would mean bundling a curve per tier and per pet. Hypixel
+		// states it in the name instead, on all 2484 pet sales of the recorded tape.
+		assertEquals(100, info.level());
+		assertTrue(info.hasLevel());
+	}
+
+	@Test
+	void survivesANameWithNoUsableLevel() {
+		// A level that cannot be read must cost the level, not the pet. Every one of these falls
+		// back to 0, which drops the level rungs of the valuation ladder and prices the pet the way
+		// every pet was priced before there was a level at all.
+		assertEquals(0, ItemDecoder.levelFromName("Mole"));
+		assertEquals(0, ItemDecoder.levelFromName("[Lvl ] Mole"));
+		assertEquals(0, ItemDecoder.levelFromName("[Lvl abc] Mole"));
+		assertEquals(0, ItemDecoder.levelFromName("[Lvl 100 Mole"));
+		assertEquals(0, ItemDecoder.levelFromName(""));
+
+		assertEquals(1, ItemDecoder.levelFromName("[Lvl 1] Sheep"));
+		// Golden Dragon is the one pet that goes past 100, so the parse must not cap at three digits
+		// or at the level every other pet stops at.
+		assertEquals(200, ItemDecoder.levelFromName("[Lvl 200] Golden Dragon"));
+	}
+
+	@Test
+	void bandsLevelsWithOneAndOneHundredAloneBecauseThatIsWhereThePetsAre() {
+		// 1455 of 2484 taped pet sales were level 1 and 548 were level 100. Banding either with its
+		// neighbours would put a median between two peaks, which is wrong for both.
+		assertEquals("1", band(1));
+		assertEquals("2-29", band(2));
+		assertEquals("2-29", band(29));
+		assertEquals("30-59", band(30));
+		assertEquals("60-89", band(89));
+		assertEquals("90-99", band(90));
+		assertEquals("100", band(100));
+
+		// Open-ended above 100: only Golden Dragon is up here, and it has too few sales to split.
+		assertEquals("101+", band(101));
+		assertEquals("101+", band(200));
+
+		assertTrue(pet(1).bandIsJustThisLevel());
+		assertTrue(pet(100).bandIsJustThisLevel());
+		assertFalse(pet(50).bandIsJustThisLevel());
+
+		// An unknown level has no band to fall back to.
+		assertEquals("", pet(0).levelBand());
+	}
+
+	private static PetInfo pet(int level) {
+		return new PetInfo("MOLE", Rarity.LEGENDARY, 0.0d, level, "", 0, "");
+	}
+
+	private static String band(int level) {
+		return pet(level).levelBand();
+	}
+
+	@Test
 	void plainItemsDecodeToPlainSignatures() {
 		DecodedItem talisman = decode("ANITA_TALISMAN");
 

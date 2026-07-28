@@ -106,7 +106,10 @@ public final class FairValueModel {
 			// Stacked sales are priced for the stack; everything downstream works per unit.
 			double unitPrice = (double) sale.price() / Math.max(1, item.count());
 
-			record(bySignature, item.signature(), unitPrice);
+			// Every rung, not just the signature. A sale is evidence about the exact configuration
+			// that sold and about every wider description of it, and the wider ones are what stop
+			// a thinly-traded configuration having no valuation at all.
+			item.valuationKeys().forEach(key -> record(bySignature, key, unitPrice));
 			record(byCoarseKey, ActiveListing.coarseKey(item.displayName(), item.rarity()), unitPrice);
 			considered++;
 		}
@@ -114,9 +117,12 @@ public final class FairValueModel {
 		public FairValueModel build() {
 			double windowHours = window.toMillis() / 3_600_000.0d;
 
+			// EXACT here is provisional; valueOf re-labels each hit with how it was actually
+			// matched, because the same key can be an exact signature for one item and a widened
+			// one for another.
 			return new FairValueModel(
-					estimates(bySignature, windowHours, true),
-					estimates(byCoarseKey, windowHours, false),
+					estimates(bySignature, windowHours, ValueEstimate.Basis.EXACT),
+					estimates(byCoarseKey, windowHours, ValueEstimate.Basis.COARSE),
 					considered,
 					window);
 		}
@@ -136,16 +142,28 @@ public final class FairValueModel {
 	/**
 	 * The estimate that may be used to justify buying this item.
 	 *
-	 * <p>Exact signature matches only, with one exception: an item carrying no attributes at all
-	 * has nothing the coarse key could have missed, so name and rarity describe it completely.
-	 * Without that rule the coarse index would happily price a five-star recombobulated helmet off
-	 * sales of the bare one and call the difference profit.
+	 * <p>Walks the item's keys from most specific to least, taking the first with enough sales
+	 * behind it. For everything but a pet that is one key, the exact signature, and the walk ends
+	 * where it always did. A pet tries its own level first, then its level band, then any level -
+	 * each rung a real widening, each labelled as such so the confidence it earns is discounted.
+	 *
+	 * <p>Then one exception, unchanged: an item carrying no attributes at all has nothing the
+	 * coarse key could have missed, so name and rarity describe it completely. Without that rule
+	 * the coarse index would happily price a five-star recombobulated helmet off sales of the bare
+	 * one and call the difference profit.
 	 */
 	public Optional<ValueEstimate> valueOf(DecodedItem item) {
-		ValueEstimate exactMatch = exact.get(item.signature());
+		List<String> keys = item.valuationKeys();
 
-		if (exactMatch != null && exactMatch.isUsable()) {
-			return Optional.of(exactMatch);
+		for (int rung = 0; rung < keys.size(); rung++) {
+			ValueEstimate match = exact.get(keys.get(rung));
+
+			if (match != null && match.isUsable()) {
+				boolean fullMatch = rung == 0 && item.isFullyDescribed();
+
+				return Optional.of(match.withBasis(
+						fullMatch ? ValueEstimate.Basis.EXACT : ValueEstimate.Basis.BANDED));
+			}
 		}
 
 		if (!isBare(item)) {
@@ -197,12 +215,12 @@ public final class FairValueModel {
 	}
 
 	private static Map<String, ValueEstimate> estimates(Map<String, List<Double>> prices,
-			double windowHours, boolean exact) {
+			double windowHours, ValueEstimate.Basis basis) {
 		Map<String, ValueEstimate> out = new HashMap<>();
 
 		prices.forEach((key, values) -> {
 			if (values.size() >= ValueEstimate.MIN_SAMPLES) {
-				out.put(key, ValueEstimate.of(key, values, windowHours, exact));
+				out.put(key, ValueEstimate.of(key, values, windowHours, basis));
 			}
 		});
 

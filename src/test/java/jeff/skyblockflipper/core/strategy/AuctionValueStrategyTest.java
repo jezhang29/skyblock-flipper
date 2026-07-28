@@ -34,11 +34,11 @@ class AuctionValueStrategyTest {
 	}
 
 	private static PricedListing priced(long price, double median, int samples, double salesPerHour,
-			boolean exact) {
+			ValueEstimate.Basis basis) {
 		return new PricedListing(
 				new ActiveListing("uuid", "Midas Sword", Rarity.LEGENDARY, price, ""),
 				item(),
-				new ValueEstimate("key", median, samples, 0.05d, salesPerHour, exact));
+				new ValueEstimate("key", median, samples, 0.05d, salesPerHour, basis));
 	}
 
 	private static StrategyContext context(List<PricedListing> listings, double minConfidence,
@@ -59,7 +59,7 @@ class AuctionValueStrategyTest {
 		PricedListing listing = new PricedListing(
 				new ActiveListing("uuid", "Arack ✪✪✪", Rarity.EPIC, price, ""),
 				starred,
-				new ValueEstimate("key", median, 30, 0.05d, 1.0d, true));
+				new ValueEstimate("key", median, 30, 0.05d, 1.0d, ValueEstimate.Basis.EXACT));
 
 		ItemCatalog catalog = new ItemCatalog(Map.of("ARACK", new ItemCatalog.Entry(
 				"ARACK", "Arack", 5_000.0d, List.of(
@@ -104,7 +104,7 @@ class AuctionValueStrategyTest {
 	@Test
 	void saysNothingAboutStarsOnAnItemThatHasNone() {
 		FlipCandidate candidate = candidates(context(
-				List.of(priced(6_000_000L, 10_000_000L, 30, 1.0d, true)), 0.0d, 0L, false))
+				List.of(priced(6_000_000L, 10_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
 				.getFirst();
 
 		assertTrue(candidate.notes().isEmpty(),
@@ -114,7 +114,7 @@ class AuctionValueStrategyTest {
 	@Test
 	void proposesBuyingBelowFairValueAndReportsProfitAfterAuctionFees() {
 		FlipCandidate candidate = candidates(context(
-				List.of(priced(6_000_000L, 10_000_000L, 30, 1.0d, true)), 0.0d, 0L, false))
+				List.of(priced(6_000_000L, 10_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
 				.getFirst();
 
 		assertEquals(StrategyKind.AUCTION_VALUE, candidate.kind());
@@ -128,7 +128,7 @@ class AuctionValueStrategyTest {
 	void refusesCandidatesBelowTheConfidenceFloor() {
 		// Six sales that agree is a usable estimate but not a confident one, and this is the only
 		// strategy where a wrong valuation is the whole risk.
-		List<PricedListing> thin = List.of(priced(6_000_000L, 10_000_000L, 6, 1.0d, true));
+		List<PricedListing> thin = List.of(priced(6_000_000L, 10_000_000L, 6, 1.0d, ValueEstimate.Basis.EXACT));
 
 		assertTrue(candidates(context(thin, 0.9d, 0L, false)).isEmpty());
 		assertTrue(candidates(context(thin, 0.0d, 0L, false)).size() == 1);
@@ -139,8 +139,8 @@ class AuctionValueStrategyTest {
 		// Same profit, but one configuration sells hourly and the other twice a week. Ranking on
 		// the discount alone would park the bankroll in the slow one.
 		List<FlipCandidate> found = candidates(context(List.of(
-				priced(6_000_000L, 10_000_000L, 30, 0.01d, true),
-				priced(6_000_000L, 10_000_000L, 30, 4.0d, true)), 0.0d, 0L, false));
+				priced(6_000_000L, 10_000_000L, 30, 0.01d, ValueEstimate.Basis.EXACT),
+				priced(6_000_000L, 10_000_000L, 30, 4.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false));
 
 		assertEquals(2, found.size());
 		assertTrue(found.getFirst().profitPerHour() > found.getLast().profitPerHour());
@@ -149,7 +149,7 @@ class AuctionValueStrategyTest {
 
 	@Test
 	void derpyQuadruplesTheFeesAndCanKillTheFlipOutright() {
-		List<PricedListing> marginal = List.of(priced(9_400_000L, 10_000_000L, 30, 1.0d, true));
+		List<PricedListing> marginal = List.of(priced(9_400_000L, 10_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT));
 
 		assertTrue(candidates(context(marginal, 0.0d, 1L, false)).size() == 1);
 		// 4x listing fee and claim tax turn a 300k edge into a loss.
@@ -159,21 +159,21 @@ class AuctionValueStrategyTest {
 	@Test
 	void skipsListingsBeyondTheBankroll() {
 		assertTrue(candidates(context(
-				List.of(priced(BANKROLL + 1L, 500_000_000L, 30, 1.0d, true)), 0.0d, 0L, false))
+				List.of(priced(BANKROLL + 1L, 500_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
 				.isEmpty());
 	}
 
 	@Test
 	void respectsTheMinimumProfitPerFlip() {
 		assertTrue(candidates(context(
-				List.of(priced(9_800_000L, 10_000_000L, 30, 1.0d, true)), 0.0d, 1_000_000L, false))
+				List.of(priced(9_800_000L, 10_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 1_000_000L, false))
 				.isEmpty());
 	}
 
 	@Test
 	void everyCandidateSaysItCannotGuaranteeTheListingIsStillThere() {
 		FlipCandidate candidate = candidates(context(
-				List.of(priced(6_000_000L, 10_000_000L, 30, 1.0d, true)), 0.0d, 0L, false))
+				List.of(priced(6_000_000L, 10_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
 				.getFirst();
 
 		assertTrue(candidate.risks().stream().anyMatch(risk -> risk.contains("does not buy for you")),
@@ -185,7 +185,7 @@ class AuctionValueStrategyTest {
 	@Test
 	void warnsWhenTheValuationIsCoarseOrThinlyEvidenced() {
 		FlipCandidate coarse = candidates(context(
-				List.of(priced(4_000_000L, 10_000_000L, 8, 1.0d, false)), 0.0d, 0L, false))
+				List.of(priced(4_000_000L, 10_000_000L, 8, 1.0d, ValueEstimate.Basis.COARSE)), 0.0d, 0L, false))
 				.getFirst();
 
 		assertTrue(coarse.risks().stream().anyMatch(risk -> risk.contains("name and rarity only")));
@@ -195,7 +195,7 @@ class AuctionValueStrategyTest {
 	@Test
 	void warnsWhenCoinsWouldBeParkedForAges() {
 		FlipCandidate slow = candidates(context(
-				List.of(priced(4_000_000L, 10_000_000L, 30, 0.02d, true)), 0.0d, 0L, false))
+				List.of(priced(4_000_000L, 10_000_000L, 30, 0.02d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
 				.getFirst();
 
 		assertTrue(slow.risks().stream().anyMatch(risk -> risk.contains("parked")));
