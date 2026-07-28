@@ -14,6 +14,9 @@ package jeff.skyblockflipper.core.config;
  * @param bazaarTapeEnabled       whether to record bazaar top-of-book to disk
  * @param bazaarTapeRetentionDays how many days of bazaar tape to keep
  * @param trendWindowHours        how far back the in-memory trend indicators look
+ * @param bazaarPollSeconds       how often to refetch the bazaar book. Read once when the poller
+ *                                starts rather than per sweep, like {@code trendWindowHours}: it is
+ *                                a schedule, and a schedule cannot change under a running executor
  */
 public record ScanSettings(
 		boolean scanAuctions,
@@ -22,6 +25,7 @@ public record ScanSettings(
 		long maxPrice,
 		boolean bazaarTapeEnabled,
 		int bazaarTapeRetentionDays,
-		int trendWindowHours
+		int trendWindowHours,
+		int bazaarPollSeconds
 ) {
 }

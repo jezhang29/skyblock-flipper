@@ -30,9 +30,6 @@ import java.util.function.Supplier;
  * server-side cache just burns rate limit to re-download identical bytes.
  */
 public final class MarketPoller implements AutoCloseable {
-	/** Bazaar books turn over quickly and the payload is small. */
-	private static final Duration BAZAAR_INTERVAL = Duration.ofSeconds(20);
-
 	/**
 	 * The ended-auctions window is about 60 seconds wide and non-recoverable, so this runs slightly
 	 * faster than the window to guarantee overlap. Duplicates are cheap; a gap is permanent.
@@ -62,9 +59,14 @@ public final class MarketPoller implements AutoCloseable {
 	/**
 	 * How often bazaar top-of-book is written to the tape.
 	 *
-	 * <p>Far slower than the book is fetched, and that is the point: the trend indicators cannot
-	 * resolve twenty-second granularity, so taping every poll would cost roughly fifteen times the
-	 * disk to answer exactly the same questions.
+	 * <p>Far slower than the book is fetched by default, and that is the point: the trend indicators
+	 * cannot resolve twenty-second granularity, so taping every poll would cost roughly fifteen times
+	 * the disk to answer exactly the same questions.
+	 *
+	 * <p>Nothing breaks if {@code bazaarPollSeconds} is raised past this. The tape dedupes on
+	 * Hypixel's own stamp, so a sample the poll has not refreshed writes nothing, and the effective
+	 * tape cadence just becomes the poll cadence. That is the setting a headless collector wants:
+	 * fetch only what will actually be recorded.
 	 */
 	private static final Duration BAZAAR_TAPE_INTERVAL = Duration.ofMinutes(5);
 
@@ -110,7 +112,10 @@ public final class MarketPoller implements AutoCloseable {
 			return thread;
 		});
 
-		schedule(this::pollBazaar, Duration.ZERO, BAZAAR_INTERVAL);
+		// Read once, like the trend window above: a schedule cannot change under a running executor,
+		// so a new cadence takes effect where a new window does - on the restart /flip reload does.
+		schedule(this::pollBazaar, Duration.ZERO,
+				Duration.ofSeconds(settings.get().bazaarPollSeconds()));
 		schedule(this::pollSales, Duration.ofSeconds(2), SALES_INTERVAL);
 		schedule(this::pollMayor, Duration.ofSeconds(4), MAYOR_INTERVAL);
 		schedule(this::pollItems, Duration.ofSeconds(6), ITEMS_INTERVAL);
