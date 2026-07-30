@@ -17,6 +17,7 @@ import java.util.TreeMap;
  * @param reforge      reforge id, or "" for none
  * @param stars        dungeon/master stars, from either the modern or the legacy attribute
  * @param attributes   Kuudra/Crimson attribute rolls as name to level, empty for most items
+ * @param runes        applied runes as name to tier, empty for most items
  * @param pet          pet detail, or null when this is not a pet
  */
 public record DecodedItem(
@@ -31,6 +32,7 @@ public record DecodedItem(
 		Map<String, Integer> enchantments,
 		List<String> gemstones,
 		Map<String, Integer> attributes,
+		Map<String, Integer> runes,
 		PetInfo pet
 ) {
 	public DecodedItem {
@@ -39,6 +41,7 @@ public record DecodedItem(
 		enchantments = Collections.unmodifiableMap(new TreeMap<>(enchantments));
 		gemstones = List.copyOf(gemstones);
 		attributes = Collections.unmodifiableMap(new TreeMap<>(attributes));
+		runes = Collections.unmodifiableMap(new TreeMap<>(runes));
 	}
 
 	public boolean isPet() {
@@ -103,6 +106,16 @@ public record DecodedItem(
 			StringJoiner rolls = new StringJoiner(",");
 			attributes.forEach((name, level) -> rolls.add(name + ":" + level));
 			key.add("attrs=" + rolls);
+		}
+
+		// Every rune shares the id RUNE, the way every pet shares PET. Without this term the tape's
+		// 3,589 rune sales collapse onto five keys - one per rarity - pooling a 2,000 coin GEM rune
+		// with a 140,000,000 coin one. The tier belongs here for the same reason a pet's level does:
+		// on the recorded tape MUSIC=1 has a median of 5,000,000 against 59,500,000 for MUSIC=3.
+		if (!runes.isEmpty()) {
+			StringJoiner applied = new StringJoiner(",");
+			runes.forEach((name, tier) -> applied.add(name + ":" + tier));
+			key.add("runes=" + applied);
 		}
 
 		return key.toString();

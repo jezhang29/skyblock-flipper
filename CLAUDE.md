@@ -112,7 +112,16 @@ Two verified traps that produce plausible wrong numbers, not errors:
    **never build an `ItemStack`** from it. `components["minecraft:tooltip_style"]` gives rarity,
    except when absent (4 of 154 live sales), where `ItemDecoder` falls back to the last lore
    line. Stars live under `upgrade_level` *or* legacy `dungeon_item_level`; every pet shares the
-   id `PET` with its identity in JSON under `ExtraAttributes.petInfo`.
+   id `PET` with its identity in JSON under `ExtraAttributes.petInfo`, and every rune shares the id
+   `RUNE` with its identity in `ExtraAttributes.runes` (`{MUSIC: 3}`, tier included).
+
+**Shared item ids are the recurring shape of this bug**, and they fail silently: the sales are
+decoded, the medians are computed, and a whole market prices off one key. `SignatureGapProbeTest`
+(opt-in, `-PtapeBacktest`) ranks signatures by the p10–p90 spread of a day's realized sales and
+prints the `ExtraAttributes` keys nothing reads, which is how to find the next one rather than
+guess at it. Still unread and measured to matter: `color` (dyed leather, ~7B coins a day),
+`new_years_cake` (the year), `ethermerge`/`tuned_transmission`, `winning_bid` (Midas weapons, where
+the bid *is* the value).
 
 Other rules:
 
