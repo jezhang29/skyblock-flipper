@@ -3,6 +3,7 @@ package jeff.skyblockflipper.core.api;
 import jeff.skyblockflipper.core.config.ScanSettings;
 import jeff.skyblockflipper.core.model.BazaarSample;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.SaleDailyStat;
 import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
@@ -85,6 +86,18 @@ public final class MarketPoller implements AutoCloseable {
 
 	private ScheduledExecutorService executor;
 
+	/**
+	 * Tape maintenance, on a thread of its own.
+	 *
+	 * <p>Rolling a completed sales day into its index means decoding a few hundred thousand item
+	 * blobs, which takes long enough that sharing a thread with {@link #pollSales} would be a data
+	 * loss: the ended-auctions window is 60 seconds wide and nothing recovers one that was missed
+	 * while the thread was busy summarising yesterday. Nothing here writes what the poller writes -
+	 * maintenance reads completed day files and owns the rollup index, the poller appends to
+	 * today's.
+	 */
+	private ScheduledExecutorService maintenance;
+
 	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape, BazaarTape bazaarTape,
 			Supplier<ScanSettings> settings, Consumer<String> log) {
 		this.api = api;
@@ -112,6 +125,12 @@ public final class MarketPoller implements AutoCloseable {
 			return thread;
 		});
 
+		maintenance = Executors.newSingleThreadScheduledExecutor(runnable -> {
+			Thread thread = new Thread(runnable, "skyblock-flipper-tape-maintenance");
+			thread.setDaemon(true);
+			return thread;
+		});
+
 		// Read once, like the trend window above: a schedule cannot change under a running executor,
 		// so a new cadence takes effect where a new window does - on the restart /flip reload does.
 		schedule(this::pollBazaar, Duration.ZERO,
@@ -119,7 +138,10 @@ public final class MarketPoller implements AutoCloseable {
 		schedule(this::pollSales, Duration.ofSeconds(2), SALES_INTERVAL);
 		schedule(this::pollMayor, Duration.ofSeconds(4), MAYOR_INTERVAL);
 		schedule(this::pollItems, Duration.ofSeconds(6), ITEMS_INTERVAL);
-		schedule(this::pruneTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
+		// The sales rollup is the one piece of tape work heavy enough to need its own thread; the
+		// bazaar's stays with the poller, which is the only thread allowed to touch the price ring.
+		scheduleMaintenance(this::maintainSalesTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
+		schedule(this::maintainBazaarTape, Duration.ofMinutes(2), PRUNE_INTERVAL);
 
 		// Replays yesterday's tape into the ring before the first live sample, so trends are
 		// available immediately on a client that has run before rather than three hours in.
@@ -141,6 +163,11 @@ public final class MarketPoller implements AutoCloseable {
 		if (executor != null) {
 			executor.shutdownNow();
 			executor = null;
+		}
+
+		if (maintenance != null) {
+			maintenance.shutdownNow();
+			maintenance = null;
 		}
 	}
 
@@ -280,17 +307,28 @@ public final class MarketPoller implements AutoCloseable {
 						+ scan.results().size() + " under fair value");
 	}
 
-	private void pruneTape() {
+	private void maintainSalesTape() {
 		try {
+			// Summarise before deleting, so a day that ages out still leaves its rollup behind.
+			// One day per pass, so a client returning after a week spreads the decoding over
+			// several passes rather than doing all of it in one.
+			int rolled = tape.rollUpOneCompletedDay();
 			int removed = tape.prune();
 
-			if (removed > 0) {
-				log.accept("Pruned " + removed + " expired sales tape file(s)");
+			List<SaleDailyStat> index = tape.readDailyIndex();
+			data.setSalesRollup(
+					(int) index.stream().map(SaleDailyStat::day).distinct().count(), index.size());
+
+			if (rolled > 0 || removed > 0) {
+				log.accept("Sales tape: rolled up " + rolled + " day(s), pruned " + removed
+						+ " expired file(s)");
 			}
 		} catch (IOException e) {
-			log.accept("Failed pruning sales tape: " + e);
+			log.accept("Failed maintaining sales tape: " + e);
 		}
+	}
 
+	private void maintainBazaarTape() {
 		try {
 			// Summarise before deleting, so a day that ages out still leaves its rollup behind.
 			int rolled = bazaarTape.rollUpCompletedDays();
@@ -317,6 +355,12 @@ public final class MarketPoller implements AutoCloseable {
 	 */
 	private void schedule(PollTask task, Duration initialDelay, Duration interval) {
 		executor.scheduleAtFixedRate(guarded(task),
+				initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
+	}
+
+	/** As {@link #schedule}, on the thread that must never hold up a poll. */
+	private void scheduleMaintenance(PollTask task, Duration initialDelay, Duration interval) {
+		maintenance.scheduleAtFixedRate(guarded(task),
 				initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
 	}
 

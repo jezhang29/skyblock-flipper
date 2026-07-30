@@ -33,6 +33,10 @@ public final class MarketData {
 	private final AtomicLong auctionsLastUpdated = new AtomicLong();
 	private final AtomicReference<String> lastError = new AtomicReference<>("");
 	private final AtomicLong salesRecorded = new AtomicLong();
+
+	/** Written by the tape-maintenance thread, read by whoever asks for status. */
+	private volatile int salesRollupDays;
+	private volatile int salesRollupEntries;
 	private final AtomicLong pollFailures = new AtomicLong();
 	private final AtomicLong bazaarRevision = new AtomicLong();
 
@@ -125,6 +129,26 @@ public final class MarketData {
 
 	public void setMayor(MayorInfo info) {
 		mayor.set(info);
+	}
+
+	/**
+	 * How much of the sales tape has been summarised, for status reporting.
+	 *
+	 * <p>Two counts rather than a formatted line because the answer is a claim about durability -
+	 * these days survive retention - and a player who has just enabled the mod should be able to
+	 * see it filling in.
+	 */
+	public void setSalesRollup(int days, int entries) {
+		salesRollupDays = days;
+		salesRollupEntries = entries;
+	}
+
+	public int salesRollupDays() {
+		return salesRollupDays;
+	}
+
+	public int salesRollupEntries() {
+		return salesRollupEntries;
 	}
 
 	public void recordSales(int count) {

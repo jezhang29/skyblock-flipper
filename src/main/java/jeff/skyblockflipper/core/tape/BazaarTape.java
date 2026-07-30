@@ -8,6 +8,7 @@ import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSample;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -158,10 +159,7 @@ public final class BazaarTape {
 
 		try (Stream<Path> files = Files.list(directory)) {
 			for (Path file : files.filter(p -> onOrAfter(p, cutoff)).sorted().toList()) {
-				for (BazaarSample sample : readFile(file)) {
-					consumer.accept(sample);
-					read++;
-				}
+				read += forEachInFile(file, consumer);
 			}
 		}
 
@@ -342,9 +340,25 @@ public final class BazaarTape {
 
 	private List<BazaarSample> readFile(Path file) throws IOException {
 		List<BazaarSample> out = new ArrayList<>();
+		forEachInFile(file, out::add);
+		return out;
+	}
 
-		try (Stream<String> lines = Files.lines(file, StandardCharsets.UTF_8)) {
-			for (String line : lines.toList()) {
+	/**
+	 * Parses one day file a line at a time, handing each sample straight to {@code consumer}.
+	 *
+	 * <p>Nothing here holds the file: a day is about 40MB and the callers all want a running
+	 * statistic, not the samples themselves.
+	 *
+	 * @return how many samples were read
+	 */
+	private int forEachInFile(Path file, Consumer<BazaarSample> consumer) throws IOException {
+		int read = 0;
+
+		try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			String line;
+
+			while ((line = reader.readLine()) != null) {
 				if (line.isBlank()) {
 					continue;
 				}
@@ -353,7 +367,8 @@ public final class BazaarTape {
 					BazaarSample sample = gson.fromJson(line, BazaarSample.class);
 
 					if (sample != null && sample.productId() != null) {
-						out.add(sample);
+						consumer.accept(sample);
+						read++;
 					}
 				} catch (JsonSyntaxException ignored) {
 					// A truncated final line from an interrupted write costs exactly one sample.
@@ -361,7 +376,7 @@ public final class BazaarTape {
 			}
 		}
 
-		return out;
+		return read;
 	}
 
 	/** True for our own day files dated on or after {@code cutoff}; anything else is skipped. */
