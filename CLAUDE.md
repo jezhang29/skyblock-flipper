@@ -35,12 +35,11 @@ An interruption loses the conversation; only disk survives. Leave recovery state
 - **Commit messages.** Imperative, sentence case, no trailing period; comma-joined clauses are
   fine. The body is the point: what was wrong, why this approach works, what was rejected and
   why. Quote the measurements that justify a decision, and state what was verified live versus
-  offline. End with the co-author trailer.
+  offline.
 
 ## Target versions
 
-Minecraft 26.2 / Fabric Loader 0.19.3 / Fabric API 0.155.2+26.2 / Loom 1.17-SNAPSHOT / Java 25,
-all pinned in `gradle.properties`.
+Versions are pinned in `gradle.properties`.
 
 **26.2 mapping names differ from tutorials and older Fabric code** — e.g.
 `net.minecraft.resources.Identifier`, `net.minecraft.ChatFormatting`,
@@ -56,10 +55,6 @@ common entrypoint would be a design change, not a fill-in-the-blank.
   `net.fabricmc`.** Inject Minecraft-shaped values as plain data (`FlipperConfig` takes a `Path`
   rather than reaching for `FabricLoader`). This is what makes the money math unit-testable.
 - **`client`** — entrypoint, commands, HUD, mixins; owns the wiring `core` refuses to do.
-
-Inside `core`: `api` (HTTP, poller, shared `MarketData`), `model` + `model/dto`, `nbt` + `item`
-(blob parsing and priced attributes), `tape` (realized sales on disk), `valuation`, `pricing`
-(fee stack), `strategy`, `ledger`, `config`, `text`, `headless`.
 
 `core/headless/HeadlessCollector` is a `main` that runs the poller with no game, so the tapes keep
 filling while Minecraft is closed — `auctions_ended` is a ~60s non-recoverable window, so downtime
@@ -129,6 +124,12 @@ Other rules:
   recombobulated sales.
 - Valuation trains on `auctions_ended` only, never active listings (contaminated by the very
   mispricings being hunted). BIN sales only, medians not means.
+- **A day of sales tape is ~265MB, so nothing may hold one in memory.** Both tapes parse day files
+  a line at a time; `SalesTape.readAll` is for tests only. Retention past `valuationWindowDays`
+  (2d) buys no pricing accuracy — measured, coverage 88.9% at 48h against 89.3% at 120h — so raw
+  days are kept for backtesting, and the per-day `daily.jsonl` rollup (67x smaller, never pruned)
+  is what carries price history past retention. Rolling a sales day up decodes every blob in it,
+  so it runs on `MarketPoller`'s maintenance thread, one day per pass, never on the poller.
 - `/v2/resources/skyblock/items` carries `upgrade_costs`, so star pricing is computed
   deterministically from that, not fitted: 544 items, 9 essence types and 43 item ingredients, and
   **every one of those ingredients is a bazaar product**, so any star tier prices off the book.
@@ -147,8 +148,3 @@ Other rules:
   `BazaarProduct.instantBuysPerHour()` / `instantSellsPerHour()`.
 - Bazaar sales tax is 1.25%, less 0.125% per Bazaar Flipper level, floor 1%.
   `FlipperConfig.bazaarFlipperLevel` (0-6) feeds this.
-
-## Scope constraint
-
-The mod is advisory: it surfaces numbers and rankings. No auto-purchase, auto-relist, inventory
-manipulation, or packet-level automation.

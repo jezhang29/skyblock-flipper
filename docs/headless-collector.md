@@ -63,8 +63,20 @@ So a tape-only collector costs about **9GB a month** of download. That is all *i
 providers bill egress, and this process uploads request headers. The collector prints its own
 estimate at startup from whatever settings it actually loaded.
 
-Disk follows `tapeRetentionDays` (7d, a few hundred MB a day) and `bazaarTapeRetentionDays` (14d,
-~40MB a day) — budget ~3GB steady-state at the defaults.
+Disk follows `tapeRetentionDays` (7d, ~265MB a day measured) and `bazaarTapeRetentionDays` (14d,
+~40MB a day) — budget ~3GB steady-state at the defaults, ~6.5GB at the 21d/30d a server can afford.
+
+Retention past `valuationWindowDays` buys nothing for pricing — measured, see
+`ValuationWindowBacktestTest`: coverage of held-out sales goes 88.9% at a 48h window to 89.3% at
+120h, with the error flat. It is kept for measuring model changes against, and because a day of
+`auctions_ended` that was never recorded cannot be bought back.
+
+What survives retention is the rollup. Both tapes summarise each completed UTC day into a
+`daily.jsonl` beside the raw files and never prune it: for sales that is one line per item
+signature per day, measured at **67x smaller** than the days it replaces (366MB of raw tape over
+four days became a 5.5MB index), so long-horizon price history costs a few megabytes a year. The
+sales rollup runs on its own thread and does one day per pass — it decodes every blob in the day,
+which must never be allowed to delay the 60-second `auctions_ended` window.
 
 ## Run it under systemd
 
