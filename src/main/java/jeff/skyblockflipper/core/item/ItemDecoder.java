@@ -27,6 +27,11 @@ import java.util.Optional;
  * the dominant term in the price - bare {@code CRIMSON_BOOTS} were asking 1.9M against 16M for a
  * rolled pair - so leaving it unparsed prices attribute gear off sales of a different item.
  *
+ * <p>{@code ExtraAttributes.runes} is the same shape, {@code {MUSIC: 3}}, and matters for the same
+ * reason pets do: every rune in the game is the item id {@code RUNE}, so unread it pools an entire
+ * rarity into one price. It is read for all items, not just runes - a rune applied to a sword is
+ * part of what that sword sells for.
+ *
  * <p>Except when it is not there at all. Roughly one item in forty carries no tooltip style, and
  * the only remaining statement of its rarity is the last line of its lore. So this falls back to
  * parsing that line, which is exactly the fragile thing the component was supposed to avoid - and
@@ -91,6 +96,7 @@ public final class ItemDecoder {
 				extra.child("enchantments").numericEntries(),
 				gemstones(extra.child("gems")),
 				extra.child("attributes").numericEntries(),
+				extra.child("runes").numericEntries(),
 				pet(skyblockId, extra, name)));
 	}
 

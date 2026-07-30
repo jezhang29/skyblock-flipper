@@ -203,6 +203,11 @@ public final class FairValueModel {
 	 * carries no attributes at all, so without this line it reads as bare and gets priced off the
 	 * coarse pool - which for {@code CRIMSON_BOOTS} mixes 1.9M bare sales with 16M rolled ones and
 	 * calls the gap a snipe.
+	 *
+	 * <p>A rune counts for the same reason. It costs a standalone rune nothing, because Hypixel
+	 * writes the rune and its tier into the display name the coarse key is built from, so the two
+	 * keys select the same sales anyway. What it stops is a runed sword falling back to a pool of
+	 * bare ones.
 	 */
 	private static boolean isBare(DecodedItem item) {
 		return !item.isPet()
@@ -211,7 +216,8 @@ public final class FairValueModel {
 				&& item.hotPotatoBooks() == 0
 				&& item.enchantments().isEmpty()
 				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty();
+				&& item.attributes().isEmpty()
+				&& item.runes().isEmpty();
 	}
 
 	private static Map<String, ValueEstimate> estimates(Map<String, List<Double>> prices,

@@ -22,12 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decoding is checked against real blobs, not synthetic ones.
  *
- * <p>The fixture is nine trimmed captures chosen to cover the cases that a hand-written sample
+ * <p>The fixture is thirteen trimmed captures chosen to cover the cases that a hand-written sample
  * would not have thought of: an item with no tooltip style, stars under the legacy attribute name,
- * a pet, gemstones, hot potato books, a Kuudra attribute roll, and a plain item with nothing on it
- * at all. Everything here
- * fails loudly if Hypixel changes the blob format, which is the point - a decode that quietly
- * drops an attribute prices a five-star recombobulated item as if it were bare.
+ * a pet, gemstones, hot potato books, a Kuudra attribute roll, two tiers of the same rune, a rune
+ * applied to something else, and a plain item with nothing on it at all. Everything here fails
+ * loudly if Hypixel changes the blob format, which is the point - a decode that quietly drops an
+ * attribute prices a five-star recombobulated item as if it were bare.
  */
 class ItemDecoderTest {
 	private static List<EndedAuction> sales;
@@ -47,6 +47,15 @@ class ItemDecoderTest {
 				.filter(item -> item.skyblockId().equals(skyblockId))
 				.findFirst()
 				.orElseThrow(() -> new AssertionError(skyblockId + " is not in the fixture"));
+	}
+
+	private static DecodedItem decodeByName(String displayName) {
+		return sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.filter(item -> item.displayName().equals(displayName))
+				.findFirst()
+				.orElseThrow(() -> new AssertionError(displayName + " is not in the fixture"));
 	}
 
 	@Test
@@ -208,14 +217,14 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.pet());
+				helmet.runes(), helmet.pet());
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
 		DecodedItem oneStarLess = new DecodedItem(helmet.skyblockId(), helmet.displayName(),
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
-				helmet.gemstones(), helmet.attributes(), helmet.pet());
+				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet());
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -244,7 +253,7 @@ class ItemDecoderTest {
 		DecodedItem unrolled = new DecodedItem(boots.skyblockId(), boots.displayName(),
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
-				boots.gemstones(), Map.of(), boots.pet());
+				boots.gemstones(), Map.of(), boots.runes(), boots.pet());
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -254,9 +263,32 @@ class ItemDecoderTest {
 		DecodedItem oneLevelLower = new DecodedItem(boots.skyblockId(), boots.displayName(),
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
-				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.pet());
+				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
+				boots.pet());
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
+	}
+
+	@Test
+	void readsAppliedRunesWithTheirTier() {
+		DecodedItem rune = decodeByName("\u25c6 Music Rune I");
+
+		// Every rune in the game is the item id RUNE, so this map is the only thing separating one
+		// from another: on the tape a Music rune sells for 5,000,000 and a Gem rune for 2,000.
+		assertEquals(Map.of("MUSIC", 1), rune.runes());
+		assertEquals("RUNE", rune.skyblockId());
+		assertTrue(rune.signature().contains("runes=MUSIC:1"));
+	}
+
+	@Test
+	void aRuneTierIsADifferentItemFromTheSameRuneOneTierLower() {
+		DecodedItem first = decodeByName("\u25c6 Music Rune I");
+		DecodedItem third = decodeByName("\u25c6 Music Rune III");
+
+		// Same id and rarity, 12x apart on the tape - median 5,000,000 against 59,500,000.
+		assertEquals(first.skyblockId(), third.skyblockId());
+		assertEquals(first.rarity(), third.rarity());
+		assertNotEquals(first.signature(), third.signature());
 	}
 
 	@Test

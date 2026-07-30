@@ -148,7 +148,7 @@ class PetLevelBacktestTest {
 
 		return new DecodedItem(pet.skyblockId(), pet.displayName(), pet.count(), pet.rarity(),
 				pet.reforge(), pet.stars(), pet.recombobulated(), pet.hotPotatoBooks(),
-				Map.of(), List.of(), Map.of(),
+				Map.of(), List.of(), Map.of(), Map.of(),
 				new PetInfo(info.type(), info.tier(), info.exp(), 0, info.heldItem(),
 						info.candyUsed(), info.skin()));
 	}
