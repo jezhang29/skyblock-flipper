@@ -112,16 +112,26 @@ Two verified traps that produce plausible wrong numbers, not errors:
    **never build an `ItemStack`** from it. `components["minecraft:tooltip_style"]` gives rarity,
    except when absent (4 of 154 live sales), where `ItemDecoder` falls back to the last lore
    line. Stars live under `upgrade_level` *or* legacy `dungeon_item_level`; every pet shares the
-   id `PET` with its identity in JSON under `ExtraAttributes.petInfo`, and every rune shares the id
-   `RUNE` with its identity in `ExtraAttributes.runes` (`{MUSIC: 3}`, tier included).
+   id `PET` with its identity in JSON under `ExtraAttributes.petInfo`, every rune shares the id
+   `RUNE` with its identity in `ExtraAttributes.runes` (`{MUSIC: 3}`, tier included), and every
+   potion shares the id `POTION` with its identity in `potion` + `potion_level` + the
+   `splash`/`enhanced`/`extended` flags.
 
 **Shared item ids are the recurring shape of this bug**, and they fail silently: the sales are
 decoded, the medians are computed, and a whole market prices off one key. `SignatureGapProbeTest`
 (opt-in, `-PtapeBacktest`) ranks signatures by the p10–p90 spread of a day's realized sales and
 prints the `ExtraAttributes` keys nothing reads, which is how to find the next one rather than
-guess at it. Still unread and measured to matter: `color` (dyed leather, ~7B coins a day),
-`new_years_cake` (the year), `ethermerge`/`tuned_transmission`, `winning_bid` (Midas weapons, where
-the bid *is* the value).
+guess at it. Still unread and measured to matter, in rough order of coins at stake:
+`baseStatBoostPercentage` + `item_tier` (dungeon item quality, ~3B coins a day across
+`SKELETON_MASTER_CHESTPLATE` alone), `color` (dyed leather), `ethermerge`/`tuned_transmission`,
+`winning_bid` (Midas weapons, where the bid *is* the value), `new_years_cake` (the year).
+
+**Measure a signature split against the tail, not the median.** The median sale under a pooled key
+is whatever dominates its count, and pooling is accidentally right about that item — splitting
+`POTION` made the median error slightly *worse* (0.091 → 0.104) while cutting p90 from 3.510 to
+0.464. What matters is how often the key values a sale at 2x or more of what it fetched, because a
+valuation is only acted on when it sits far above the asking price. See
+`PotionSignatureBacktestTest`.
 
 Other rules:
 

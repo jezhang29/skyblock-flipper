@@ -208,9 +208,16 @@ public final class FairValueModel {
 	 * writes the rune and its tier into the display name the coarse key is built from, so the two
 	 * keys select the same sales anyway. What it stops is a runed sword falling back to a pool of
 	 * bare ones.
+	 *
+	 * <p>A potion is excluded outright, like a pet, and unlike a rune it is not free to exclude. The
+	 * display name the coarse key is built from does state the effect, the tier and whether it
+	 * splashes, so most of the signature is recoverable from it - but it does not state the alchemy
+	 * perks. An enhanced, extended Speed VIII potion is named exactly "Speed VIII Potion", and on the
+	 * tape it sells for 82,525 coins against 58,999 for the plain one wearing the same name.
 	 */
 	private static boolean isBare(DecodedItem item) {
 		return !item.isPet()
+				&& !item.isPotion()
 				&& item.stars() == 0
 				&& !item.recombobulated()
 				&& item.hotPotatoBooks() == 0

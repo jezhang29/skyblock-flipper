@@ -22,10 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decoding is checked against real blobs, not synthetic ones.
  *
- * <p>The fixture is thirteen trimmed captures chosen to cover the cases that a hand-written sample
+ * <p>The fixture is sixteen trimmed captures chosen to cover the cases that a hand-written sample
  * would not have thought of: an item with no tooltip style, stars under the legacy attribute name,
  * a pet, gemstones, hot potato books, a Kuudra attribute roll, two tiers of the same rune, a rune
- * applied to something else, and a plain item with nothing on it at all. Everything here fails
+ * applied to something else, three potions differing only in effect and perks, and a plain item
+ * with nothing on it at all. Everything here fails
  * loudly if Hypixel changes the blob format, which is the point - a decode that quietly drops an
  * attribute prices a five-star recombobulated item as if it were bare.
  */
@@ -217,14 +218,15 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.runes(), helmet.pet());
+				helmet.runes(), helmet.pet(), helmet.potion());
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
 		DecodedItem oneStarLess = new DecodedItem(helmet.skyblockId(), helmet.displayName(),
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
-				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet());
+				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
+				helmet.potion());
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -253,7 +255,7 @@ class ItemDecoderTest {
 		DecodedItem unrolled = new DecodedItem(boots.skyblockId(), boots.displayName(),
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
-				boots.gemstones(), Map.of(), boots.runes(), boots.pet());
+				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion());
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -264,7 +266,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
-				boots.pet());
+				boots.pet(), boots.potion());
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
@@ -289,6 +291,45 @@ class ItemDecoderTest {
 		assertEquals(first.skyblockId(), third.skyblockId());
 		assertEquals(first.rarity(), third.rarity());
 		assertNotEquals(first.signature(), third.signature());
+	}
+
+	@Test
+	void readsAPotionsEffectTierAndPerks() {
+		DecodedItem splashHealing = decodeByName("Healing VIII Splash Potion");
+		PotionInfo healing = splashHealing.potionInfo().orElseThrow();
+
+		assertEquals("POTION", splashHealing.skyblockId());
+		assertEquals("healing", healing.type());
+		assertEquals(8, healing.level());
+		assertTrue(healing.splash());
+		assertFalse(healing.enhanced());
+		assertTrue(splashHealing.signature().contains("potion=healing:8,splash"));
+	}
+
+	@Test
+	void twoPotionsAreOnlyTheSameItemIfEveryPerkMatches() {
+		DecodedItem speed = decodeByName("Speed VIII Potion");
+		DecodedItem cheese = decodeByName("Douce Pluie de Stinky Cheese I Potion");
+
+		// Every potion in the game is the item id POTION, and on the tape these two sit either side
+		// of the pooled median: Stinky Cheese at 950,000 coins and this Speed potion at 50,000.
+		assertEquals(speed.skyblockId(), cheese.skyblockId());
+		assertNotEquals(speed.signature(), cheese.signature());
+
+		// The perks are the part no coarse key could recover, because Hypixel leaves them out of the
+		// display name - this potion is enhanced and extended and still just reads "Speed VIII
+		// Potion". On the tape that is 82,525 coins against 58,999 for the plain one.
+		PotionInfo perks = speed.potionInfo().orElseThrow();
+		assertTrue(perks.enhanced());
+		assertTrue(perks.extended());
+		assertFalse(perks.splash());
+		assertEquals("speed:8,enhanced,extended", perks.signatureTerm());
+	}
+
+	@Test
+	void anItemThatIsNotAPotionCarriesNoPotionDetail() {
+		assertFalse(decode("GIANTS_SWORD").isPotion());
+		assertTrue(decode("GIANTS_SWORD").potionInfo().isEmpty());
 	}
 
 	@Test

@@ -32,6 +32,10 @@ import java.util.Optional;
  * rarity into one price. It is read for all items, not just runes - a rune applied to a sword is
  * part of what that sword sells for.
  *
+ * <p>{@code potion}, {@code potion_level} and the {@code splash}/{@code enhanced}/{@code extended}
+ * flags are the same story a third time: every potion is the item id {@code POTION}. See
+ * {@link PotionInfo} for what each term is worth.
+ *
  * <p>Except when it is not there at all. Roughly one item in forty carries no tooltip style, and
  * the only remaining statement of its rarity is the last line of its lore. So this falls back to
  * parsing that line, which is exactly the fragile thing the component was supposed to avoid - and
@@ -97,7 +101,8 @@ public final class ItemDecoder {
 				gemstones(extra.child("gems")),
 				extra.child("attributes").numericEntries(),
 				extra.child("runes").numericEntries(),
-				pet(skyblockId, extra, name)));
+				pet(skyblockId, extra, name),
+				potion(extra)));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
@@ -248,6 +253,28 @@ public final class ItemDecoder {
 	}
 
 	private static final String LEVEL_PREFIX = "[Lvl ";
+
+	/**
+	 * Unpacks a potion, the third market to hide behind a shared item id after pets and runes.
+	 *
+	 * <p>Keyed off the presence of {@code potion} rather than off the id, which is both simpler and
+	 * safer: every one of the 2,758 taped {@code POTION} sales carried it, and no sale of any other
+	 * id carried it, so there is nothing for an id check to add and nothing for it to catch.
+	 */
+	private static PotionInfo potion(NbtCompound extra) {
+		Optional<String> type = extra.string("potion");
+
+		if (type.isEmpty()) {
+			return null;
+		}
+
+		return new PotionInfo(
+				type.get(),
+				extra.intOr("potion_level", 0),
+				extra.flag("splash"),
+				extra.flag("enhanced"),
+				extra.flag("extended"));
+	}
 
 	private static String string(JsonObject json, String key) {
 		return json.has(key) && json.get(key).isJsonPrimitive() ? json.get(key).getAsString() : "";

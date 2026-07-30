@@ -34,7 +34,8 @@ class SignatureGapProbeTest {
 	/** Attributes the decoder reads, plus the per-item identity that could never be a key. */
 	private static final Set<String> CONSUMED = Set.of(
 			"id", "modifier", "upgrade_level", "dungeon_item_level", "rarity_upgrades",
-			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo",
+			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo", "runes",
+			"potion", "potion_level", "splash", "enhanced", "extended",
 			"uuid", "timestamp", "originTag", "donated_museum");
 
 	private record Gap(String signature, int samples, double p10, double median, double p90,

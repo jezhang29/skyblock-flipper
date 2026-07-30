@@ -150,7 +150,8 @@ class PetLevelBacktestTest {
 				pet.reforge(), pet.stars(), pet.recombobulated(), pet.hotPotatoBooks(),
 				Map.of(), List.of(), Map.of(), Map.of(),
 				new PetInfo(info.type(), info.tier(), info.exp(), 0, info.heldItem(),
-						info.candyUsed(), info.skin()));
+						info.candyUsed(), info.skin()),
+				pet.potion());
 	}
 
 	private static List<EndedAuction> taped() throws Exception {
