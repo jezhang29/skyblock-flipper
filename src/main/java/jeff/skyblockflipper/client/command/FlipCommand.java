@@ -334,6 +334,12 @@ public final class FlipCommand {
 		line(source, "sales recorded", data.salesRecorded() + " this session ("
 				+ describeAge(data.salesAge()) + " ago)");
 
+		// The rollup is what outlives retention, so it is worth saying out loud that it is filling.
+		line(source, "sales rollup", data.salesRollupDays() == 0
+				? "no completed days summarised yet"
+				: data.salesRollupEntries() + " configurations over " + data.salesRollupDays()
+						+ " day(s), kept past retention");
+
 		line(source, "valuations", data.values().isEmpty()
 				? "none yet (learned from realized sales)"
 				: data.values().pricedConfigurations() + " item configurations from "

@@ -3,8 +3,11 @@ package jeff.skyblockflipper.core.tape;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 
+import jeff.skyblockflipper.core.item.ItemDecoder;
 import jeff.skyblockflipper.core.model.EndedAuction;
+import jeff.skyblockflipper.core.model.SaleDailyStat;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +20,8 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +44,9 @@ import java.util.stream.Stream;
 public final class SalesTape {
 	private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 	private static final String SUFFIX = ".jsonl";
+
+	/** The per-day rollup. Named so it never parses as a date, and so is never mistaken for one. */
+	static final String DAILY_FILE = "daily.jsonl";
 
 	/**
 	 * Polls overlap, so the same sale arrives several times. Remembering recent ids keeps the tape
@@ -113,7 +121,13 @@ public final class SalesTape {
 		return fresh.size();
 	}
 
-	/** Reads back every sale still on disk. Used to warm the valuation model at startup. */
+	/**
+	 * Reads back every sale still on disk, all at once.
+	 *
+	 * <p>Only safe when the tape is known to be small - a week of a running collector is over a
+	 * gigabyte of blobs. Anything that walks the real tape should use
+	 * {@link #forEachRecent(int, java.util.function.Consumer)}, which holds one sale at a time.
+	 */
 	public List<EndedAuction> readAll() throws IOException {
 		if (!Files.isDirectory(directory)) {
 			return List.of();
@@ -121,8 +135,10 @@ public final class SalesTape {
 
 		List<EndedAuction> out = new ArrayList<>();
 
+		// dayOf, not the suffix: the rollup index shares it, and read as sales its lines would
+		// come back as blank-fielded EndedAuctions rather than as an error.
 		try (Stream<Path> files = Files.list(directory)) {
-			for (Path file : files.filter(p -> p.getFileName().toString().endsWith(SUFFIX)).toList()) {
+			for (Path file : files.filter(p -> dayOf(p) != null).toList()) {
 				out.addAll(readFile(file));
 			}
 		}
@@ -149,17 +165,148 @@ public final class SalesTape {
 
 		try (Stream<Path> files = Files.list(directory)) {
 			for (Path file : files.filter(p -> onOrAfter(p, cutoff)).sorted().toList()) {
-				for (EndedAuction sale : readFile(file)) {
-					consumer.accept(sale);
-					read++;
-				}
+				read += forEachInFile(file, consumer);
 			}
 		}
 
 		return read;
 	}
 
-	/** Deletes day files older than the retention window. */
+	/**
+	 * Summarises one completed day that is not in the index yet, oldest first.
+	 *
+	 * <p>Driven off what is missing from the index rather than off catching the moment the day
+	 * rolls over, which makes it idempotent: a client that was closed at midnight, or crashed
+	 * mid-rollup, picks the day up on its next run. Today is deliberately excluded - it is still
+	 * being written to, and a partial day in the index would never be corrected.
+	 *
+	 * <p><b>One day per call, unlike the bazaar rollup, which does every pending day at once.</b>
+	 * The difference is what a day costs to summarise: a bazaar day is 40MB of numbers, while a
+	 * sales day is a quarter of a gigabyte whose every line has to have its item blob decoded
+	 * before it can be keyed. A client that has been away for a week would otherwise sit on the
+	 * poller thread through seven of those in one pass, delaying every other poll behind it. Spread
+	 * across prune cycles the same work is invisible, and nothing downstream needs the index
+	 * complete on any particular tick.
+	 *
+	 * @return how many days were added to the index: 1, or 0 when the index is up to date
+	 */
+	public int rollUpOneCompletedDay() throws IOException {
+		if (!Files.isDirectory(directory)) {
+			return 0;
+		}
+
+		LocalDate today = LocalDate.now(ZoneOffset.UTC);
+		Set<String> indexed = new HashSet<>();
+
+		for (SaleDailyStat stat : readDailyIndex()) {
+			indexed.add(stat.day());
+		}
+
+		Path pending = null;
+		LocalDate pendingDay = null;
+
+		try (Stream<Path> files = Files.list(directory)) {
+			for (Path file : files.sorted().toList()) {
+				LocalDate day = dayOf(file);
+
+				if (day != null && day.isBefore(today) && !indexed.contains(day.toString())) {
+					pending = file;
+					pendingDay = day;
+					break;
+				}
+			}
+		}
+
+		if (pending == null) {
+			return 0;
+		}
+
+		appendDailyStats(pendingDay, pending);
+		return 1;
+	}
+
+	/** The rollup, or an empty list before the first completed day. */
+	public List<SaleDailyStat> readDailyIndex() throws IOException {
+		Path file = directory.resolve(DAILY_FILE);
+
+		if (!Files.isRegularFile(file)) {
+			return List.of();
+		}
+
+		List<SaleDailyStat> out = new ArrayList<>();
+
+		try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			String line;
+
+			while ((line = reader.readLine()) != null) {
+				if (line.isBlank()) {
+					continue;
+				}
+
+				try {
+					SaleDailyStat stat = gson.fromJson(line, SaleDailyStat.class);
+
+					if (stat != null && stat.day() != null && stat.signature() != null) {
+						out.add(stat);
+					}
+				} catch (JsonSyntaxException ignored) {
+					// One damaged line costs one signature-day, not the index.
+				}
+			}
+		}
+
+		return out;
+	}
+
+	/**
+	 * Summarises one day file into the index.
+	 *
+	 * <p>BIN sales only and unit prices throughout, matching {@code FairValueModel}: a bid auction
+	 * says what nobody else was awake for, and a stack sale says what eight of something cost. The
+	 * signature is the model's own key, so a rolled-up day answers the same question the live index
+	 * does - which also means a change to what a signature contains cannot be applied backwards.
+	 */
+	private void appendDailyStats(LocalDate day, Path file) throws IOException {
+		Map<String, List<Double>> pricesBySignature = new HashMap<>();
+
+		forEachInFile(file, sale -> {
+			if (!sale.bin() || sale.price() <= 0L) {
+				return;
+			}
+
+			ItemDecoder.decode(sale.itemBytes()).ifPresent(item -> pricesBySignature
+					.computeIfAbsent(item.signature(), k -> new ArrayList<>())
+					.add((double) sale.price() / Math.max(1, item.count())));
+		});
+
+		if (pricesBySignature.isEmpty()) {
+			return;
+		}
+
+		try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
+				StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+			for (Map.Entry<String, List<Double>> entry : pricesBySignature.entrySet()) {
+				double[] prices = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
+
+				writer.write(gson.toJson(new SaleDailyStat(
+						entry.getKey(),
+						DAY.format(day),
+						prices[prices.length / 2],
+						prices[0],
+						prices[prices.length - 1],
+						prices.length)));
+				writer.newLine();
+			}
+		}
+	}
+
+	/**
+	 * Deletes day files older than the retention window.
+	 *
+	 * <p>The rollup index outlives them on purpose, so it is not touched here. It is the only thing
+	 * that survives a day ageing out, and it is three orders of magnitude smaller than what it
+	 * replaces - pruning it in step with the raw tape would throw away the entire point of it.
+	 */
 	public int prune() throws IOException {
 		if (!Files.isDirectory(directory)) {
 			return 0;
@@ -201,9 +348,28 @@ public final class SalesTape {
 
 	private List<EndedAuction> readFile(Path file) throws IOException {
 		List<EndedAuction> out = new ArrayList<>();
+		forEachInFile(file, out::add);
+		return out;
+	}
 
-		try (Stream<String> lines = Files.lines(file, StandardCharsets.UTF_8)) {
-			for (String line : lines.toList()) {
+	/**
+	 * Parses one day file a line at a time, handing each sale straight to {@code consumer}.
+	 *
+	 * <p>Nothing here is allowed to hold the file. Since the collector moved to a machine that runs
+	 * continuously, a day file is a quarter of a gigabyte - collecting the lines first, or the
+	 * parsed sales, cost several hundred megabytes of heap per day file for a caller that only
+	 * wanted a running median. Minecraft's default heap is not big enough for that to be safe.
+	 *
+	 * @return how many sales were read
+	 */
+	private int forEachInFile(Path file, java.util.function.Consumer<EndedAuction> consumer)
+			throws IOException {
+		int read = 0;
+
+		try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			String line;
+
+			while ((line = reader.readLine()) != null) {
 				if (line.isBlank()) {
 					continue;
 				}
@@ -212,7 +378,8 @@ public final class SalesTape {
 					EndedAuction sale = gson.fromJson(line, EndedAuction.class);
 
 					if (sale != null) {
-						out.add(sale);
+						consumer.accept(sale);
+						read++;
 					}
 				} catch (JsonSyntaxException ignored) {
 					// A truncated final line from an interrupted write costs exactly one sale.
@@ -220,22 +387,27 @@ public final class SalesTape {
 			}
 		}
 
-		return out;
+		return read;
 	}
 
 	/** True for our own day files dated on or after {@code cutoff}; anything else is skipped. */
 	private static boolean onOrAfter(Path file, LocalDate cutoff) {
+		LocalDate day = dayOf(file);
+		return day != null && !day.isBefore(cutoff);
+	}
+
+	/** The day a file is named for, or null for {@value #DAILY_FILE} and anything we did not write. */
+	private static LocalDate dayOf(Path file) {
 		String name = file.getFileName().toString();
 
 		if (!name.endsWith(SUFFIX)) {
-			return false;
+			return null;
 		}
 
 		try {
-			return !LocalDate.parse(name.substring(0, name.length() - SUFFIX.length()), DAY)
-					.isBefore(cutoff);
+			return LocalDate.parse(name.substring(0, name.length() - SUFFIX.length()), DAY);
 		} catch (java.time.format.DateTimeParseException e) {
-			return false;
+			return null;
 		}
 	}
 

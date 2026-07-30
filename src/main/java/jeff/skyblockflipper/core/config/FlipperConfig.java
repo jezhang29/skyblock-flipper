@@ -63,12 +63,24 @@ public final class FlipperConfig {
 	/**
 	 * How many days of realized sales to value items from. Longer means more samples per item;
 	 * shorter means a price move last week is not still being averaged into today's estimate.
+	 *
+	 * <p>Two days is where the trade stops paying, measured rather than guessed:
+	 * {@code ValuationWindowBacktestTest} over 402,333 taped sales priced the same held-out 6
+	 * hours from every window, and coverage went 87.6% of sales at 24h, 88.9% at 48h, 89.3% at
+	 * 120h, while the median absolute log error sat at 0.106 throughout. By coins - the figure
+	 * that matters, since the unpriceable sales are the expensive ones - 60.3%, 63.7%, 64.9%.
+	 * Past two days another day buys a few tenths of a percent, because what is left unpriced is
+	 * configurations nobody trades often, not configurations the window happened to miss.
 	 */
 	public int valuationWindowDays = 2;
 
 	/**
 	 * How many days of sales tape to keep. At observed volumes a day of sales is a few hundred
 	 * megabytes, so this is a disk budget as much as a data one.
+	 *
+	 * <p>Deliberately longer than {@link #valuationWindowDays}, which is the only thing pricing
+	 * reads: the extra days are kept for measuring changes to the model against, and a day of
+	 * {@code auctions_ended} that was not recorded cannot be bought back at any price.
 	 */
 	public int tapeRetentionDays = 7;
 

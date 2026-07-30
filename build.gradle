@@ -86,7 +86,9 @@ test {
 				project.findProperty("tapeDir") ?: "run/config/skyblock-flipper/tape"
 		// It prints the measurement it makes, which is the point of running it.
 		testLogging.showStandardStreams = true
-		maxHeapSize = "2g"
+		// A week of server-collected tape is over a gigabyte of blobs, and the window backtest
+		// holds one index per candidate window while it replays them.
+		maxHeapSize = "8g"
 	}
 
 	testLogging {
