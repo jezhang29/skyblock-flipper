@@ -19,6 +19,7 @@ import java.util.TreeMap;
  * @param attributes   Kuudra/Crimson attribute rolls as name to level, empty for most items
  * @param runes        applied runes as name to tier, empty for most items
  * @param pet          pet detail, or null when this is not a pet
+ * @param potion       potion detail, or null when this is not a potion
  */
 public record DecodedItem(
 		String skyblockId,
@@ -33,7 +34,8 @@ public record DecodedItem(
 		List<String> gemstones,
 		Map<String, Integer> attributes,
 		Map<String, Integer> runes,
-		PetInfo pet
+		PetInfo pet,
+		PotionInfo potion
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -50,6 +52,14 @@ public record DecodedItem(
 
 	public Optional<PetInfo> petInfo() {
 		return Optional.ofNullable(pet);
+	}
+
+	public boolean isPotion() {
+		return potion != null;
+	}
+
+	public Optional<PotionInfo> potionInfo() {
+		return Optional.ofNullable(potion);
 	}
 
 	/**
@@ -116,6 +126,14 @@ public record DecodedItem(
 			StringJoiner applied = new StringJoiner(",");
 			runes.forEach((name, tier) -> applied.add(name + ":" + tier));
 			key.add("runes=" + applied);
+		}
+
+		// And POTION is the third id an entire market hides behind, after PET and RUNE. Unread, the
+		// tape's 2,758 potion sales collapse onto one key per rarity with a median of 918,000 coins -
+		// which is Stinky Cheese's price, because Stinky Cheese and Harvest Harbinger are 70% of the
+		// count. Every cheap potion under that median then reads as a large discount on itself.
+		if (isPotion()) {
+			key.add("potion=" + potion.signatureTerm());
 		}
 
 		return key.toString();
