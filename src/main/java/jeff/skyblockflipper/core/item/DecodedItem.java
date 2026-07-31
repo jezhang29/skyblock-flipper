@@ -20,6 +20,7 @@ import java.util.TreeMap;
  * @param runes        applied runes as name to tier, empty for most items
  * @param pet          pet detail, or null when this is not a pet
  * @param potion       potion detail, or null when this is not a potion
+ * @param quality      dungeon drop quality, or null when this item carries no such roll
  */
 public record DecodedItem(
 		String skyblockId,
@@ -35,7 +36,8 @@ public record DecodedItem(
 		Map<String, Integer> attributes,
 		Map<String, Integer> runes,
 		PetInfo pet,
-		PotionInfo potion
+		PotionInfo potion,
+		DungeonQuality quality
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -60,6 +62,15 @@ public record DecodedItem(
 
 	public Optional<PotionInfo> potionInfo() {
 		return Optional.ofNullable(potion);
+	}
+
+	/** Whether this item carries a dungeon quality roll that says anything about its price. */
+	public boolean hasQuality() {
+		return quality != null && !quality.signatureTerm().isEmpty();
+	}
+
+	public Optional<DungeonQuality> dungeonQuality() {
+		return Optional.ofNullable(quality);
 	}
 
 	/**
@@ -134,6 +145,14 @@ public record DecodedItem(
 		// count. Every cheap potion under that median then reads as a large discount on itself.
 		if (isPotion()) {
 			key.add("potion=" + potion.signatureTerm());
+		}
+
+		// Not a shared id like the three above - a dungeon drop keeps its own id - but the same kind
+		// of pooling. SKELETON_MASTER_CHESTPLATE's tier 7 and tier 10 sales sat on one key across a
+		// 56x gap, so half of them read as enormous discounts on the other half. See DungeonQuality
+		// for why the stat boost is a flag here and the tier is a number.
+		if (hasQuality()) {
+			key.add("quality=" + quality.signatureTerm());
 		}
 
 		return key.toString();

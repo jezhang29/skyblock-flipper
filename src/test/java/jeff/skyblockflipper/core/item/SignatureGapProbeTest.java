@@ -36,6 +36,7 @@ class SignatureGapProbeTest {
 			"id", "modifier", "upgrade_level", "dungeon_item_level", "rarity_upgrades",
 			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo", "runes",
 			"potion", "potion_level", "splash", "enhanced", "extended",
+			"baseStatBoostPercentage", "item_tier",
 			"uuid", "timestamp", "originTag", "donated_museum");
 
 	private record Gap(String signature, int samples, double p10, double median, double p90,

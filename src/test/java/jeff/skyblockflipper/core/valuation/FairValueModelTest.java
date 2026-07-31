@@ -140,7 +140,7 @@ class FairValueModelTest {
 		// the name ("Ancient Necron's Helmet ✪✪✪✪✪"), so it does not even share a coarse key.
 		DecodedItem bare = new DecodedItem(upgraded.skyblockId(), "Necron's Helmet",
 				upgraded.count(), Rarity.LEGENDARY, "", 0, false, 0, Map.of(), List.of(), Map.of(),
-				Map.of(), null, null);
+				Map.of(), null, null, null);
 
 		assertTrue(model.valueOf(bare).isEmpty());
 
@@ -148,7 +148,8 @@ class FairValueModelTest {
 		// but hot potato books and a recombobulator the coarse key could never have seen.
 		DecodedItem sameNameQuietlyUpgraded = new DecodedItem(upgraded.skyblockId(),
 				upgraded.displayName(), upgraded.count(), upgraded.rarity(), upgraded.reforge(),
-				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), Map.of(), null, null);
+				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), Map.of(), null, null,
+				null);
 
 		assertTrue(model.valueOf(sameNameQuietlyUpgraded).isEmpty());
 	}
@@ -162,7 +163,7 @@ class FairValueModelTest {
 		// Same name and rarity, but now carrying enchantments the coarse key cannot see.
 		DecodedItem enchanted = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), Map.of(), Map.of(),
-				null, null);
+				null, null, null);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(enchanted).isEmpty());
@@ -179,7 +180,7 @@ class FairValueModelTest {
 		// on Crimson gear it is worth several times the item under it.
 		DecodedItem rolled = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of(), List.of(),
-				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null);
+				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null, null);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(rolled).isEmpty());
@@ -202,7 +203,7 @@ class FairValueModelTest {
 				real.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(),
 				new PetInfo(pet.type(), pet.tier(), pet.exp(), level, pet.heldItem(),
 						pet.candyUsed(), pet.skin()),
-				null);
+				null, null);
 	}
 
 	@Test

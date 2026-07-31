@@ -36,6 +36,11 @@ import java.util.Optional;
  * flags are the same story a third time: every potion is the item id {@code POTION}. See
  * {@link PotionInfo} for what each term is worth.
  *
+ * <p>{@code baseStatBoostPercentage} and {@code item_tier} are a dungeon drop's quality roll. Not a
+ * shared id - these items keep their own - but they pool the same way, and expensively:
+ * {@code SKELETON_MASTER_CHESTPLATE} trades from 980,000 to 113,000,000 depending on the tier alone.
+ * {@link DungeonQuality} explains why the boost is read as a flag and the tier as a number.
+ *
  * <p>Except when it is not there at all. Roughly one item in forty carries no tooltip style, and
  * the only remaining statement of its rarity is the last line of its lore. So this falls back to
  * parsing that line, which is exactly the fragile thing the component was supposed to avoid - and
@@ -102,7 +107,8 @@ public final class ItemDecoder {
 				extra.child("attributes").numericEntries(),
 				extra.child("runes").numericEntries(),
 				pet(skyblockId, extra, name),
-				potion(extra)));
+				potion(extra),
+				quality(extra)));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
@@ -275,6 +281,31 @@ public final class ItemDecoder {
 				extra.flag("enhanced"),
 				extra.flag("extended"));
 	}
+
+	/**
+	 * Reads the dungeon drop's quality roll.
+	 *
+	 * <p>Keyed off {@code baseStatBoostPercentage}, which every dungeon-floor drop carries and
+	 * nothing else does, rather than off a list of item ids - the same reasoning as
+	 * {@link #potion(NbtCompound)}. {@code item_tier} rides along on floor drops only, so its
+	 * absence is a normal case and not a parse failure.
+	 *
+	 * @return null when this item has no such roll, which is 95.6% of taped sales
+	 */
+	private static DungeonQuality quality(NbtCompound extra) {
+		if (!extra.contains(STAT_BOOST)) {
+			return null;
+		}
+
+		return new DungeonQuality(
+				extra.intOr(STAT_BOOST, 0) >= MAX_STAT_BOOST,
+				extra.intOr("item_tier", DungeonQuality.NO_TIER));
+	}
+
+	private static final String STAT_BOOST = "baseStatBoostPercentage";
+
+	/** The roll's ceiling, and the only value of it the market prices differently. */
+	private static final int MAX_STAT_BOOST = 50;
 
 	private static String string(JsonObject json, String key) {
 		return json.has(key) && json.get(key).isJsonPrimitive() ? json.get(key).getAsString() : "";
