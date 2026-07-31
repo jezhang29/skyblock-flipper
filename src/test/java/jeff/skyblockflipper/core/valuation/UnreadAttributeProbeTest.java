@@ -71,7 +71,7 @@ class UnreadAttributeProbeTest {
 			"id", "modifier", "upgrade_level", "dungeon_item_level", "rarity_upgrades",
 			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo", "runes",
 			"potion", "potion_level", "splash", "enhanced", "extended",
-			"baseStatBoostPercentage", "item_tier", "dye_item",
+			"baseStatBoostPercentage", "item_tier", "ethermerge", "dye_item",
 			"uuid", "timestamp", "originTag", "donated_museum");
 
 	@Test
@@ -108,11 +108,20 @@ class UnreadAttributeProbeTest {
 		assertTrue(!ranked.isEmpty(), "no unread attributes on the tape at " + tapeDir());
 
 		// The finding this probe exists to state, and the one that would change the plan if it broke.
-		// Every attribute the decoder does not read is either near-unique, absent from quotable pools,
-		// or agreeing with them - so there is no fourth shared-id-shaped bug waiting on this tape.
+		//
+		// Run before ethermerge was read, this ranking put it first at 1,250,000,000 coins over 207
+		// sales, an order of magnitude clear of everything else, and it went on to earn its place on a
+		// holdout. With it read, the list drops to eman_kills at 45,500,000 over 26 sales - and
+		// eman_kills is a kill counter with 979 distinct values on 1,905 sales, so keying it would
+		// cost 988 valuations to fix 26. Everything below it is smaller and the same shape: a counter,
+		// a timestamp, or a per-item identifier.
+		//
+		// So there is no further shared-id-shaped gap on this tape, and this threshold is the alarm
+		// for a new one arriving - a Skyblock update that makes some new upgrade both common and
+		// invisible would show up here first.
 		Harm worst = ranked.getFirst();
-		assertTrue(worst.overvaluedCoins < 5_000_000_000L, "an unread attribute now misprices real "
-				+ "coins upward and is worth a branch: " + worst.attribute + " at "
+		assertTrue(worst.overvaluedCoins < 100_000_000L, "an unread attribute now misprices real coins "
+				+ "upward and may be worth a branch: " + worst.attribute + " at "
 				+ worst.overvaluedCoins + " coins over " + worst.overvalued + " sales");
 	}
 

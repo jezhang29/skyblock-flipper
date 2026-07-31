@@ -140,7 +140,7 @@ class FairValueModelTest {
 		// the name ("Ancient Necron's Helmet ✪✪✪✪✪"), so it does not even share a coarse key.
 		DecodedItem bare = new DecodedItem(upgraded.skyblockId(), "Necron's Helmet",
 				upgraded.count(), Rarity.LEGENDARY, "", 0, false, 0, Map.of(), List.of(), Map.of(),
-				Map.of(), null, null, null, "");
+				Map.of(), null, null, null, "", false);
 
 		assertTrue(model.valueOf(bare).isEmpty());
 
@@ -149,7 +149,7 @@ class FairValueModelTest {
 		DecodedItem sameNameQuietlyUpgraded = new DecodedItem(upgraded.skyblockId(),
 				upgraded.displayName(), upgraded.count(), upgraded.rarity(), upgraded.reforge(),
 				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), Map.of(), null, null,
-				null, "");
+				null, "", false);
 
 		assertTrue(model.valueOf(sameNameQuietlyUpgraded).isEmpty());
 	}
@@ -163,7 +163,7 @@ class FairValueModelTest {
 		// Same name and rarity, but now carrying enchantments the coarse key cannot see.
 		DecodedItem enchanted = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), Map.of(), Map.of(),
-				null, null, null, "");
+				null, null, null, "", false);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(enchanted).isEmpty());
@@ -180,10 +180,27 @@ class FairValueModelTest {
 		// on Crimson gear it is worth several times the item under it.
 		DecodedItem rolled = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of(), List.of(),
-				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null, null, "");
+				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null, null, "", false);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(rolled).isEmpty());
+	}
+
+	@Test
+	void willNotPriceAnEtherwarpMergeOffTheCoarsePool() {
+		FairValueModel model = modelOf(sales("ANITA_TALISMAN", 3_000_000L, 3_000_000L, 3_000_000L,
+				3_000_000L, 3_000_000L, 3_000_000L));
+
+		DecodedItem bare = item("ANITA_TALISMAN");
+		// The merge is the attribute-roll case again: 315 of the 516 merged sales on the tape carry
+		// nothing else at all, and the display name the coarse key is built from never mentions it.
+		// On the tape a merged Aspect of the Void fetches about 4x a plain one.
+		DecodedItem merged = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
+				bare.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null,
+				null, "", true);
+
+		assertTrue(model.valueOf(bare).isPresent());
+		assertTrue(model.valueOf(merged).isEmpty());
 	}
 
 	/**
@@ -203,7 +220,7 @@ class FairValueModelTest {
 				real.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(),
 				new PetInfo(pet.type(), pet.tier(), pet.exp(), level, pet.heldItem(),
 						pet.candyUsed(), pet.skin()),
-				null, null, "");
+				null, null, "", false);
 	}
 
 	@Test

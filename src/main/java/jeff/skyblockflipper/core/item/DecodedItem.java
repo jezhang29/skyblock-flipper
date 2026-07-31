@@ -22,6 +22,7 @@ import java.util.TreeMap;
  * @param potion       potion detail, or null when this is not a potion
  * @param quality      dungeon drop quality, or null when this item carries no such roll
  * @param dye          the named dye applied to this leather item, or "" for none
+ * @param ethermerged  whether an Etherwarp Conduit has been merged into this item
  */
 public record DecodedItem(
 		String skyblockId,
@@ -39,7 +40,8 @@ public record DecodedItem(
 		PetInfo pet,
 		PotionInfo potion,
 		DungeonQuality quality,
-		String dye
+		String dye,
+		boolean ethermerged
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -161,6 +163,21 @@ public record DecodedItem(
 		// for why the stat boost is a flag here and the tier is a number.
 		if (hasQuality()) {
 			key.add("quality=" + quality.signatureTerm());
+		}
+
+		// One bit, and the only entry from the unread-attribute list in four to survive being
+		// measured at this key rather than at the item id. An Etherwarp Conduit merged into an
+		// ASPECT_OF_THE_VOID is permanent and the market pays about 4x for it - 396 plain sales at
+		// 5,900,000 sit in the same signature as 288 merged ones at 24,900,000, quoted at 6,100,000
+		// - so unread it both blinds the model to every merged sale and, where the merged sales
+		// happen to dominate a key, quotes a plain sword at 3.4x what plain swords fetch. On a 24h
+		// holdout it moves p90 |log err| from 1.387 to 0.300 and costs 4 valuations in 1,032.
+		//
+		// tuned_transmission, the Transmission Tuner level that rides along on merged items, is
+		// deliberately not here: it is worth 1.06x on top of the merge and splitting on it costs
+		// seven more valuations for no fewer overvaluations. See EthermergeBacktestTest.
+		if (ethermerged) {
+			key.add("ethermerge");
 		}
 
 		// Last, so a test can strip it back off to compare a dyed sale against a plain one. Worth

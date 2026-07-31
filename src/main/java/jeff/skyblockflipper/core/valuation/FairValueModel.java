@@ -220,6 +220,11 @@ public final class FairValueModel {
 	 * lookup. It is the clause that would matter first if that stopped being true, since a dye moves
 	 * a price by up to 833x at the item id and the display name never mentions it.
 	 *
+	 * <p>An ethermerge is the clause the dye was only theoretically: 315 of the 516 merged sales on
+	 * the tape carry nothing else, so without this line a merged Aspect of the Void reads as bare and
+	 * joins the coarse pool of plain ones - and then every plain Aspect of the Void is quoted off a
+	 * pool holding sales worth 4x it. The display name is identical either way.
+	 *
 	 * <p>A dungeon quality roll is the attribute-roll bug again, and worse. Nothing about the drop's
 	 * tier reaches its display name, so a maxed tier-10 {@code SKELETON_MASTER_CHESTPLATE} with no
 	 * enchantments on it would read as bare and price off a pool whose median is a tier-7 at
@@ -228,6 +233,7 @@ public final class FairValueModel {
 	private static boolean isBare(DecodedItem item) {
 		return !item.isPet()
 				&& !item.isDyed()
+				&& !item.ethermerged()
 				&& !item.isPotion()
 				&& !item.hasQuality()
 				&& item.stars() == 0

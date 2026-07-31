@@ -22,12 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decoding is checked against real blobs, not synthetic ones.
  *
- * <p>The fixture is nineteen trimmed captures chosen to cover the cases that a hand-written sample
+ * <p>The fixture is twenty-one trimmed captures chosen to cover the cases that a hand-written sample
  * would not have thought of: an item with no tooltip style, stars under the legacy attribute name,
  * a pet, gemstones, hot potato books, a Kuudra attribute roll, two tiers of the same rune, a rune
  * applied to something else, three potions differing only in effect and perks, two dungeon drops
- * differing only in their floor tier, a stat boost with no tier under it, and a plain item
- * with nothing on it at all. Everything here fails
+ * differing only in their floor tier, a stat boost with no tier under it, two Aspects of the Void
+ * differing only in an Etherwarp merge, and a plain item with nothing on it at all. Everything here fails
  * loudly if Hypixel changes the blob format, which is the point - a decode that quietly drops an
  * attribute prices a five-star recombobulated item as if it were bare.
  */
@@ -219,7 +219,7 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "");
+				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "", false);
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
@@ -227,7 +227,7 @@ class ItemDecoderTest {
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
 				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
-				helmet.potion(), helmet.quality(), "");
+				helmet.potion(), helmet.quality(), "", false);
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -257,7 +257,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion(),
-				boots.quality(), "");
+				boots.quality(), "", false);
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -268,7 +268,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
-				boots.pet(), boots.potion(), boots.quality(), "");
+				boots.pet(), boots.potion(), boots.quality(), "", false);
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
@@ -405,7 +405,7 @@ class ItemDecoderTest {
 		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
 				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
 				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
-				item.potion(), quality, item.dye());
+				item.potion(), quality, item.dye(), item.ethermerged());
 	}
 
 	@Test
@@ -421,6 +421,39 @@ class ItemDecoderTest {
 		// The same chestplate wearing no dye is a different item and must key as one.
 		assertFalse(decodeQuality(7).isDyed());
 		assertFalse(decodeQuality(7).signature().contains("dye="));
+	}
+
+	/**
+	 * The Etherwarp Conduit is one bit, and it is worth about 4x on the item that carries it.
+	 *
+	 * <p>The two fixture captures are the case in miniature: the same sword, the same rarity, nothing
+	 * else on either of them, sold within fourteen minutes of each other for 5,894,467 and 26,399,000
+	 * coins. Unread they share a key and a coarse pool, so the model quotes one number for both.
+	 */
+	@Test
+	void readsTheEtherwarpMergeIntoTheSignature() {
+		DecodedItem merged = decodeAspectOfTheVoid(true);
+		DecodedItem plain = decodeAspectOfTheVoid(false);
+
+		assertTrue(merged.ethermerged());
+		assertFalse(plain.ethermerged());
+		assertTrue(merged.signature().contains("ethermerge"));
+		assertFalse(plain.signature().contains("ethermerge"));
+		assertNotEquals(plain.signature(), merged.signature(),
+				"a merged Aspect of the Void is a different item from a plain one, and the display "
+						+ "name is identical, so the signature is the only thing that can say so");
+	}
+
+	/** Neither capture carries anything but the merge, which is what makes them comparable. */
+	private static DecodedItem decodeAspectOfTheVoid(boolean merged) {
+		return sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.filter(item -> item.skyblockId().equals("ASPECT_OF_THE_VOID"))
+				.filter(item -> item.ethermerged() == merged)
+				.findFirst()
+				.orElseThrow(() -> new AssertionError(
+						"no " + (merged ? "merged" : "plain") + " Aspect of the Void in the fixture"));
 	}
 
 	/**
