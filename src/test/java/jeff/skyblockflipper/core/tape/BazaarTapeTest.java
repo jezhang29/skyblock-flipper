@@ -182,7 +182,10 @@ class BazaarTapeTest {
 	@Test
 	void rollsUpCompletedDaysButNeverTheDayStillBeingWritten(@TempDir Path dir) throws Exception {
 		BazaarTape tape = new BazaarTape(dir, 30);
-		Instant yesterday = Instant.now().minus(1, ChronoUnit.DAYS);
+		// Anchored at midday UTC, not now-minus-24h: the samples below are spaced 600s apart, so a
+		// run inside the last ten minutes of a UTC day pushed the third one into today's file.
+		Instant yesterday = LocalDate.now(ZoneOffset.UTC).minusDays(1).atStartOfDay(ZoneOffset.UTC)
+				.plusHours(12).toInstant();
 
 		tape.record(book(yesterday, 100.0d, 90.0d));
 		tape.record(book(yesterday.plusSeconds(300), 120.0d, 110.0d));
