@@ -75,6 +75,12 @@ public final class Guide {
 					+ "with enough sales behind it. Anything below the first rung is discounted for "
 					+ "confidence and says so in the risks, because a pet priced off every level at "
 					+ "once is the mistake this replaced"),
+			new Term("Dark Auction bid", "A Midas weapon's stats scale with the coins burned to win "
+					+ "it, and the item remembers that bid. So these are not priced from what other "
+					+ "Midas weapons sold for - which mixes a three million coin staff with a "
+					+ "hundred million coin one - but from what they sold for per coin bid, applied "
+					+ "to the bid this one carries. A staff bought for twice as much is quoted at "
+					+ "about twice as much off the same sales"),
 			new Term("Ledger", "Flips you took, and what they actually did. The only part of this "
 					+ "mod that can tell you whether the rest of it works"),
 			new Term("Stars and essence", "Hypixel publishes what every star level costs, and every "

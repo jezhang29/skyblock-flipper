@@ -85,6 +85,18 @@ public record ValueEstimate(
 	}
 
 	/**
+	 * The same estimate with its median multiplied through, for an index that holds ratios.
+	 *
+	 * <p>Everything else survives the scaling untouched, which is the reason this is one line rather
+	 * than a second kind of estimate: the sample count is the same sales, the sale rate is the same
+	 * rate, and {@link #dispersion} is already relative to the median, so a spread of ratios and the
+	 * spread of those ratios times a bid are the same number.
+	 */
+	public ValueEstimate scaledBy(double factor) {
+		return new ValueEstimate(key, median * factor, samples, dispersion, salesPerHour, basis);
+	}
+
+	/**
 	 * Confidence in the estimate, on the 0-1 scale the rest of the mod uses.
 	 *
 	 * <p>Rises with sample count and falls with disagreement between those samples, then pays
