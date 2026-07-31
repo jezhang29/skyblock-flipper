@@ -214,10 +214,16 @@ public final class FairValueModel {
 	 * splashes, so most of the signature is recoverable from it - but it does not state the alchemy
 	 * perks. An enhanced, extended Speed VIII potion is named exactly "Speed VIII Potion", and on the
 	 * tape it sells for 82,525 coins against 58,999 for the plain one wearing the same name.
+	 *
+	 * <p>A dungeon quality roll is the attribute-roll bug again, and worse. Nothing about the drop's
+	 * tier reaches its display name, so a maxed tier-10 {@code SKELETON_MASTER_CHESTPLATE} with no
+	 * enchantments on it would read as bare and price off a pool whose median is a tier-7 at
+	 * 2,000,000 coins - against the 113,000,000 the tier-10s actually fetch.
 	 */
 	private static boolean isBare(DecodedItem item) {
 		return !item.isPet()
 				&& !item.isPotion()
+				&& !item.hasQuality()
 				&& item.stars() == 0
 				&& !item.recombobulated()
 				&& item.hotPotatoBooks() == 0

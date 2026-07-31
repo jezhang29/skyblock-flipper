@@ -22,10 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decoding is checked against real blobs, not synthetic ones.
  *
- * <p>The fixture is sixteen trimmed captures chosen to cover the cases that a hand-written sample
+ * <p>The fixture is nineteen trimmed captures chosen to cover the cases that a hand-written sample
  * would not have thought of: an item with no tooltip style, stars under the legacy attribute name,
  * a pet, gemstones, hot potato books, a Kuudra attribute roll, two tiers of the same rune, a rune
- * applied to something else, three potions differing only in effect and perks, and a plain item
+ * applied to something else, three potions differing only in effect and perks, two dungeon drops
+ * differing only in their floor tier, a stat boost with no tier under it, and a plain item
  * with nothing on it at all. Everything here fails
  * loudly if Hypixel changes the blob format, which is the point - a decode that quietly drops an
  * attribute prices a five-star recombobulated item as if it were bare.
@@ -218,7 +219,7 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.runes(), helmet.pet(), helmet.potion());
+				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality());
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
@@ -226,7 +227,7 @@ class ItemDecoderTest {
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
 				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
-				helmet.potion());
+				helmet.potion(), helmet.quality());
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -255,7 +256,8 @@ class ItemDecoderTest {
 		DecodedItem unrolled = new DecodedItem(boots.skyblockId(), boots.displayName(),
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
-				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion());
+				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion(),
+				boots.quality());
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -266,7 +268,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
-				boots.pet(), boots.potion());
+				boots.pet(), boots.potion(), boots.quality());
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
@@ -330,6 +332,91 @@ class ItemDecoderTest {
 	void anItemThatIsNotAPotionCarriesNoPotionDetail() {
 		assertFalse(decode("GIANTS_SWORD").isPotion());
 		assertTrue(decode("GIANTS_SWORD").potionInfo().isEmpty());
+	}
+
+	@Test
+	void readsTheDungeonQualityRollAsAMaxedFlagAndAnExactTier() {
+		DecodedItem tier10 = decodeQuality(10);
+		DungeonQuality quality = tier10.dungeonQuality().orElseThrow();
+
+		assertTrue(quality.maxedStats());
+		assertTrue(quality.hasTier());
+		assertEquals(10, quality.floorTier());
+		assertEquals("maxed,tier=10", quality.signatureTerm());
+		assertTrue(tier10.signature().contains("quality=maxed,tier=10"));
+	}
+
+	@Test
+	void twoTiersOfTheSameDropAreDifferentItems() {
+		DecodedItem tier10 = decodeQuality(10);
+
+		// Both captures really are SKELETON_MASTER_CHESTPLATE, which is the item this whole term was
+		// built for: on the tape its tier-10s sell at a 113,000,000 median against 2,000,000 for its
+		// tier-7s, so pooling them makes half of them read as a 56x snipe. They differ in rarity as
+		// well, though, so the tier is dropped onto one of them to isolate it.
+		assertEquals(tier10.skyblockId(), decodeQuality(7).skyblockId());
+
+		DecodedItem lowerFloor = withQuality(tier10, new DungeonQuality(true, 7));
+
+		assertNotEquals(tier10.signature(), lowerFloor.signature());
+		assertTrue(lowerFloor.signature().contains("quality=maxed,tier=7"));
+	}
+
+	@Test
+	void anUnmaxedRollIsStillSeparatedByTheFloorItDroppedAt() {
+		// The stat boost being unmaxed does not make the tier stop mattering - a floor 6 drop and a
+		// floor 10 drop are different items whatever their rolls came out at.
+		DecodedItem leggings = decode("ZOMBIE_SOLDIER_LEGGINGS");
+		DungeonQuality quality = leggings.dungeonQuality().orElseThrow();
+
+		assertFalse(quality.maxedStats());
+		assertEquals(6, quality.floorTier());
+		assertEquals("tier=6", quality.signatureTerm());
+		assertTrue(leggings.signature().contains("quality=tier=6"));
+	}
+
+	@Test
+	void aDropWithNoTierStillKeysOnWhetherItsStatsAreMaxed() {
+		DecodedItem helmet = decode("SNIPER_HELMET");
+		DungeonQuality quality = helmet.dungeonQuality().orElseThrow();
+
+		// Not every item carrying a stat boost is a floor drop, so item_tier is often simply absent.
+		// The term has to survive that rather than defaulting the tier to some number.
+		assertFalse(quality.hasTier());
+		assertEquals(DungeonQuality.NO_TIER, quality.floorTier());
+
+		// This one rolled 21 out of 50. Every unmaxed value measured flat on the tape - medians
+		// between 48,000 and 74,000 across all of 1 to 49 - so it contributes no term at all and the
+		// item keeps the key it had before any of this was read.
+		assertFalse(quality.maxedStats());
+		assertEquals("", quality.signatureTerm());
+		assertFalse(helmet.hasQuality());
+		assertFalse(helmet.signature().contains("quality="));
+	}
+
+	@Test
+	void anItemThatIsNotADungeonDropCarriesNoQualityRoll() {
+		assertFalse(decode("GIANTS_SWORD").hasQuality());
+		assertTrue(decode("GIANTS_SWORD").dungeonQuality().isEmpty());
+	}
+
+	/** The same item wearing a different quality roll, so a test can vary that term alone. */
+	private static DecodedItem withQuality(DecodedItem item, DungeonQuality quality) {
+		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
+				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
+				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
+				item.potion(), quality);
+	}
+
+	/** The fixture holds two {@code SKELETON_MASTER_CHESTPLATE}s that differ in their tier. */
+	private static DecodedItem decodeQuality(int tier) {
+		return sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.filter(item -> item.dungeonQuality()
+						.filter(quality -> quality.floorTier() == tier).isPresent())
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("no tier " + tier + " drop in the fixture"));
 	}
 
 	@Test

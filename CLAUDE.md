@@ -115,16 +115,24 @@ Two verified traps that produce plausible wrong numbers, not errors:
    id `PET` with its identity in JSON under `ExtraAttributes.petInfo`, every rune shares the id
    `RUNE` with its identity in `ExtraAttributes.runes` (`{MUSIC: 3}`, tier included), and every
    potion shares the id `POTION` with its identity in `potion` + `potion_level` + the
-   `splash`/`enhanced`/`extended` flags.
+   `splash`/`enhanced`/`extended` flags. Dungeon drops keep their own ids but pool the same way,
+   on `item_tier` (the floor they dropped at) and `baseStatBoostPercentage`.
 
 **Shared item ids are the recurring shape of this bug**, and they fail silently: the sales are
 decoded, the medians are computed, and a whole market prices off one key. `SignatureGapProbeTest`
 (opt-in, `-PtapeBacktest`) ranks signatures by the p10–p90 spread of a day's realized sales and
 prints the `ExtraAttributes` keys nothing reads, which is how to find the next one rather than
-guess at it. Still unread and measured to matter, in rough order of coins at stake:
-`baseStatBoostPercentage` + `item_tier` (dungeon item quality, ~3B coins a day across
-`SKELETON_MASTER_CHESTPLATE` alone), `color` (dyed leather), `ethermerge`/`tuned_transmission`,
-`winning_bid` (Midas weapons, where the bid *is* the value), `new_years_cake` (the year).
+guess at it. Still unread and measured to matter, in rough order of coins at stake: `color` (dyed
+leather — `GOBLIN_BOOTS` and `GOBLIN_CHESTPLATE` are the probe's top two entries carrying an unread
+key, ~130M coins a day between them), `ethermerge`/`tuned_transmission`, `winning_bid` (Midas
+weapons, where the bid *is* the value), `raffle_year`/`raffle_win` (`FRUIT_BOWL`), `new_years_cake`
+(the year).
+
+**Not every pooling gap is a shared id, and not every attribute belongs in the key as a number.**
+Dungeon quality was both traps at once. `item_tier` earns an exact term — `SKELETON_MASTER_CHESTPLATE`
+runs 980k at tier 5 to 113M at tier 10. `baseStatBoostPercentage` runs 1–50 and is **flat below 50**
+(medians 48k–74k across every value, near-uniform counts), so it is a `maxed` flag; splitting on the
+raw value prices 9 held-out sales where the flag prices 601. See `DungeonQuality`.
 
 **Measure a signature split against the tail, not the median.** The median sale under a pooled key
 is whatever dominates its count, and pooling is accidentally right about that item — splitting
@@ -132,6 +140,13 @@ is whatever dominates its count, and pooling is accidentally right about that it
 0.464. What matters is how often the key values a sale at 2x or more of what it fetched, because a
 valuation is only acted on when it sits far above the asking price. See
 `PotionSignatureBacktestTest`.
+
+**A signature term measured to change nothing is not automatically dead weight.** The `maxed` flag
+splits no key at all — of 716 keys holding a maxed sale, none holds an unmaxed one — because stars,
+hot potatoes and enchantments already fingerprint an invested item. It ships anyway: it costs zero
+coverage, and at a coarse key maxedness is worth 44x on `SKELETON_MASTER_CHESTPLATE` tier 10 (110M
+against 2.5M), so the correlation covering that hole is one nothing enforces. Check what a redundant
+term would cost before removing it.
 
 Other rules:
 
