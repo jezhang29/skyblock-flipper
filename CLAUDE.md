@@ -121,14 +121,22 @@ Two verified traps that produce plausible wrong numbers, not errors:
 **Shared item ids are the recurring shape of this bug**, and they fail silently: the sales are
 decoded, the medians are computed, and a whole market prices off one key. `SignatureGapProbeTest`
 (opt-in, `-PtapeBacktest`) ranks signatures by the p10–p90 spread of a day's realized sales and
-prints the `ExtraAttributes` keys nothing reads, which is how to find the next one rather than
-guess at it. Ranked over the tape by coins carried, still unread: `winning_bid` 97B (Midas weapons,
-where the bid *is* the value, so it is a valuation input and not a key term), the drill parts 65B+
-(`drill_part_*`, `upgrade_module`, `engine`, `fuel_tank`, `polarvoid`, `divan_powder_coating`;
-1.1x–2x each), `ethermerge`/`tuned_transmission` 3x–5x on `ASPECT_OF_THE_VOID`/`ASPECT_OF_THE_END`,
-`raffle_year`/`raffle_win`, `is_shiny`, `new_years_cake` (the year). `dungeon_item` reads 1 on 2,218
-of 2,223 sales and separates nothing — ignore it. `power_ability_scroll` was top of this list and is
-now measured out; see below.
+prints the `ExtraAttributes` keys nothing reads. That found the shared ids and then went 0 for 3:
+`color`, `power_ability_scroll` and the drill parts each topped it, each was worth 100x+ at the item
+id, and each measured flat at the key production prices from.
+
+**Rank a candidate by the coins its pooling misprices upward, not by its spread — this is how to
+pick the next one.** `UnreadAttributeProbeTest` (opt-in, same flag) walks every unread attribute's
+production signatures, keeps only the pools that reach `MIN_SAMPLES` (a smaller pool is quoted by
+nothing, so its disagreement costs nothing), and counts the sales the pooled median values at 2x+ of
+what their own configuration fetched. On six days of tape it put `ethermerge` first at 1.25B coins
+over 207 sales, an order of magnitude clear, where the spread ranking had it eighth — and that one
+survived its holdout and shipped. With it read, the list drops to `eman_kills` at 45.5M over 26
+sales, a counter with 979 distinct values that would cost 988 valuations to fix 26; everything below
+is the same shape. **There is no further shared-id-shaped gap on this tape**, and the probe's 100M
+threshold now stands as the alarm for a new one arriving. `winning_bid` 120B is the exception to the
+whole frame: Midas weapons, where the bid *is* the value, so it is a valuation input and not a key
+term. `dungeon_item` reads 1 on 2,218 of 2,223 sales and separates nothing — ignore it.
 
 **Not every pooling gap is a shared id, and not every attribute belongs in the key as a number.**
 Dungeon quality was both traps at once. `item_tier` earns an exact term — `SKELETON_MASTER_CHESTPLATE`
@@ -161,6 +169,30 @@ splitting leaves a cell of nine and a cell of one that `MIN_SAMPLES` rejects. Un
 not free: 24 of 554 scroll sales are otherwise bare, so the term costs coarse coverage too. See
 `PowerScrollBacktestTest`.
 
+**The drill parts are the third no-op and the cheapest one to have skipped.** 405 sales / 97.3B over
+six days across `drill_part_*`, the `engine`/`fuel_tank`/`upgrade_module` compounds, `polarvoid` and
+`divan_powder_coating`, and a built drill genuinely runs 1.2x–2.4x a bare one at the same key
+(`MITHRIL_DRILL_2` 42.9M against 17.7M). It measures out because **the market is tiny and the parts
+are nearly an identifier**: 405 sales over 69 configurations and 314 signatures, so a part term makes
+cells of one. On a 24h holdout the pooled key prices 5 parted sales and is within 1.5x on 4; the full
+term prices 0, and so does a bare "something was installed" bit. Of the 75 mixed signatures, 52 never
+reach `MIN_SAMPLES` and are quoted by nothing; of the 23 that are, none overvalues an unparted drill.
+Read both formats or the measurement is wrong: `drill_part_engine` is a lowercase id and the `engine`
+compound holds the same id uppercase, 103 sales against 59, neither a superset. See
+`DrillPartBacktestTest`.
+
+**`ethermerge` ships, and it is the one that broke the streak.** 516 sales / 13.8B on
+`ASPECT_OF_THE_VOID` and `ASPECT_OF_THE_END`; one signature holds 396 plain sales at 5.9M beside 288
+merged at 24.9M and quotes 6.1M for both. Three things separate it from the scroll and the drill
+parts: it is **one bit**, so a split halves a pool instead of shattering it; **plain sales dominate
+the mixed pools**, the exact opposite of the scroll, so both cells still clear `MIN_SAMPLES`; and it
+costs 4 valuations in 1,032. Holdout p90 |log err| 1.387 → 0.300, median 0.095 → 0.072,
+overvaluations 13 → 11; aggregate at 48h unmoved (88.3% / 64.0% / 0.098 / 4,717 configs).
+`tuned_transmission` stays out — it only rides on a merged item, is worth 1.06x on top of it, and
+costs seven more valuations for no fewer overvaluations. The `isBare` guard is load-bearing here: 315
+of the 516 merged sales carry nothing else, so unguarded they join the coarse pool and every plain
+Aspect of the Void gets quoted off sales worth 4x it. See `EthermergeBacktestTest`.
+
 **Measure a signature split against the tail, not the median.** The median sale under a pooled key
 is whatever dominates its count, and pooling is accidentally right about that item — splitting
 `POTION` made the median error slightly *worse* (0.091 → 0.104) while cutting p90 from 3.510 to
@@ -178,6 +210,12 @@ undyed sale and they run only 0.9x–2.1x at the production key, against 833x at
 (`SKELETON_MASTER_CHESTPLATE`, 200M dyed against 240k plain) — **the gap between those two numbers
 is the investment terms doing the separating, not the dye.** Measure a term against the key the
 model actually uses; the item id overstates every one of these by an order of magnitude or two.
+
+**Six for six on that last point now** (pet levels, the maxed flag, the dye, the scroll, the drill
+parts, the merge). A gap that is huge at the item id and flat at the production key is the normal
+case, not the surprising one — even `ethermerge`, the one that shipped, is 4x at the real key against
+73x at the bare id. Any candidate gets measured at `DecodedItem.signature()` first, and the two
+questions are whether mixed pools *overvalue* the plain side and what the term costs in coverage.
 
 Other rules:
 
