@@ -122,17 +122,31 @@ Two verified traps that produce plausible wrong numbers, not errors:
 decoded, the medians are computed, and a whole market prices off one key. `SignatureGapProbeTest`
 (opt-in, `-PtapeBacktest`) ranks signatures by the p10–p90 spread of a day's realized sales and
 prints the `ExtraAttributes` keys nothing reads, which is how to find the next one rather than
-guess at it. Still unread and measured to matter, in rough order of coins at stake: `color` (dyed
-leather — `GOBLIN_BOOTS` and `GOBLIN_CHESTPLATE` are the probe's top two entries carrying an unread
-key, ~130M coins a day between them), `ethermerge`/`tuned_transmission`, `winning_bid` (Midas
-weapons, where the bid *is* the value), `raffle_year`/`raffle_win` (`FRUIT_BOWL`), `new_years_cake`
-(the year).
+guess at it. Ranked over two days of tape by coins carried, still unread: `winning_bid` 97B (Midas
+weapons, where the bid *is* the value), `power_ability_scroll` 87B (`HYPERION`, `ATOMSPLIT_KATANA`;
+5x–20x within one item id, 276 sales), the drill parts 65B+ (`drill_part_*`, `upgrade_module`,
+`engine`, `fuel_tank`, `polarvoid`, `divan_powder_coating`; 1.1x–2x each),
+`ethermerge`/`tuned_transmission` 3x–5x on `ASPECT_OF_THE_VOID`/`ASPECT_OF_THE_END`,
+`raffle_year`/`raffle_win`, `is_shiny`, `new_years_cake` (the year). `dungeon_item` reads 1 on 2,218
+of 2,223 sales and separates nothing — ignore it.
 
 **Not every pooling gap is a shared id, and not every attribute belongs in the key as a number.**
 Dungeon quality was both traps at once. `item_tier` earns an exact term — `SKELETON_MASTER_CHESTPLATE`
 runs 980k at tier 5 to 113M at tier 10. `baseStatBoostPercentage` runs 1–50 and is **flat below 50**
 (medians 48k–74k across every value, near-uniform counts), so it is a `maxed` flag; splitting on the
 raw value prices 9 held-out sales where the flag prices 601. See `DungeonQuality`.
+
+**A pooling gap can be real, expensive and still not worth keying — `color` is the case.** Dyed
+leather is two attributes, not one, and they are near-disjoint (of 2,091 sales carrying either, 8
+carry both). `dye_item` is a named dye and ships. Raw `color` is an `r:g:b` triple and does **not**,
+for three measured reasons: it is near-unique per sale where it is dense (632 distinct colours over
+660 `SATIN_TROUSERS` sales) so no key can reach `MIN_SAMPLES`; the coarse pool it falls into today
+is *right* about it, because the items carrying it densely are fashion items whose whole pool is
+coloured, so keying it out drops 191 held-out coloured sales to 5 to fix 2 overvaluations; and
+leaving it in poisons nothing, since a median ignores the two 60M exotics sitting in `GOBLIN_BOOTS`'
+466-sale pool at 12k (plain sales score identically either way, 702 overvaluations both). Keying an
+attribute converts a wrong number into no number — check the wrong number is actually wrong first.
+See `DyeSignatureBacktestTest`.
 
 **Measure a signature split against the tail, not the median.** The median sale under a pooled key
 is whatever dominates its count, and pooling is accidentally right about that item — splitting
@@ -146,7 +160,11 @@ splits no key at all — of 716 keys holding a maxed sale, none holds an unmaxed
 hot potatoes and enchantments already fingerprint an invested item. It ships anyway: it costs zero
 coverage, and at a coarse key maxedness is worth 44x on `SKELETON_MASTER_CHESTPLATE` tier 10 (110M
 against 2.5M), so the correlation covering that hole is one nothing enforces. Check what a redundant
-term would cost before removing it.
+term would cost before removing it. `dye=` ships on the same footing: 67 of 587 dyed keys hold an
+undyed sale and they run only 0.9x–2.1x at the production key, against 833x at the bare item id
+(`SKELETON_MASTER_CHESTPLATE`, 200M dyed against 240k plain) — **the gap between those two numbers
+is the investment terms doing the separating, not the dye.** Measure a term against the key the
+model actually uses; the item id overstates every one of these by an order of magnitude or two.
 
 Other rules:
 

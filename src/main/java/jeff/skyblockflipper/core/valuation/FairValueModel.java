@@ -215,6 +215,11 @@ public final class FairValueModel {
 	 * perks. An enhanced, extended Speed VIII potion is named exactly "Speed VIII Potion", and on the
 	 * tape it sells for 82,525 coins against 58,999 for the plain one wearing the same name.
 	 *
+	 * <p>A named dye is here for completeness rather than for measured harm: on the recorded tape
+	 * every dyed sale already fails one of the other clauses, so this one has never yet decided a
+	 * lookup. It is the clause that would matter first if that stopped being true, since a dye moves
+	 * a price by up to 833x at the item id and the display name never mentions it.
+	 *
 	 * <p>A dungeon quality roll is the attribute-roll bug again, and worse. Nothing about the drop's
 	 * tier reaches its display name, so a maxed tier-10 {@code SKELETON_MASTER_CHESTPLATE} with no
 	 * enchantments on it would read as bare and price off a pool whose median is a tier-7 at
@@ -222,6 +227,7 @@ public final class FairValueModel {
 	 */
 	private static boolean isBare(DecodedItem item) {
 		return !item.isPet()
+				&& !item.isDyed()
 				&& !item.isPotion()
 				&& !item.hasQuality()
 				&& item.stars() == 0

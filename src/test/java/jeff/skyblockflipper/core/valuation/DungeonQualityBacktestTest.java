@@ -255,11 +255,12 @@ class DungeonQualityBacktestTest {
 	 * The item's signature with the shipped quality clause taken back off, so every variant is
 	 * measured against the same base key and only the quality term differs.
 	 *
-	 * <p>Safe as a suffix strip because {@code signature()} adds the clause last and its contents
-	 * never contain the separator.
+	 * <p>Not anchored to the end of the string: the quality clause was last when this was written
+	 * and the dye clause now follows it, so anchoring would have silently stopped stripping on the
+	 * 674 dyed sales. Safe unanchored because a clause's contents never contain the separator.
 	 */
 	private static String withoutQuality(DecodedItem item) {
-		return item.signature().replaceFirst("\\|quality=[^|]*$", "");
+		return item.signature().replaceFirst("\\|quality=[^|]*", "");
 	}
 
 	/** @return {@code {boost, tier}} or null when this sale carries no roll */

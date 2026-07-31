@@ -41,6 +41,18 @@ import java.util.Optional;
  * {@code SKELETON_MASTER_CHESTPLATE} trades from 980,000 to 113,000,000 depending on the tier alone.
  * {@link DungeonQuality} explains why the boost is read as a flag and the tier as a number.
  *
+ * <p>{@code dye_item} is a named dye somebody applied, e.g. {@code DYE_PURE_BLACK}. Rare - 674 of
+ * 222,430 taped BIN sales - and read for the reason the maxed dungeon flag is: it costs nothing,
+ * because every dyed sale on the tape is already invested enough to stay out of the coarse index,
+ * and it names a difference nothing else states.
+ *
+ * <p><b>{@code color}, the raw {@code r:g:b} triple, is deliberately not read.</b> It looks like the
+ * bigger gap and measures worse: it is near-unique per sale where it is dense (632 distinct colours
+ * across 660 {@code SATIN_TROUSERS} sales), so keying it exactly prices nothing, and the coarse pool
+ * it currently falls into is right about it - keying it out drops 191 held-out coloured sales to 5
+ * to fix 2 overvaluations, while poisoning no plain valuation at all. See
+ * {@code DyeSignatureBacktestTest} for the whole measurement.
+ *
  * <p>Except when it is not there at all. Roughly one item in forty carries no tooltip style, and
  * the only remaining statement of its rarity is the last line of its lore. So this falls back to
  * parsing that line, which is exactly the fragile thing the component was supposed to avoid - and
@@ -108,7 +120,8 @@ public final class ItemDecoder {
 				extra.child("runes").numericEntries(),
 				pet(skyblockId, extra, name),
 				potion(extra),
-				quality(extra)));
+				quality(extra),
+				extra.string("dye_item").orElse("")));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
