@@ -34,19 +34,21 @@ import java.util.Optional;
 public final class FairValueModel {
 	private final Map<String, ValueEstimate> exact;
 	private final Map<String, ValueEstimate> coarse;
+	private final Map<String, ValueEstimate> perBid;
 	private final int salesConsidered;
 	private final Duration window;
 
 	private FairValueModel(Map<String, ValueEstimate> exact, Map<String, ValueEstimate> coarse,
-			int salesConsidered, Duration window) {
+			Map<String, ValueEstimate> perBid, int salesConsidered, Duration window) {
 		this.exact = Map.copyOf(exact);
 		this.coarse = Map.copyOf(coarse);
+		this.perBid = Map.copyOf(perBid);
 		this.salesConsidered = salesConsidered;
 		this.window = window;
 	}
 
 	public static FairValueModel empty() {
-		return new FairValueModel(Map.of(), Map.of(), 0, Duration.ZERO);
+		return new FairValueModel(Map.of(), Map.of(), Map.of(), 0, Duration.ZERO);
 	}
 
 	/**
@@ -81,6 +83,7 @@ public final class FairValueModel {
 
 		private final Map<String, List<Double>> bySignature = new HashMap<>();
 		private final Map<String, List<Double>> byCoarseKey = new HashMap<>();
+		private final Map<String, List<Double>> bidRatios = new HashMap<>();
 		private final long cutoff;
 		private final Duration window;
 
@@ -110,6 +113,14 @@ public final class FairValueModel {
 			// that sold and about every wider description of it, and the wider ones are what stop
 			// a thinly-traded configuration having no valuation at all.
 			item.valuationKeys().forEach(key -> record(bySignature, key, unitPrice));
+
+			// What this sale says about the item per coin bid for it, which is a statement about
+			// every other bid on the same configuration. Only the exact signature: a bid is a Midas
+			// weapon's whole identity, and no widened rung is precise enough to scale.
+			if (item.hasWinningBid()) {
+				record(bidRatios, item.signature(), unitPrice / item.winningBid());
+			}
+
 			record(byCoarseKey, ActiveListing.coarseKey(item.displayName(), item.rarity()), unitPrice);
 			considered++;
 		}
@@ -123,6 +134,7 @@ public final class FairValueModel {
 			return new FairValueModel(
 					estimates(bySignature, windowHours, ValueEstimate.Basis.EXACT),
 					estimates(byCoarseKey, windowHours, ValueEstimate.Basis.COARSE),
+					estimates(bidRatios, windowHours, ValueEstimate.Basis.EXACT),
 					considered,
 					window);
 		}
@@ -147,12 +159,29 @@ public final class FairValueModel {
 	 * where it always did. A pet tries its own level first, then its level band, then any level -
 	 * each rung a real widening, each labelled as such so the confidence it earns is discounted.
 	 *
+	 * <p>Before any of that, the one item whose price is a number written on it rather than a pool
+	 * of sales: a Midas weapon, whose stats scale with the coins burned at the Dark Auction. Its
+	 * signature says nothing about the bid, so the pooled median quotes a 3,000,000 coin staff and a
+	 * 100,000,000 coin one the same. The ratio index answers the question the pool cannot -
+	 * <b>what does this configuration fetch per coin bid</b> - and multiplying that by this item's own
+	 * bid costs no coverage at all, because it is the same sales under the same key. On a 24h holdout
+	 * of the item ids that carry a bid it took sales valued at 2x or more of what they fetched from
+	 * 142 in 512 to 11, and the median absolute log error from 0.588 to 0.242, at identical coverage.
+	 *
 	 * <p>Then one exception, unchanged: an item carrying no attributes at all has nothing the
 	 * coarse key could have missed, so name and rarity describe it completely. Without that rule
 	 * the coarse index would happily price a five-star recombobulated helmet off sales of the bare
 	 * one and call the difference profit.
 	 */
 	public Optional<ValueEstimate> valueOf(DecodedItem item) {
+		if (item.hasWinningBid()) {
+			ValueEstimate perCoin = perBid.get(item.signature());
+
+			if (perCoin != null && perCoin.isUsable()) {
+				return Optional.of(perCoin.scaledBy(item.winningBid()));
+			}
+		}
+
 		List<String> keys = item.valuationKeys();
 
 		for (int rung = 0; rung < keys.size(); rung++) {
@@ -225,6 +254,13 @@ public final class FairValueModel {
 	 * joins the coarse pool of plain ones - and then every plain Aspect of the Void is quoted off a
 	 * pool holding sales worth 4x it. The display name is identical either way.
 	 *
+	 * <p>A Dark Auction bid is here on the maxed dungeon flag's footing: measured to change nothing
+	 * and kept anyway. On the recorded tape the coarse fallback never fires for a bid-carrying item,
+	 * because its signature always had sales of its own, so the clause scored byte-identically to
+	 * omitting it. What it names is that "Midas Staff" is the display name at every bid, so the
+	 * coarse pool behind that name mixes a 3,000,000 coin staff with a 100,000,000 coin one - and
+	 * unlike the exact index, no ratio can rescue it, since the pool is not one configuration.
+	 *
 	 * <p>A dungeon quality roll is the attribute-roll bug again, and worse. Nothing about the drop's
 	 * tier reaches its display name, so a maxed tier-10 {@code SKELETON_MASTER_CHESTPLATE} with no
 	 * enchantments on it would read as bare and price off a pool whose median is a tier-7 at
@@ -234,6 +270,7 @@ public final class FairValueModel {
 		return !item.isPet()
 				&& !item.isDyed()
 				&& !item.ethermerged()
+				&& !item.hasWinningBid()
 				&& !item.isPotion()
 				&& !item.hasQuality()
 				&& item.stars() == 0

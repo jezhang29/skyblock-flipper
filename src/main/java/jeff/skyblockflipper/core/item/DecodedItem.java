@@ -23,6 +23,9 @@ import java.util.TreeMap;
  * @param quality      dungeon drop quality, or null when this item carries no such roll
  * @param dye          the named dye applied to this leather item, or "" for none
  * @param ethermerged  whether an Etherwarp Conduit has been merged into this item
+ * @param winningBid   coins paid for this item at the Dark Auction, or 0 for the items that are not
+ *                     sold there. Deliberately absent from {@link #signature()} - see
+ *                     {@link #hasWinningBid()}
  */
 public record DecodedItem(
 		String skyblockId,
@@ -41,7 +44,8 @@ public record DecodedItem(
 		PotionInfo potion,
 		DungeonQuality quality,
 		String dye,
-		boolean ethermerged
+		boolean ethermerged,
+		long winningBid
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -76,6 +80,23 @@ public record DecodedItem(
 
 	public Optional<DungeonQuality> dungeonQuality() {
 		return Optional.ofNullable(quality);
+	}
+
+	/**
+	 * Whether this item was bought at the Dark Auction, and so carries the bid that set its stats.
+	 *
+	 * <p>The bid is the one price term that must <b>not</b> go in {@link #signature()}. It is a
+	 * continuous number - 103 distinct values across 439 taped {@code MIDAS_STAFF} sales - so keying
+	 * it makes a cell per sale, which is the drill parts' failure mode with an order of magnitude
+	 * more values. Banded into powers of two it still costs coverage and still leaves the sales it
+	 * does price out by more than the ratio quote does.
+	 *
+	 * <p>What it is good for instead is scaling: within one signature the sale price is close to a
+	 * fixed multiple of the bid, so a pooled ratio prices every bid off every other bid's sales
+	 * without splitting anything. See {@code FairValueModel.valueOf} and {@code MidasBidBacktestTest}.
+	 */
+	public boolean hasWinningBid() {
+		return winningBid > 0L;
 	}
 
 	/** Whether a named dye was applied to this item. */

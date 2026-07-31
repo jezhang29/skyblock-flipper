@@ -219,7 +219,7 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "", false);
+				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "", false, 0L);
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
@@ -227,7 +227,7 @@ class ItemDecoderTest {
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
 				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
-				helmet.potion(), helmet.quality(), "", false);
+				helmet.potion(), helmet.quality(), "", false, 0L);
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -257,7 +257,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion(),
-				boots.quality(), "", false);
+				boots.quality(), "", false, 0L);
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -268,7 +268,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
-				boots.pet(), boots.potion(), boots.quality(), "", false);
+				boots.pet(), boots.potion(), boots.quality(), "", false, 0L);
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
@@ -405,7 +405,7 @@ class ItemDecoderTest {
 		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
 				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
 				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
-				item.potion(), quality, item.dye(), item.ethermerged());
+				item.potion(), quality, item.dye(), item.ethermerged(), item.winningBid());
 	}
 
 	@Test
@@ -442,6 +442,28 @@ class ItemDecoderTest {
 		assertNotEquals(plain.signature(), merged.signature(),
 				"a merged Aspect of the Void is a different item from a plain one, and the display "
 						+ "name is identical, so the signature is the only thing that can say so");
+	}
+
+	/**
+	 * The Dark Auction bid is read as a number and kept out of the key, which is the opposite call
+	 * from every other attribute here and the right one.
+	 *
+	 * <p>On a Midas weapon the bid is what the stats were bought with, so it is the largest single
+	 * term in the price - and it is continuous, 103 distinct values across 439 taped
+	 * {@code MIDAS_STAFF} sales. In the signature it would make a cell per sale. Out of it, one
+	 * pooled price-per-coin-bid prices every bid; see {@code MidasBidBacktestTest}.
+	 */
+	@Test
+	void readsTheDarkAuctionBidButKeepsItOutOfTheSignature() {
+		DecodedItem staff = decode("MIDAS_STAFF");
+
+		assertEquals(117_360_000L, staff.winningBid());
+		assertTrue(staff.hasWinningBid());
+		assertFalse(staff.signature().contains("117360000"),
+				"the bid is a valuation input, not a key term: keying a number with a distinct value "
+						+ "per sale prices nothing at all");
+
+		assertFalse(decode("ANITA_TALISMAN").hasWinningBid());
 	}
 
 	/** Neither capture carries anything but the merge, which is what makes them comparable. */

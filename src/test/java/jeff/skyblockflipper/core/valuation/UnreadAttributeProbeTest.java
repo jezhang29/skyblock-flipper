@@ -71,7 +71,7 @@ class UnreadAttributeProbeTest {
 			"id", "modifier", "upgrade_level", "dungeon_item_level", "rarity_upgrades",
 			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo", "runes",
 			"potion", "potion_level", "splash", "enhanced", "extended",
-			"baseStatBoostPercentage", "item_tier", "ethermerge", "dye_item",
+			"baseStatBoostPercentage", "item_tier", "ethermerge", "dye_item", "winning_bid",
 			"uuid", "timestamp", "originTag", "donated_museum");
 
 	@Test

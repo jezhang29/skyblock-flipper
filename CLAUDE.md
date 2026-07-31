@@ -134,9 +134,23 @@ over 207 sales, an order of magnitude clear, where the spread ranking had it eig
 survived its holdout and shipped. With it read, the list drops to `eman_kills` at 45.5M over 26
 sales, a counter with 979 distinct values that would cost 988 valuations to fix 26; everything below
 is the same shape. **There is no further shared-id-shaped gap on this tape**, and the probe's 100M
-threshold now stands as the alarm for a new one arriving. `winning_bid` 120B is the exception to the
-whole frame: Midas weapons, where the bid *is* the value, so it is a valuation input and not a key
-term. `dungeon_item` reads 1 on 2,218 of 2,223 sales and separates nothing — ignore it.
+threshold now stands as the alarm for a new one arriving. `dungeon_item` reads 1 on 2,218 of 2,223
+sales and separates nothing — ignore it.
+
+**`winning_bid` was the exception to that whole frame, and it ships as a valuation input rather than
+a key term.** On a Midas weapon the coins burned at the Dark Auction *are* the item, so the attribute
+is continuous — 103 distinct values over 439 taped `MIDAS_STAFF` sales — and keying it makes a cell
+per sale. What works instead is to pool the **ratio** of sale price to bid over the signature
+production already uses and quote `medianRatio × thisItem'sBid`: same sales, same key, different
+question, so **it costs no coverage at all** — the first thing measured here that is free. On a 24h
+holdout over the six bid-carrying ids, sales valued at 2x+ of what they fetched went 142/512 → 11 and
+median |log err| 0.588 → 0.242 at identical coverage; at 48h, 342 → 108 and 2.169 → 0.563. Banding
+the bid into the key is the wrong answer measured twice over (499 priced, 69 over 2x), and flooring
+the ratio quote at the pooled median throws the finding away (144 over 2x) because the pooled median
+is the wrong number. Almost all of it is `MIDAS_STAFF`, where 116 training sales quote 27.0M against
+a held-out median of 14.0M; `HEGEMONY_ARTIFACT` and `PLASMA_NUCLEUS` sell at 1.05–1.09x their bid and
+neither arm ever overvalues one. Aggregate at 48h unmoved: 88.3% / 64.0% / 0.098 / 4,717 configs. See
+`MidasBidBacktestTest`, and `FairValueModel.valueOf` for where the ratio index is consulted.
 
 **Not every pooling gap is a shared id, and not every attribute belongs in the key as a number.**
 Dungeon quality was both traps at once. `item_tier` earns an exact term — `SKELETON_MASTER_CHESTPLATE`
@@ -216,6 +230,9 @@ parts, the merge). A gap that is huge at the item id and flat at the production 
 case, not the surprising one — even `ethermerge`, the one that shipped, is 4x at the real key against
 73x at the bare id. Any candidate gets measured at `DecodedItem.signature()` first, and the two
 questions are whether mixed pools *overvalue* the plain side and what the term costs in coverage.
+**When the answer to both is bad and the attribute is a number the price scales with, ask the ratio
+question instead of the key question** — that is what turned `winning_bid` from untouchable into the
+one free win on the list.
 
 Other rules:
 

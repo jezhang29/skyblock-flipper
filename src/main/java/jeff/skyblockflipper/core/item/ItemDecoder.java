@@ -50,6 +50,12 @@ import java.util.Optional;
  * Aspect of the End. A flag, 516 of 452,174 taped sales, and the one attribute on the unread list
  * that measured out as worth reading - see {@link DecodedItem#signature()}.
  *
+ * <p>{@code winning_bid} is what somebody paid for this item at the Dark Auction, and on a Midas
+ * weapon it is not a description of the item - it <b>is</b> the item, because the stats scale with
+ * the coins burned. Read as a number and deliberately kept out of {@link DecodedItem#signature()}:
+ * see {@code FairValueModel.valueOf} for the ratio quote it feeds instead, and
+ * {@code MidasBidBacktestTest} for why keying it is the wrong shape of answer.
+ *
  * <p><b>{@code color}, the raw {@code r:g:b} triple, is deliberately not read.</b> It looks like the
  * bigger gap and measures worse: it is near-unique per sale where it is dense (632 distinct colours
  * across 660 {@code SATIN_TROUSERS} sales), so keying it exactly prices nothing, and the coarse pool
@@ -126,7 +132,8 @@ public final class ItemDecoder {
 				potion(extra),
 				quality(extra),
 				extra.string("dye_item").orElse(""),
-				extra.flag("ethermerge")));
+				extra.flag("ethermerge"),
+				(long) extra.number("winning_bid").orElse(0.0d)));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
