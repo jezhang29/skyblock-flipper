@@ -122,13 +122,13 @@ Two verified traps that produce plausible wrong numbers, not errors:
 decoded, the medians are computed, and a whole market prices off one key. `SignatureGapProbeTest`
 (opt-in, `-PtapeBacktest`) ranks signatures by the p10–p90 spread of a day's realized sales and
 prints the `ExtraAttributes` keys nothing reads, which is how to find the next one rather than
-guess at it. Ranked over two days of tape by coins carried, still unread: `winning_bid` 97B (Midas
-weapons, where the bid *is* the value), `power_ability_scroll` 87B (`HYPERION`, `ATOMSPLIT_KATANA`;
-5x–20x within one item id, 276 sales), the drill parts 65B+ (`drill_part_*`, `upgrade_module`,
-`engine`, `fuel_tank`, `polarvoid`, `divan_powder_coating`; 1.1x–2x each),
-`ethermerge`/`tuned_transmission` 3x–5x on `ASPECT_OF_THE_VOID`/`ASPECT_OF_THE_END`,
+guess at it. Ranked over the tape by coins carried, still unread: `winning_bid` 97B (Midas weapons,
+where the bid *is* the value, so it is a valuation input and not a key term), the drill parts 65B+
+(`drill_part_*`, `upgrade_module`, `engine`, `fuel_tank`, `polarvoid`, `divan_powder_coating`;
+1.1x–2x each), `ethermerge`/`tuned_transmission` 3x–5x on `ASPECT_OF_THE_VOID`/`ASPECT_OF_THE_END`,
 `raffle_year`/`raffle_win`, `is_shiny`, `new_years_cake` (the year). `dungeon_item` reads 1 on 2,218
-of 2,223 sales and separates nothing — ignore it.
+of 2,223 sales and separates nothing — ignore it. `power_ability_scroll` was top of this list and is
+now measured out; see below.
 
 **Not every pooling gap is a shared id, and not every attribute belongs in the key as a number.**
 Dungeon quality was both traps at once. `item_tier` earns an exact term — `SKELETON_MASTER_CHESTPLATE`
@@ -147,6 +147,19 @@ leaving it in poisons nothing, since a median ignores the two 60M exotics sittin
 466-sale pool at 12k (plain sales score identically either way, 702 overvaluations both). Keying an
 attribute converts a wrong number into no number — check the wrong number is actually wrong first.
 See `DyeSignatureBacktestTest`.
+
+**`power_ability_scroll` is the same answer with none of `color`'s excuses, and it was top of the
+list by coins** — 554 sales / 185.8B over six days, one enumerable string of six values, 59 item ids,
+and up to 604x within an item id (`RAGNAROCK_AXE` 510M scrolled against 844k plain). At the
+production signature it disappears: 30 keys pool a scroll with anything else at all, they agree to
+1.6x everywhere but two, and **no mixed pool overvalues its plain sales**. On a 24h holdout the
+pooled key prices 19 scrolled sales and is within 1.5x on 17 (four `HYPERION` within 2% at 1.2B);
+keying it prices **2**, fixes one overvaluation, and moves median and p90 not at all. The mechanism
+is that scrolled sales dominate their own key — nine of ten sales under one `HYPERION` signature
+carry a Sapphire scroll — so the median they price against is already a scrolled median, and
+splitting leaves a cell of nine and a cell of one that `MIN_SAMPLES` rejects. Unlike `dye_item` it is
+not free: 24 of 554 scroll sales are otherwise bare, so the term costs coarse coverage too. See
+`PowerScrollBacktestTest`.
 
 **Measure a signature split against the tail, not the median.** The median sale under a pooled key
 is whatever dominates its count, and pooling is accidentally right about that item — splitting
