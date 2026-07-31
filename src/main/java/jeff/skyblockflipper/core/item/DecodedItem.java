@@ -21,6 +21,7 @@ import java.util.TreeMap;
  * @param pet          pet detail, or null when this is not a pet
  * @param potion       potion detail, or null when this is not a potion
  * @param quality      dungeon drop quality, or null when this item carries no such roll
+ * @param dye          the named dye applied to this leather item, or "" for none
  */
 public record DecodedItem(
 		String skyblockId,
@@ -37,7 +38,8 @@ public record DecodedItem(
 		Map<String, Integer> runes,
 		PetInfo pet,
 		PotionInfo potion,
-		DungeonQuality quality
+		DungeonQuality quality,
+		String dye
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -46,6 +48,7 @@ public record DecodedItem(
 		gemstones = List.copyOf(gemstones);
 		attributes = Collections.unmodifiableMap(new TreeMap<>(attributes));
 		runes = Collections.unmodifiableMap(new TreeMap<>(runes));
+		dye = dye == null ? "" : dye;
 	}
 
 	public boolean isPet() {
@@ -71,6 +74,11 @@ public record DecodedItem(
 
 	public Optional<DungeonQuality> dungeonQuality() {
 		return Optional.ofNullable(quality);
+	}
+
+	/** Whether a named dye was applied to this item. */
+	public boolean isDyed() {
+		return !dye.isEmpty();
 	}
 
 	/**
@@ -153,6 +161,17 @@ public record DecodedItem(
 		// for why the stat boost is a flag here and the tier is a number.
 		if (hasQuality()) {
 			key.add("quality=" + quality.signatureTerm());
+		}
+
+		// Last, so a test can strip it back off to compare a dyed sale against a plain one. Worth
+		// little on its own - 67 of 587 dyed keys hold an undyed sale and they run 0.9x to 2.1x,
+		// because a dyed item is also a starred and enchanted one - and kept for the reason the
+		// maxed quality flag is kept: it costs no coverage, since every dyed sale on the tape
+		// carries something else that already keeps it out of the coarse index, and the 833x gap
+		// it closes at the item id is a correlation nothing enforces. The raw `color` triple is
+		// deliberately absent; see ItemDecoder and DyeSignatureBacktestTest.
+		if (isDyed()) {
+			key.add("dye=" + dye);
 		}
 
 		return key.toString();

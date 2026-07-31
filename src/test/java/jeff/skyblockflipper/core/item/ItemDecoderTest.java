@@ -219,7 +219,7 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality());
+				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "");
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
@@ -227,7 +227,7 @@ class ItemDecoderTest {
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
 				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
-				helmet.potion(), helmet.quality());
+				helmet.potion(), helmet.quality(), "");
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -257,7 +257,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion(),
-				boots.quality());
+				boots.quality(), "");
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -268,7 +268,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
-				boots.pet(), boots.potion(), boots.quality());
+				boots.pet(), boots.potion(), boots.quality(), "");
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
@@ -405,7 +405,39 @@ class ItemDecoderTest {
 		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
 				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
 				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
-				item.potion(), quality);
+				item.potion(), quality, item.dye());
+	}
+
+	@Test
+	void readsTheNamedDyeIntoTheSignature() {
+		DecodedItem dyed = decodeQuality(10);
+
+		assertTrue(dyed.isDyed());
+		assertEquals("DYE_CHARCOAL", dyed.dye());
+		assertTrue(dyed.signature().contains("dye=DYE_CHARCOAL"),
+				"the dye belongs in the key: nothing else about a dyed item states it, and the "
+						+ "display name does not mention it either");
+
+		// The same chestplate wearing no dye is a different item and must key as one.
+		assertFalse(decodeQuality(7).isDyed());
+		assertFalse(decodeQuality(7).signature().contains("dye="));
+	}
+
+	/**
+	 * The raw {@code color} triple is read by nothing, on purpose.
+	 *
+	 * <p>Measured in {@code DyeSignatureBacktestTest}: it is near-unique per sale where it is dense,
+	 * so an exact colour key prices nothing, and the coarse pool it falls into today is right about
+	 * it. Keying it out would drop 191 held-out coloured sales to 5 to fix 2 overvaluations. If this
+	 * test ever starts failing because somebody added the term, that measurement is what to redo.
+	 */
+	@Test
+	void leavesTheRawColourOutOfTheSignature() {
+		DecodedItem coloured = decode("TARANTULA_HELMET");
+
+		assertFalse(coloured.isDyed(), "a colour is not a dye");
+		assertFalse(coloured.signature().contains("252:243:255"));
+		assertFalse(coloured.signature().contains("color"));
 	}
 
 	/** The fixture holds two {@code SKELETON_MASTER_CHESTPLATE}s that differ in their tier. */
