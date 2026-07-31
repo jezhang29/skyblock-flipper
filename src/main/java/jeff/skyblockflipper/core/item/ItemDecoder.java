@@ -46,6 +46,10 @@ import java.util.Optional;
  * because every dyed sale on the tape is already invested enough to stay out of the coarse index,
  * and it names a difference nothing else states.
  *
+ * <p>{@code ethermerge} is the Etherwarp Conduit somebody merged into an Aspect of the Void or an
+ * Aspect of the End. A flag, 516 of 452,174 taped sales, and the one attribute on the unread list
+ * that measured out as worth reading - see {@link DecodedItem#signature()}.
+ *
  * <p><b>{@code color}, the raw {@code r:g:b} triple, is deliberately not read.</b> It looks like the
  * bigger gap and measures worse: it is near-unique per sale where it is dense (632 distinct colours
  * across 660 {@code SATIN_TROUSERS} sales), so keying it exactly prices nothing, and the coarse pool
@@ -121,7 +125,8 @@ public final class ItemDecoder {
 				pet(skyblockId, extra, name),
 				potion(extra),
 				quality(extra),
-				extra.string("dye_item").orElse("")));
+				extra.string("dye_item").orElse(""),
+				extra.flag("ethermerge")));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
