@@ -140,7 +140,13 @@ public final class Guide {
 					+ "units count against the fill rate and nothing about it reaches the capture "
 					+ "rate, which is the honest answer: an order you gave up on is not a flip that "
 					+ "went badly, it is one that never happened. Select it on the Ledger tab and "
-					+ "press Abandon, or use /flip abandon <id>")));
+					+ "press Abandon, or use /flip abandon <id>"),
+			new Term("Capture", "/flip capture records the chat lines and menu contents your trades "
+					+ "produce, to a file in the config folder. It is groundwork for tracking your "
+					+ "buys and sells automatically: the parser that will read them has to be "
+					+ "written against Hypixel's real wording, and this is how that wording gets "
+					+ "collected. It reads only; it never clicks, types or sends anything. Nothing "
+					+ "in the mod uses the file yet, so leave it off unless you are collecting")));
 
 	private static final Section SETTINGS = new Section("settings", "Settings that change the list",
 			List.of(
