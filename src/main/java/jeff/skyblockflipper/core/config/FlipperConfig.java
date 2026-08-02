@@ -164,6 +164,16 @@ public final class FlipperConfig {
 	/** Poll the Hypixel API. Turning this off freezes all market data. */
 	public boolean pollingEnabled = true;
 
+	/**
+	 * Record the Hypixel chat lines and menu contents a trade produces, to
+	 * {@code chat-capture.jsonl} beside this file.
+	 *
+	 * <p>Scaffolding for building automatic trade tracking, and off by default: nothing reads the
+	 * file at runtime, it only exists so the parser that will read chat can be written against
+	 * measured text rather than remembered text. Turn it on for a session of real trading, then off.
+	 */
+	public boolean tradeCaptureEnabled = false;
+
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	public static FlipperConfig load(Path file) throws IOException {

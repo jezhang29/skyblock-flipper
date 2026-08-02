@@ -92,7 +92,7 @@ public final class ConfigSchema {
 	}
 
 	public static List<Group> groups() {
-		return List.of(MONEY, SCANNING, DISPLAY, CONNECTION);
+		return List.of(MONEY, SCANNING, DISPLAY, CONNECTION, TRACKING);
 	}
 
 	/** Every entry, in group order. Useful for lookups and for the test that nothing is missing. */
@@ -221,6 +221,14 @@ public final class ConfigSchema {
 					"Unused. Every endpoint this mod reads is public and unauthenticated; the field "
 							+ "exists for profile-aware features that do not exist yet.",
 					c -> c.apiKey, (c, v) -> c.apiKey = v)));
+
+	private static final Group TRACKING = new Group("Tracking", List.of(
+			new Entry.Flag("tradeCaptureEnabled", "Capture trade messages",
+					"Record the Hypixel chat lines and menu contents your trades produce, to "
+							+ "chat-capture.jsonl in the config folder. Nothing reads it at runtime; "
+							+ "it exists so automatic trade tracking can be built against what "
+							+ "Hypixel actually says. Leave it off unless you are collecting.",
+					c -> c.tradeCaptureEnabled, (c, v) -> c.tradeCaptureEnabled = v)));
 
 	private static List<String> zoomOptions() {
 		return List.of(ZOOM_AUTO, "0.5", "0.6", "0.7", "0.8", "0.9", "1.0");

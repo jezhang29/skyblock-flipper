@@ -13,6 +13,7 @@ import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.client.gui.Settings;
+import jeff.skyblockflipper.client.track.CaptureService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
@@ -23,6 +24,7 @@ import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
+import jeff.skyblockflipper.core.track.CaptureLog;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import java.io.IOException;
@@ -117,6 +119,11 @@ public final class FlipCommand {
 				.then(ClientCommands.literal("hud")
 						.executes(ctx -> {
 							toggleHud(ctx.getSource());
+							return 1;
+						}))
+				.then(ClientCommands.literal("capture")
+						.executes(ctx -> {
+							toggleCapture(ctx.getSource());
 							return 1;
 						}))
 				.then(ClientCommands.literal("gui")
@@ -309,6 +316,45 @@ public final class FlipCommand {
 
 		source.sendFeedback(Chat.prefixed(Component.literal("HUD " + (config.hudEnabled ? "on" : "off"))
 				.withStyle(config.hudEnabled ? ChatFormatting.GREEN : ChatFormatting.GRAY)));
+	}
+
+	/**
+	 * Turns the trade-message capture on or off and says where the file is.
+	 *
+	 * <p>Reports the record count on the way out, because the failure mode of a capture session is
+	 * finding out afterwards that nothing was written and having to play it again.
+	 */
+	private static void toggleCapture(FabricClientCommandSource source) {
+		FlipperConfig config = SkyblockFlipperClient.config();
+		config.tradeCaptureEnabled = !config.tradeCaptureEnabled;
+
+		if (!SkyblockFlipperClient.saveConfig()) {
+			source.sendError(Component.literal(
+					"Capture toggled for this session, but the config could not be saved.")
+					.withStyle(ChatFormatting.RED));
+			return;
+		}
+
+		CaptureLog log = CaptureService.log();
+
+		if (config.tradeCaptureEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Capturing trade messages to " + CaptureService.file().getFileName()
+							+ ". Buy, sell, cancel an order, and open your bazaar orders and your "
+							+ "auctions so the menus get recorded too.")
+					.withStyle(ChatFormatting.GREEN)));
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Capture off. " + log.records() + " records this session, "
+						+ (log.bytes() / 1024) + "KB in " + CaptureService.file())
+				.withStyle(ChatFormatting.GRAY)));
+
+		if (log.isFull()) {
+			source.sendError(Component.literal("The capture file hit its size cap and stopped "
+					+ "recording before you turned it off.").withStyle(ChatFormatting.RED));
+		}
 	}
 
 	private static void showStatus(FabricClientCommandSource source) {

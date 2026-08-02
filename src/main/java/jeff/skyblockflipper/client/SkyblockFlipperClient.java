@@ -4,6 +4,7 @@ import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.command.FlipCommand;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.client.hud.FlipHud;
+import jeff.skyblockflipper.client.track.CaptureService;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -56,6 +57,7 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 		CandidateFeed.register();
 		FlipHud.register();
 		FlipKeybinds.register();
+		CaptureService.register();
 		MarketDataService.start();
 
 		// Daemon poller threads would die with the JVM anyway; this just makes shutdown orderly
