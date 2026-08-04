@@ -93,14 +93,21 @@ Key invariants:
 - `Ledger` is the only feedback loop: capture rate (realized/quoted on filled units) and fill
   rate. **Quotes freeze at open time** — never re-derive from the current book. Closing applies
   fees on the same basis the quote used, dispatched by strategy.
-- Mixins: `skyblock-flipper.mixins.json` wired but empty, package
-  `jeff.skyblockflipper.client.mixin` (not created yet), `JAVA_25`, `requireAnnotations: true`.
+- Trade capture (`/flip capture`, `docs/trade-capture.md`) records the chat lines and menu contents
+  a trade produces, so the fill parser can be written against measured text. It splits on the same
+  layering rule as everything else: `core/track` holds the filter, the JSONL log and the records
+  (Minecraft-free, unit-tested); `client/track` holds `CaptureService` and `MenuReader`, which are
+  the only parts that touch the game. Off by default (`tradeCaptureEnabled`), read-only — no clicks,
+  no typed commands, no packets — and nothing consumes the file at runtime. `CaptureLog` stops at
+  32MB rather than rotating, because a session's early records are worth more than its late ones.
+- Mixins: `skyblock-flipper.mixins.json` is wired but empty (no mixin package yet); a first mixin
+  goes in `jeff.skyblockflipper.client.mixin` and must satisfy `requireAnnotations: true`.
 
 ## Hypixel API
 
 All endpoints used (`bazaar`, `auctions`, `auctions_ended`, `resources/skyblock/items`,
-`election`) are public and unauthenticated. `FlipperConfig.apiKey` is unused — don't add
-key-gated paths without a reason.
+`election`) are public and unauthenticated. `FlipperConfig.apiKey` is offered in the settings
+screen but read by nothing — don't add key-gated paths without a reason.
 
 Two verified traps that produce plausible wrong numbers, not errors:
 
@@ -121,15 +128,13 @@ Two verified traps that produce plausible wrong numbers, not errors:
 **Shared item ids are the recurring shape of this bug**, and they fail silently: the sales are
 decoded, the medians are computed, and a whole market prices off one key.
 
-**Signature terms are a settled question — read the `signature-findings` skill before re-opening
-one.** Shipped: `ethermerge`, `winning_bid` (as a ratio input rather than a key term), `item_tier`,
-the `maxed` flag, `dye=`, pet levels, and the `PET`/`RUNE`/`POTION` splits. Measured and rejected:
-`color`, `power_ability_scroll`, the drill parts, `tuned_transmission`, `baseStatBoostPercentage` as
-a raw value, `eman_kills`, `dungeon_item`. **There is no further shared-id-shaped gap on this tape**,
-and `UnreadAttributeProbeTest`'s 100M threshold is the alarm for a new one arriving. The skill
-carries the evidence, the probe methodology, and how to rank the next candidate. **Measure any
-candidate at `DecodedItem.signature()`, never at the bare item id**, which overstates every one of
-these by an order of magnitude or two.
+**Signature terms are a settled question — read the `signature-findings` skill before proposing a
+key term, adding a valuation input, or re-opening a rejected attribute.** It holds which attributes
+ship and which measured out, the evidence for each, the probe methodology, and how to rank the next
+candidate. **There is no further shared-id-shaped gap on this tape**; `UnreadAttributeProbeTest`'s
+100M threshold is the alarm for a new one arriving.
+**Measure any candidate at `DecodedItem.signature()`, never at the bare item id**, which overstates
+every one of these by an order of magnitude or two.
 
 Other rules:
 

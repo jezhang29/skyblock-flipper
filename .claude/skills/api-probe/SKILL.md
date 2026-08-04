@@ -18,7 +18,9 @@ cannot be recovered. Always land the response on disk, then reduce it with
 1. **Fetch to the scratchpad**, not the repo root:
 
    ```bash
-   S=/private/tmp/claude-501/-Users-jzhang-Documents-IntelliJ-skyblock-flipper-26-2/*/scratchpad
+   # The session id in that path varies, and an assignment does not expand a glob —
+   # resolve the newest scratchpad instead of pasting a `*` into the path.
+   S=$(ls -dt /private/tmp/claude-501/-Users-jzhang-Documents-IntelliJ-skyblock-flipper-26-2/*/scratchpad | head -1)
    curl -s "https://api.hypixel.net/v2/skyblock/bazaar" -o "$S/bazaar.json"
    ```
 
@@ -39,22 +41,15 @@ cannot be recovered. Always land the response on disk, then reduce it with
 
 ## Traps that produce wrong numbers rather than errors
 
+The Hypixel section of CLAUDE.md is already in context and carries these in full —
+the hybrid `item_bytes` blob, name collisions, ends-only valuation, and sizing from
+flows rather than book depth. One is worth re-reading at the moment you write the
+query, because it reads backwards:
+
 - **Bazaar sides are inverted from their names.** `buy_summary` is the
   sell-offer/ask side — what you pay to instant-buy, matching
   `quick_status.buyPrice`. `sell_summary` is the buy-order/bid side, matching
-  `quick_status.sellPrice`. Re-read this every time; it reads backwards.
-- **Size plans from flows, never resting book depth.** `buyMovingWeek` = units
-  instantly bought, `sellMovingWeek` = units instantly sold.
-- **`item_bytes` is a hybrid NBT blob** — legacy `{i:[{id,Count,tag,Damage}]}`
-  plus a modern `components` compound. Parse as a generic NBT tree; never build
-  an `ItemStack`. Rarity comes from `components["minecraft:tooltip_style"]`, with
-  a last-lore-line fallback (~4 of 154 live sales need it).
-- **Item names are not unique enough to search on.** 187 of 5549 names are a
-  strict prefix of another (`ENCHANTED_MELON_BLOCK` is "Enchanted Melon";
-  `ENCHANTED_MELON` is "Enchanted Melon Slice"). Match on id, and never
-  synthesise a name from an id.
-- **Valuation trains on `auctions_ended` only** — active listings are
-  contaminated by the mispricings being hunted. BIN sales only, medians not means.
+  `quick_status.sellPrice`.
 
 ## Refreshing fixtures
 
