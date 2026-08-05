@@ -1,12 +1,8 @@
 package jeff.skyblockflipper.core.track;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -31,17 +27,9 @@ class ChatParserTest {
 
 	@BeforeAll
 	static void loadCapture() throws IOException {
-		try (InputStream in = ChatParserTest.class.getResourceAsStream("/trade-capture-sample.jsonl");
-				BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-			Gson gson = new Gson();
-
-			for (String line = reader.readLine(); line != null; line = reader.readLine()) {
-				JsonObject json = gson.fromJson(line, JsonObject.class);
-
-				if (json.get("type").getAsString().equals("chat")) {
-					LINES.add(json.get("text").getAsString());
-				}
-			}
+		try (InputStream in = ChatParserTest.class.getResourceAsStream("/trade-capture-sample.jsonl")) {
+			CaptureSession.read(new InputStreamReader(in, StandardCharsets.UTF_8)).chats()
+					.forEach(chat -> LINES.add(chat.text()));
 		}
 	}
 

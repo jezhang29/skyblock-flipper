@@ -9,5 +9,5 @@ package jeff.skyblockflipper.core.track;
  * @param text the line with its formatting codes already stripped, which is the form a parser will
  *             see
  */
-public record CapturedChat(long at, String text) {
+public record CapturedChat(long at, String text) implements CaptureRecord {
 }

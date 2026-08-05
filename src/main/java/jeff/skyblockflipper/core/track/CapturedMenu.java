@@ -12,7 +12,7 @@ import java.util.List;
  * @param title  menu title with formatting stripped, the only handle there is on which menu this is
  * @param slots  non-empty slots only; a menu is mostly filler glass
  */
-public record CapturedMenu(long at, String title, List<CapturedSlot> slots) {
+public record CapturedMenu(long at, String title, List<CapturedSlot> slots) implements CaptureRecord {
 	public CapturedMenu {
 		slots = List.copyOf(slots);
 	}
