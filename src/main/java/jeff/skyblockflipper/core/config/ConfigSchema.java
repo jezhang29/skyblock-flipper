@@ -110,6 +110,13 @@ public final class ConfigSchema {
 							+ "0.125%, down to 1%. A wrong value silently biases every bazaar margin.",
 					0, 6, 1,
 					c -> c.bazaarFlipperLevel, (c, v) -> c.bazaarFlipperLevel = v),
+			new Entry.Ratio("maxCapitalShare", "Maximum capital per flip",
+					"The largest share of your bankroll any one plan may ask for. Profit per hour "
+							+ "rises with position size, so without this the ranking always prefers "
+							+ "the biggest plan your coins allow - it once sized a single order at "
+							+ "99.7% of a 250M bankroll. 0.25 leaves room for four positions at once.",
+					0.01d, 1.0d, 0.05d,
+					c -> c.maxCapitalShare, (c, v) -> c.maxCapitalShare = v),
 			new Entry.LongRange("minProfitPerFlip", "Minimum profit per flip",
 					"Hide any candidate whose expected net profit is below this.",
 					0L, 1_000_000_000L, 50_000L,

@@ -41,7 +41,8 @@ public final class Guide {
 					+ "ranked on. Not margin: a 15% spread on something that trades four units a "
 					+ "day is worth less than 2% on something moving 500k an hour"),
 			new Term("Capital", "Coins tied up to run the plan for one hour. Never more than the "
-					+ "bankroll in your config"),
+					+ "maximum capital per flip in your settings, which is a share of your bankroll "
+					+ "rather than all of it"),
 			new Term("ROC", "Return on capital: profit divided by capital, as a percent. How hard "
 					+ "the coins work rather than how many coins come back. A 10% ROC flip beats a "
 					+ "1% one at equal profit per hour, because it leaves the rest of your bankroll "

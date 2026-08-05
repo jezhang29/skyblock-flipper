@@ -168,7 +168,9 @@ public final class NpcFlipStrategy implements FlipStrategy {
 			return null;
 		}
 
-		long budget = context.bankroll();
+		// Capped per flip, like every other sizing decision: an instant-buy route walking the
+		// book is the easiest way to spend everything on one product.
+		long budget = context.maxCapitalPerFlip();
 		long depthUnits = 0L;
 		double spend = 0.0d;
 
@@ -241,7 +243,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				ORDER_FILL_SHARE);
 
 		double fillPerHour = fill.buyUnitsPerHour();
-		long affordable = (long) (context.bankroll() / bid);
+		long affordable = (long) (context.maxCapitalPerFlip() / bid);
 		long units = Math.min(affordable, Math.min(UNITS_PER_HOUR, (long) fillPerHour));
 
 		if (units <= 0L) {

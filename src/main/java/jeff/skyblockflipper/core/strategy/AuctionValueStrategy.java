@@ -52,7 +52,9 @@ public final class AuctionValueStrategy implements FlipStrategy {
 		long price = priced.listing().price();
 		ValueEstimate value = priced.value();
 
-		if (price > context.bankroll()) {
+		// A single listing is one indivisible position, so the per-flip cap is the right ceiling:
+		// a 200M BIN out of a 250M bankroll is affordable and still not a sane thing to suggest.
+		if (price > context.maxCapitalPerFlip()) {
 			return Optional.empty();
 		}
 

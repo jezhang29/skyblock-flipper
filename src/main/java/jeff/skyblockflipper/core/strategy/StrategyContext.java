@@ -31,6 +31,8 @@ import java.util.List;
  *                         back. Plans are sized on what fills inside it, so it is a statement of
  *                         patience rather than a filter: it changes what ranks highest, not what is
  *                         allowed through
+ * @param maxCapitalShare  the largest fraction of {@link #bankroll()} one plan may ask for. 1.0
+ *                         means no cap, which is what every caller with no opinion gets
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -42,10 +44,14 @@ public record StrategyContext(
 		long minProfitPerFlip,
 		double minConfidence,
 		double maxAdverseDrift,
-		Duration fillHorizon
+		Duration fillHorizon,
+		double maxCapitalShare
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
+
+	/** No cap, which is the behaviour every caller had before the cap existed. */
+	public static final double UNCAPPED = 1.0d;
 
 	public StrategyContext {
 		underpriced = List.copyOf(underpriced);
@@ -53,6 +59,21 @@ public record StrategyContext(
 		if (fillHorizon == null || fillHorizon.isZero() || fillHorizon.isNegative()) {
 			fillHorizon = DEFAULT_FILL_HORIZON;
 		}
+
+		maxCapitalShare = maxCapitalShare <= 0.0d ? UNCAPPED : Math.min(maxCapitalShare, UNCAPPED);
+	}
+
+	/**
+	 * The most one plan may ask for, which is what a strategy should size against rather than the
+	 * whole bankroll.
+	 *
+	 * <p>Measured need, from live play on 2026-08-04: a Recombobulator 3000 plan asked for
+	 * 249,212,105 of a 250,000,000 bankroll - 99.7% of everything on one item with a 25 unit order,
+	 * on a book that then failed to fill a single unit. Nothing in the ranking pushes back on that,
+	 * because profit per hour rises with size and the only ceiling was affordability.
+	 */
+	public long maxCapitalPerFlip() {
+		return Math.max(1L, Math.round(bankroll * maxCapitalShare));
 	}
 
 	/**
@@ -63,7 +84,15 @@ public record StrategyContext(
 			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
 			double minConfidence, double maxAdverseDrift) {
 		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
-				maxAdverseDrift, DEFAULT_FILL_HORIZON);
+				maxAdverseDrift, DEFAULT_FILL_HORIZON, UNCAPPED);
+	}
+
+	/** The shape before a per-flip capital cap existed, for callers that do not want one. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, UNCAPPED);
 	}
 
 	/**
