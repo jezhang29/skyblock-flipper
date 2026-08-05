@@ -1,17 +1,16 @@
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
-import jeff.skyblockflipper.core.item.ItemDecoder;
-import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.valuation.backtest.Backtest;
+import jeff.skyblockflipper.core.valuation.backtest.CounterfactualKeying;
+import jeff.skyblockflipper.core.valuation.backtest.TapeFixture;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,110 +24,71 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * millions. That is not a slightly noisy valuation; it is a machine for generating fake snipes,
  * because every cheap rune looks like it is listed far under "its" value.
  *
- * <p>This holds out the newest sales and prices them from the older ones both ways, which is the
- * only comparison that means anything: a key always fits the sales it was built from.
+ * <p>Splitting one key per rarity into one per rune and tier leaves fewer sales behind each, so fewer
+ * held-out runes get quoted at all. That is the trade being made on purpose. Declining to quote a
+ * rune costs a flip that was never real; quoting it off a different rune's sales costs coins.
  *
- * <p>Splitting one key per rarity into one per rune leaves fewer sales behind each, so fewer
- * held-out runes get quoted at all - measured at 461 of 636 against 582. That is the trade being
- * made on purpose. Declining to quote a rune costs a flip that was never real; quoting it off a
- * different rune's sales costs coins.
+ * <p>Re-measured against the model that ships. The original version of this test scored a hand-built
+ * pair of maps and asserted on the median error alone, which the potion split later showed to be the
+ * wrong metric for a signature term - a pooled median is accidentally right about whatever dominates
+ * its count. The tail is asserted first here.
+ *
+ * <p>On a 24h holdout of the 128 ids that ever carry a rune: fake snipes 857 unread against 496
+ * keyed, p90 |log err| 0.981 against 0.693, median 0.155 against 0.143, and coverage 11,259 against
+ * 11,143. Runed sales themselves go from 1,478 priced to 1,371. The gain is real and smaller than the
+ * rune-sales-only figures the finding was first recorded with, which is what including the item ids'
+ * whole market does to any per-attribute number.
  */
 @EnabledIfSystemProperty(named = "skyblockflipper.tapeBacktest", matches = "true")
 class RuneSignatureBacktestTest {
-	private static final String DEFAULT_TAPE_DIR = "run/config/skyblock-flipper/tape";
+	private static final long HOLDOUT_HOURS = 24L;
 
-	private static final long HOLDOUT_HOURS = 6L;
-	private static final int ALL_DAYS = 365;
-	private static final int MIN_SAMPLES = ValueEstimate.MIN_SAMPLES;
+	/** Longer than any tape, so training is the unbounded replay these findings were measured on. */
+	private static final Duration WHOLE_TAPE = Duration.ofDays(3650);
+
+	private static final String RUNES = "runes=";
 
 	@Test
 	void readingTheRuneMakesRunesPriceable() throws Exception {
-		SalesTape tape = new SalesTape(Path.of(
-				System.getProperty("skyblockflipper.tapeDir", DEFAULT_TAPE_DIR)), 3650);
+		Set<String> ids = idsThatEverCarryARune();
+		long cutoff = TapeFixture.newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
 
-		List<Long> stamps = new ArrayList<>();
-		tape.forEachRecent(ALL_DAYS, sale -> stamps.add(sale.timestamp()));
-		assertTrue(!stamps.isEmpty(), "no sales on the tape at " + DEFAULT_TAPE_DIR);
+		Backtest.Result pooled = Backtest.holdout(CounterfactualKeying.withoutTerm(RUNES),
+				cutoff, WHOLE_TAPE, item -> ids.contains(item.skyblockId()));
+		Backtest.Result keyed = Backtest.holdout(Keying.PRODUCTION,
+				cutoff, WHOLE_TAPE, item -> ids.contains(item.skyblockId()));
 
-		long newest = stamps.stream().mapToLong(Long::longValue).max().orElseThrow();
-		long cutoff = newest - HOLDOUT_HOURS * 3_600_000L;
+		System.out.printf("%n%,d item ids ever carry a rune%n", ids.size());
+		System.out.printf("held-out sales of those ids:%n  %-26s %s%n  %-26s %s%n",
+				"rune unread", pooled, "with the rune keyed", keyed);
+		System.out.printf("  runed sales priced: %,d unread, %,d keyed%n",
+				pooled.count(item -> !item.runes().isEmpty()),
+				keyed.count(item -> !item.runes().isEmpty()));
 
-		Map<String, List<Double>> byRarity = new HashMap<>();
-		Map<String, List<Double>> bySignature = new HashMap<>();
-		List<double[]> holdout = new ArrayList<>();
-		List<String> holdoutRarityKeys = new ArrayList<>();
-		List<String> holdoutSignatures = new ArrayList<>();
+		// The tail, which is what the term exists for: a Gem rune quoted off Music rune sales is a
+		// fake snipe, and a fake snipe is the only error that costs coins.
+		assertTrue(keyed.overvaluedBy(2.0d) * 4 < pooled.overvaluedBy(2.0d) * 3,
+				"keying the rune is expected to remove a large share of the fake snipes, but sales "
+						+ "quoted at 2x or more of what they fetched went from "
+						+ pooled.overvaluedBy(2.0d) + " to " + keyed.overvaluedBy(2.0d));
 
-		tape.forEachRecent(ALL_DAYS, sale -> {
-			if (!sale.bin() || sale.price() <= 0L) {
-				return;
+		// And the coverage it costs, which is real and deliberate. This bound is loose: the point is
+		// that the split does not cost the rune market its valuations wholesale.
+		assertTrue(keyed.priced().size() * 2 > pooled.priced().size(), "the rune split is expected to "
+				+ "cost coverage and not to halve it, but priced sales went from "
+				+ pooled.priced().size() + " to " + keyed.priced().size());
+	}
+
+	private static Set<String> idsThatEverCarryARune() throws Exception {
+		Set<String> ids = new HashSet<>();
+
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			if (!item.runes().isEmpty()) {
+				ids.add(item.skyblockId());
 			}
-
-			ItemDecoder.decode(sale.itemBytes()).ifPresent(item -> {
-				if (item.runes().isEmpty()) {
-					return;
-				}
-
-				double unitPrice = (double) sale.price() / Math.max(1, item.count());
-				// The key the signature used to produce: identity dropped, rarity only.
-				String rarityKey = item.skyblockId() + "|" + item.rarity().name();
-
-				if (sale.timestamp() < cutoff) {
-					byRarity.computeIfAbsent(rarityKey, k -> new ArrayList<>()).add(unitPrice);
-					bySignature.computeIfAbsent(item.signature(), k -> new ArrayList<>()).add(unitPrice);
-				} else {
-					holdout.add(new double[] {unitPrice});
-					holdoutRarityKeys.add(rarityKey);
-					holdoutSignatures.add(item.signature());
-				}
-			});
 		});
 
-		List<Double> rarityErrors = new ArrayList<>();
-		List<Double> signatureErrors = new ArrayList<>();
-
-		for (int i = 0; i < holdout.size(); i++) {
-			double actual = holdout.get(i)[0];
-			error(median(byRarity.get(holdoutRarityKeys.get(i))), actual).ifPresent(rarityErrors::add);
-			error(median(bySignature.get(holdoutSignatures.get(i))), actual).ifPresent(signatureErrors::add);
-		}
-
-		double withoutRune = medianError(rarityErrors);
-		double withRune = medianError(signatureErrors);
-
-		System.out.printf("%nrune signature backtest: %,d held-out rune sales in the newest %dh%n",
-				holdout.size(), HOLDOUT_HOURS);
-		System.out.printf("  keyed on id and rarity alone: %,d priced, median |log err| %.3f%n",
-				rarityErrors.size(), withoutRune);
-		System.out.printf("  keyed on the rune and tier:   %,d priced, median |log err| %.3f%n",
-				signatureErrors.size(), withRune);
-
-		// A log error of 1.0 is being wrong by a factor of e; the rarity-only key runs far past that,
-		// which is what pricing a Gem rune off Music rune sales looks like.
-		assertTrue(withRune < withoutRune / 2.0d, "reading the rune should at least halve the error, "
-				+ "but it went from " + withoutRune + " to " + withRune);
-	}
-
-	/** Empty when the key had too few sales for the model to quote it at all. */
-	private static java.util.OptionalDouble error(java.util.OptionalDouble estimate, double actual) {
-		if (estimate.isEmpty() || estimate.getAsDouble() <= 0.0d || actual <= 0.0d) {
-			return java.util.OptionalDouble.empty();
-		}
-
-		return java.util.OptionalDouble.of(Math.abs(Math.log(estimate.getAsDouble() / actual)));
-	}
-
-	private static java.util.OptionalDouble median(List<Double> values) {
-		if (values == null || values.size() < MIN_SAMPLES) {
-			return java.util.OptionalDouble.empty();
-		}
-
-		List<Double> sorted = values.stream().sorted().toList();
-		return java.util.OptionalDouble.of(sorted.get(sorted.size() / 2));
-	}
-
-	private static double medianError(List<Double> errors) {
-		List<Double> sorted = errors.stream().sorted().toList();
-		return sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() / 2);
+		assertTrue(!ids.isEmpty(), "no runed sales on the tape at " + TapeFixture.tapeDir());
+		return ids;
 	}
 }

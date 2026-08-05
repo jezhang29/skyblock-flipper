@@ -1,16 +1,15 @@
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
-import jeff.skyblockflipper.core.item.ItemDecoder;
-import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.nbt.NbtCompound;
-import jeff.skyblockflipper.core.nbt.NbtReader;
-import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.valuation.backtest.Backtest;
+import jeff.skyblockflipper.core.valuation.backtest.TapeFixture;
+import jeff.skyblockflipper.core.valuation.backtest.UnreadTerms;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,33 +39,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>And the answer is the same as the scroll's, for a different reason. The scroll disappeared
  * because scrolled sales dominated their own key. The parts disappear because <b>the drill market is
  * tiny and its parts are near-unique</b>: 405 sales spread over 69 distinct part configurations and
- * 314 production signatures, so a part term produces cells of one. On a 24 hour holdout the pooled
- * key prices 5 parted sales and is within 1.5x on 4 of them; keying the parts prices <b>zero</b>, and
- * fixes not one of the 10 overvaluations on the way.
+ * 314 production signatures, so a part term produces cells of one.
  *
- * <p>The pooling is also not doing harm where it can be acted on. Of the 75 production signatures
- * that hold more than one drill configuration, 52 never reach {@link ValueEstimate#MIN_SAMPLES} and
- * are quoted by nothing at all. Among the 23 that are quoted, <b>not one values an unparted drill at
- * 2x or more of what unparted drills of it fetch</b> - the two pools that disagree by 2x or more do
- * it in the harmless direction, quoting a built drill below its worth.
+ * <p>Re-measured against the model that ships rather than the hand-built copy the finding was first
+ * taken on - see {@link Backtest} for what the copy got wrong - and the rejection holds, more flatly
+ * than before. On a 24h holdout of the sixteen ids that ever carry a part: unread prices 876 sales of
+ * 1,680 with 10 fake snipes, and the full part term and a single modified bit both price 860 with the
+ * same 10, at an identical median (0.046) and p90 (0.212). The 16 valuations lost are the parted
+ * sales themselves. Not one held-out parted sale gets a quote under either term.
+ *
+ * <p>The pooling is also not doing harm where it can be acted on. Of the production signatures that
+ * hold more than one drill configuration, most never reach {@link ValueEstimate#MIN_SAMPLES} and are
+ * quoted by nothing at all. Among those that are quoted, <b>not one values an unparted drill at 2x or
+ * more of what unparted drills of it fetch</b> - the pools that disagree by 2x or more do it in the
+ * harmless direction, quoting a built drill below its worth.
  */
 @EnabledIfSystemProperty(named = "skyblockflipper.tapeBacktest", matches = "true")
 class DrillPartBacktestTest {
-	private static final String DEFAULT_TAPE_DIR = "run/config/skyblock-flipper/tape";
-	private static final int ALL_DAYS = 365;
 	private static final long HOLDOUT_HOURS = 24L;
 
-	private static final String NONE = "(none)";
+	/** Longer than any tape, so training is the unbounded replay these findings were measured on. */
+	private static final Duration WHOLE_TAPE = Duration.ofDays(3650);
 
-	/** How a candidate part term reaches the signature, if at all. */
-	private enum Keying {
-		/** Today: the parts are not read, so a drill is keyed by its reforge, enchants and gems. */
-		POOLED,
-		/** Every part, the polarvoid count and the coating, the way a full attribute term would. */
-		EXACT,
-		/** One bit: something was installed. The cheapest term that could still split a pool. */
-		FLAG
-	}
+	private static final String NONE = "(none)";
 
 	/**
 	 * The shape of the drill market, which is most of the argument.
@@ -90,8 +85,8 @@ class DrillPartBacktestTest {
 		long[] coins = {0L};
 		int[] bare = {0};
 
-		forEachSale((item, extra, timestamp, unitPrice) -> {
-			String term = drillTerm(extra);
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			String term = drillTerm(item, extra);
 			int[] counts = byId.computeIfAbsent(item.skyblockId(), k -> new int[2]);
 
 			if (term.isEmpty()) {
@@ -105,7 +100,9 @@ class DrillPartBacktestTest {
 			byTerm.merge(term, 1, Integer::sum);
 			signatures.add(item.signature());
 
-			if (bareApartFromParts(item)) {
+			// A part is not a bareness clause, so production's own answer is the count wanted here:
+			// these are the sales a part term would eject from the coarse index.
+			if (Keying.PRODUCTION.isBare(item)) {
 				counts[1]++;
 				bare[0]++;
 			}
@@ -127,7 +124,7 @@ class DrillPartBacktestTest {
 			}
 		});
 
-		assertTrue(parted > 0, "no drill part sales on the tape at " + tapeDir());
+		assertTrue(parted > 0, "no drill part sales on the tape at " + TapeFixture.tapeDir());
 
 		// The reason a part term cannot be priced: it is nearly an identifier. Sixty-nine
 		// configurations over 405 sales is six sales each before the signature they sit under splits
@@ -138,54 +135,63 @@ class DrillPartBacktestTest {
 	}
 
 	/**
-	 * Keying the parts costs every parted valuation and fixes nothing.
+	 * Keying the parts costs every parted valuation and fixes nothing, against the model that ships.
 	 *
 	 * <p>Trains on everything older than the newest 24 hours and prices what is in it, restricted to
 	 * the sixteen item ids that ever carry a part. Three arms: today's key, today's key plus the full
 	 * part term, and today's key plus a single bit saying something was installed.
 	 *
-	 * <p>Today's key prices 5 parted sales and lands within 1.5x on 4. The exact term prices 0 - each
-	 * held-out parted sale is the only one of its configuration - and the flag prices 0 too, which is
-	 * the interesting half: even one bit is enough to shatter these pools, because the parted sales
-	 * under a given drill signature are usually one or two.
-	 *
-	 * <p>Neither arm removes a single one of the 10 overvaluations, so there is nothing on the other
-	 * side of the ledger to weigh the lost coverage against.
+	 * <p>The flag arm is the interesting half. Even one bit shatters these pools, because the parted
+	 * sales under a given drill signature are usually one or two - so the cheapest term that could
+	 * have worked does not either.
 	 */
 	@Test
 	void keyingThePartsCostsEveryPartedValuationAndFixesNothing() throws Exception {
 		Set<String> drillIds = idsThatEverCarryAPart();
-		long cutoff = newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
+		long cutoff = TapeFixture.newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
 
-		Scored pooled = score(drillIds, cutoff, Keying.POOLED);
-		Scored exact = score(drillIds, cutoff, Keying.EXACT);
-		Scored flag = score(drillIds, cutoff, Keying.FLAG);
+		UnreadTerms pooledTerms = new UnreadTerms(DrillPartBacktestTest::drillTerm);
+		UnreadTerms exactTerms = new UnreadTerms(DrillPartBacktestTest::drillTerm);
+		UnreadTerms flagTerms = new UnreadTerms(
+				(item, extra) -> drillTerm(item, extra).isEmpty() ? "" : "drill=modified");
+
+		Backtest.Result pooled = Backtest.holdout(Keying.PRODUCTION, cutoff, WHOLE_TAPE,
+				item -> drillIds.contains(item.skyblockId()), pooledTerms);
+		Backtest.Result exact = Backtest.holdout(exactTerms.keying(), cutoff, WHOLE_TAPE,
+				item -> drillIds.contains(item.skyblockId()), exactTerms);
+		Backtest.Result flag = Backtest.holdout(flagTerms.keying(), cutoff, WHOLE_TAPE,
+				item -> drillIds.contains(item.skyblockId()), flagTerms);
 
 		System.out.printf("%n%,d item ids ever carry a drill part%n", drillIds.size());
 		System.out.printf("held-out sales of those ids:%n  %-26s %s%n  %-26s %s%n  %-26s %s%n",
 				"today (parts unread)", pooled, "with the full part term", exact,
 				"with a modified flag only", flag);
+		System.out.printf("  parted sales priced: %,d unread (%,d within 1.5x), %,d with the full term, "
+						+ "%,d with the flag%n",
+				pooled.count(pooledTerms::carries), pooled.within(1.5d, pooledTerms::carries),
+				exact.count(exactTerms::carries), flag.count(flagTerms::carries));
 
-		assertEquals(0, exact.partedPriced(), "the exact part term is expected to price no parted "
-				+ "sale at all, since each configuration is near-unique");
+		assertEquals(0, exact.count(exactTerms::carries), "the exact part term is expected to price no "
+				+ "parted sale at all, since each configuration is near-unique");
 
 		// The flag is the cheapest term that could work, and it is measured rather than assumed away:
 		// if the parted sales under a signature were many, one bit would split them cleanly.
-		assertTrue(flag.partedPriced() < pooled.partedPriced(), "even a single modified bit is "
-				+ "expected to cost parted valuations, but it priced " + flag.partedPriced()
-				+ " against " + pooled.partedPriced());
+		assertTrue(flag.count(flagTerms::carries) < pooled.count(pooledTerms::carries),
+				"even a single modified bit is expected to cost parted valuations, but it priced "
+						+ flag.count(flagTerms::carries) + " against " + pooled.count(pooledTerms::carries));
 
 		// The benefit side, which is empty. Any fake snipe either term removes would show up here.
-		assertEquals(pooled.overvalued(), exact.overvalued(), "the exact part term is expected to fix "
-				+ "no overvaluation, because no quotable pool overvalues an unparted drill");
-		assertEquals(pooled.overvalued(), flag.overvalued(), "the modified flag is expected to fix no "
-				+ "overvaluation either");
+		assertEquals(pooled.overvaluedBy(2.0d), exact.overvaluedBy(2.0d), "the exact part term is "
+				+ "expected to fix no overvaluation, because no quotable pool overvalues an unparted "
+				+ "drill");
+		assertEquals(pooled.overvaluedBy(2.0d), flag.overvaluedBy(2.0d), "the modified flag is expected "
+				+ "to fix no overvaluation either");
 
 		// And the pooled key is actively right about the sales in question, not merely no worse.
-		assertTrue(pooled.partedWithinHalf() * 4 > pooled.partedPriced() * 3,
+		assertTrue(pooled.within(1.5d, pooledTerms::carries) * 4 > pooled.count(pooledTerms::carries) * 3,
 				"the pooled key is expected to value most parted sales within 1.5x of what they "
-						+ "fetched, but only " + pooled.partedWithinHalf() + " of "
-						+ pooled.partedPriced() + " landed there");
+						+ "fetched, but only " + pooled.within(1.5d, pooledTerms::carries) + " of "
+						+ pooled.count(pooledTerms::carries) + " landed there");
 	}
 
 	/**
@@ -208,9 +214,9 @@ class DrillPartBacktestTest {
 	void quotablePoolsDoNotOvervalueTheirUnpartedDrills() throws Exception {
 		Map<String, Map<String, List<Double>>> perSignature = new HashMap<>();
 
-		forEachSale((item, extra, timestamp, unitPrice) -> perSignature
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> perSignature
 				.computeIfAbsent(item.signature(), k -> new TreeMap<>())
-				.computeIfAbsent(orNone(drillTerm(extra)), k -> new ArrayList<>())
+				.computeIfAbsent(orNone(drillTerm(item, extra)), k -> new ArrayList<>())
 				.add(unitPrice));
 
 		int mixed = 0;
@@ -227,10 +233,9 @@ class DrillPartBacktestTest {
 			}
 
 			mixed++;
-			List<Double> all = variants.values().stream().flatMap(List::stream).toList();
-
 			// The pool as production sees it: one median, and only if it clears MIN_SAMPLES.
-			OptionalDouble quoted = median(all, ValueEstimate.MIN_SAMPLES);
+			OptionalDouble quoted = Backtest.quotableMedian(
+					variants.values().stream().flatMap(List::stream).toList());
 
 			if (quoted.isEmpty()) {
 				continue;
@@ -241,7 +246,7 @@ class DrillPartBacktestTest {
 			double worst = 1.0d;
 
 			for (Map.Entry<String, List<Double>> variant : variants.entrySet()) {
-				double med = median(variant.getValue(), 1).orElseThrow();
+				double med = TapeFixture.median(variant.getValue(), 1).orElseThrow();
 				double ratio = quoted.getAsDouble() / med;
 				worst = Math.max(worst, Math.max(ratio, 1.0d / ratio));
 
@@ -280,98 +285,6 @@ class DrillPartBacktestTest {
 	}
 
 	/**
-	 * @param partedPriced     held-out sales carrying a part that got a valuation at all
-	 * @param partedWithinHalf of those, the ones valued between 0.67x and 1.5x of what they fetched
-	 * @param overvalued       sales valued at 2x or more of what they fetched, the fake snipes
-	 */
-	private record Scored(int priced, int partedPriced, int partedWithinHalf, int overvalued,
-			double median, double p90) {
-		@Override
-		public String toString() {
-			return String.format("%,5d priced (%,d parted, %,d of them within 1.5x), %,d over 2x, "
-					+ "median |log err| %.3f, p90 %.3f",
-					priced, partedPriced, partedWithinHalf, overvalued, median, p90);
-		}
-	}
-
-	/** Replays the tape into the two indices production builds, then prices the holdout from them. */
-	private static Scored score(Set<String> drillIds, long cutoff, Keying keying) throws Exception {
-		Map<String, List<Double>> exact = new HashMap<>();
-		Map<String, List<Double>> coarse = new HashMap<>();
-		List<Held> holdout = new ArrayList<>();
-
-		forEachSale((item, extra, timestamp, unitPrice) -> {
-			if (!drillIds.contains(item.skyblockId())) {
-				return;
-			}
-
-			String parts = drillTerm(extra);
-			String term = switch (keying) {
-				case POOLED -> "";
-				case EXACT -> parts.isEmpty() ? "" : "|" + parts;
-				case FLAG -> parts.isEmpty() ? "" : "|drill=modified";
-			};
-			// The bare guard: with a part term in the key, a built drill is no longer an unmodified
-			// item, so it leaves the coarse index the way a starred or dyed one does.
-			boolean bare = bareApartFromParts(item) && term.isEmpty();
-			String coarseKey = ActiveListing.coarseKey(item.displayName(), item.rarity());
-
-			if (timestamp >= cutoff) {
-				holdout.add(new Held(unitPrice, item.signature() + term, bare ? coarseKey : "", parts));
-				return;
-			}
-
-			exact.computeIfAbsent(item.signature() + term, k -> new ArrayList<>()).add(unitPrice);
-
-			if (bare) {
-				coarse.computeIfAbsent(coarseKey, k -> new ArrayList<>()).add(unitPrice);
-			}
-		});
-
-		List<Double> errors = new ArrayList<>();
-		int partedPriced = 0;
-		int partedWithinHalf = 0;
-		int overvalued = 0;
-
-		for (Held sale : holdout) {
-			OptionalDouble estimate = median(exact.get(sale.key()), ValueEstimate.MIN_SAMPLES);
-
-			if (estimate.isEmpty() && !sale.coarseKey().isEmpty()) {
-				estimate = median(coarse.get(sale.coarseKey()), ValueEstimate.MIN_SAMPLES);
-			}
-
-			if (estimate.isEmpty() || estimate.getAsDouble() <= 0.0d || sale.price() <= 0.0d) {
-				continue;
-			}
-
-			double ratio = estimate.getAsDouble() / sale.price();
-			errors.add(Math.abs(Math.log(ratio)));
-
-			if (ratio >= 2.0d) {
-				overvalued++;
-			}
-
-			if (!sale.parts().isEmpty()) {
-				partedPriced++;
-
-				if (ratio > 2.0d / 3.0d && ratio < 1.5d) {
-					partedWithinHalf++;
-				}
-			}
-		}
-
-		List<Double> sorted = errors.stream().sorted().toList();
-
-		return new Scored(sorted.size(), partedPriced, partedWithinHalf, overvalued,
-				sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() / 2),
-				sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() * 9 / 10));
-	}
-
-	/** A held-out sale, the key it would be priced under, and the coarse key if it is eligible. */
-	private record Held(double price, String key, String coarseKey, String parts) {
-	}
-
-	/**
 	 * Which ids the question is even about.
 	 *
 	 * <p>A separate pass over the tape rather than a field on shared state: the tape is streamed a
@@ -380,13 +293,13 @@ class DrillPartBacktestTest {
 	private static Set<String> idsThatEverCarryAPart() throws Exception {
 		Set<String> ids = new HashSet<>();
 
-		forEachSale((item, extra, timestamp, unitPrice) -> {
-			if (!drillTerm(extra).isEmpty()) {
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			if (!drillTerm(item, extra).isEmpty()) {
 				ids.add(item.skyblockId());
 			}
 		});
 
-		assertTrue(!ids.isEmpty(), "no drill part sales on the tape at " + tapeDir());
+		assertTrue(!ids.isEmpty(), "no drill part sales on the tape at " + TapeFixture.tapeDir());
 		return ids;
 	}
 
@@ -403,7 +316,7 @@ class DrillPartBacktestTest {
 	 * {@code divan_powder_coating} is a flag. They ride along here because they are the same
 	 * question: things bought and installed that the signature does not currently see.
 	 */
-	private static String drillTerm(NbtCompound extra) {
+	private static String drillTerm(DecodedItem item, NbtCompound extra) {
 		StringJoiner term = new StringJoiner(",");
 		part(extra, "engine").ifPresent(id -> term.add("engine=" + id));
 		part(extra, "fuel_tank").ifPresent(id -> term.add("tank=" + id));
@@ -432,76 +345,6 @@ class DrillPartBacktestTest {
 		return term.isEmpty() ? NONE : term;
 	}
 
-	/** {@link FairValueModel}'s admission test for the coarse index, minus the parts themselves. */
-	private static boolean bareApartFromParts(DecodedItem item) {
-		return !item.isPet()
-				&& !item.isPotion()
-				&& !item.hasQuality()
-				&& !item.isDyed()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty()
-				&& item.runes().isEmpty();
-	}
-
-	/** The decoded item, its raw {@code ExtraAttributes}, when it sold, and its unit price. */
-	private interface SaleVisitor {
-		void accept(DecodedItem item, NbtCompound extra, long timestamp, double unitPrice);
-	}
-
-	private static void forEachSale(SaleVisitor visitor) throws Exception {
-		tape().forEachRecent(ALL_DAYS, sale -> {
-			if (!sale.bin() || sale.price() <= 0L) {
-				return;
-			}
-
-			NbtCompound root;
-
-			try {
-				root = NbtReader.readItemBytes(sale.itemBytes());
-			} catch (Exception e) {
-				return;
-			}
-
-			if (!(root.list("i").stream().findFirst().orElse(null) instanceof NbtCompound stack)) {
-				return;
-			}
-
-			NbtCompound extra = stack.child("tag").child("ExtraAttributes");
-
-			ItemDecoder.fromRoot(root).ifPresent(item -> visitor.accept(item, extra, sale.timestamp(),
-					(double) sale.price() / Math.max(1, item.count())));
-		});
-	}
-
-	private static long newestTimestamp() throws Exception {
-		long[] newest = {0L};
-		tape().forEachRecent(ALL_DAYS, sale -> newest[0] = Math.max(newest[0], sale.timestamp()));
-
-		assertTrue(newest[0] > 0L, "no sales on the tape at " + tapeDir());
-		return newest[0];
-	}
-
-	private static SalesTape tape() {
-		return new SalesTape(Path.of(tapeDir()), 3650);
-	}
-
-	private static String tapeDir() {
-		return System.getProperty("skyblockflipper.tapeDir", DEFAULT_TAPE_DIR);
-	}
-
-	private static OptionalDouble median(List<Double> values, int minSamples) {
-		if (values == null || values.size() < minSamples) {
-			return OptionalDouble.empty();
-		}
-
-		List<Double> sorted = values.stream().sorted().toList();
-		return OptionalDouble.of(sorted.get(sorted.size() / 2));
-	}
-
 	private static String spread(List<Double> prices) {
 		if (prices == null || prices.isEmpty()) {
 			return String.format("%34s", "-");
@@ -509,7 +352,7 @@ class DrillPartBacktestTest {
 
 		return String.format("%,10.0f %,11.0f %,11.0f",
 				prices.stream().mapToDouble(Double::doubleValue).min().orElse(0),
-				median(prices, 1).orElse(0),
+				TapeFixture.median(prices, 1).orElse(0),
 				prices.stream().mapToDouble(Double::doubleValue).max().orElse(0));
 	}
 

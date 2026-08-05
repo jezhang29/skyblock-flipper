@@ -37,18 +37,20 @@ public final class FairValueModel {
 	private final Map<String, ValueEstimate> perBid;
 	private final int salesConsidered;
 	private final Duration window;
+	private final Keying keying;
 
 	private FairValueModel(Map<String, ValueEstimate> exact, Map<String, ValueEstimate> coarse,
-			Map<String, ValueEstimate> perBid, int salesConsidered, Duration window) {
+			Map<String, ValueEstimate> perBid, int salesConsidered, Duration window, Keying keying) {
 		this.exact = Map.copyOf(exact);
 		this.coarse = Map.copyOf(coarse);
 		this.perBid = Map.copyOf(perBid);
 		this.salesConsidered = salesConsidered;
 		this.window = window;
+		this.keying = keying;
 	}
 
 	public static FairValueModel empty() {
-		return new FairValueModel(Map.of(), Map.of(), Map.of(), 0, Duration.ZERO);
+		return new FairValueModel(Map.of(), Map.of(), Map.of(), 0, Duration.ZERO, Keying.PRODUCTION);
 	}
 
 	/**
@@ -63,7 +65,18 @@ public final class FairValueModel {
 	}
 
 	public static Builder builder(Instant now, Duration window) {
-		return new Builder(now, window);
+		return new Builder(now, window, Keying.PRODUCTION);
+	}
+
+	/**
+	 * Trains under a keying other than the one that ships.
+	 *
+	 * <p>Only a backtest has any business calling this. The model it returns must be read back
+	 * through {@link #valueOf(DecodedItem)}, which uses the same keying it was built with - pricing a
+	 * holdout under one keying against an index built under another measures nothing.
+	 */
+	public static Builder builder(Instant now, Duration window, Keying keying) {
+		return new Builder(now, window, keying);
 	}
 
 	/**
@@ -86,12 +99,14 @@ public final class FairValueModel {
 		private final Map<String, List<Double>> bidRatios = new HashMap<>();
 		private final long cutoff;
 		private final Duration window;
+		private final Keying keying;
 
 		private int considered;
 
-		private Builder(Instant now, Duration window) {
+		private Builder(Instant now, Duration window, Keying keying) {
 			this.cutoff = now.minus(window).toEpochMilli();
 			this.window = window;
+			this.keying = keying;
 		}
 
 		public void add(EndedAuction sale) {
@@ -107,18 +122,32 @@ public final class FairValueModel {
 
 			DecodedItem item = decoded.get();
 			// Stacked sales are priced for the stack; everything downstream works per unit.
-			double unitPrice = (double) sale.price() / Math.max(1, item.count());
+			add(item, (double) sale.price() / Math.max(1, item.count()), sale.timestamp());
+		}
+
+		/**
+		 * Accounts for a sale already decoded and already reduced to a unit price.
+		 *
+		 * <p>Split out for the one caller that has to decode a sale before it knows whether to train
+		 * on it - a backtest filtering to the item ids that carry the attribute under measurement.
+		 * Feeding it the raw sale instead would decode every blob twice, and a decode is the
+		 * expensive part of a tape replay.
+		 */
+		public void add(DecodedItem item, double unitPrice, long timestamp) {
+			if (item == null || timestamp < cutoff) {
+				return;
+			}
 
 			// Every rung, not just the signature. A sale is evidence about the exact configuration
 			// that sold and about every wider description of it, and the wider ones are what stop
 			// a thinly-traded configuration having no valuation at all.
-			item.valuationKeys().forEach(key -> record(bySignature, key, unitPrice));
+			keying.keys(item).forEach(key -> record(bySignature, key, unitPrice));
 
 			// What this sale says about the item per coin bid for it, which is a statement about
-			// every other bid on the same configuration. Only the exact signature: a bid is a Midas
-			// weapon's whole identity, and no widened rung is precise enough to scale.
+			// every other bid on the same configuration.
 			if (item.hasWinningBid()) {
-				record(bidRatios, item.signature(), unitPrice / item.winningBid());
+				keying.bidRatioKey(item)
+						.ifPresent(key -> record(bidRatios, key, unitPrice / item.winningBid()));
 			}
 
 			record(byCoarseKey, ActiveListing.coarseKey(item.displayName(), item.rarity()), unitPrice);
@@ -136,7 +165,8 @@ public final class FairValueModel {
 					estimates(byCoarseKey, windowHours, ValueEstimate.Basis.COARSE),
 					estimates(bidRatios, windowHours, ValueEstimate.Basis.EXACT),
 					considered,
-					window);
+					window,
+					keying);
 		}
 
 		private static void record(Map<String, List<Double>> index, String key, double price) {
@@ -171,18 +201,19 @@ public final class FairValueModel {
 	 * <p>Then one exception, unchanged: an item carrying no attributes at all has nothing the
 	 * coarse key could have missed, so name and rarity describe it completely. Without that rule
 	 * the coarse index would happily price a five-star recombobulated helmet off sales of the bare
-	 * one and call the difference profit.
+	 * one and call the difference profit. That test, and the clause-by-clause evidence behind it,
+	 * lives in {@link Keying#PRODUCTION}.
 	 */
 	public Optional<ValueEstimate> valueOf(DecodedItem item) {
 		if (item.hasWinningBid()) {
-			ValueEstimate perCoin = perBid.get(item.signature());
+			ValueEstimate perCoin = keying.bidRatioKey(item).map(perBid::get).orElse(null);
 
 			if (perCoin != null && perCoin.isUsable()) {
 				return Optional.of(perCoin.scaledBy(item.winningBid()));
 			}
 		}
 
-		List<String> keys = item.valuationKeys();
+		List<String> keys = keying.keys(item);
 
 		for (int rung = 0; rung < keys.size(); rung++) {
 			ValueEstimate match = exact.get(keys.get(rung));
@@ -195,7 +226,7 @@ public final class FairValueModel {
 			}
 		}
 
-		if (!isBare(item)) {
+		if (!keying.isBare(item)) {
 			return Optional.empty();
 		}
 
@@ -223,63 +254,6 @@ public final class FairValueModel {
 
 	public Duration window() {
 		return window;
-	}
-
-	/**
-	 * Nothing was added to this item, so there is nothing a name-and-rarity match could miss.
-	 *
-	 * <p>Attribute rolls count even though nobody added them by hand. An attributed item otherwise
-	 * carries no attributes at all, so without this line it reads as bare and gets priced off the
-	 * coarse pool - which for {@code CRIMSON_BOOTS} mixes 1.9M bare sales with 16M rolled ones and
-	 * calls the gap a snipe.
-	 *
-	 * <p>A rune counts for the same reason. It costs a standalone rune nothing, because Hypixel
-	 * writes the rune and its tier into the display name the coarse key is built from, so the two
-	 * keys select the same sales anyway. What it stops is a runed sword falling back to a pool of
-	 * bare ones.
-	 *
-	 * <p>A potion is excluded outright, like a pet, and unlike a rune it is not free to exclude. The
-	 * display name the coarse key is built from does state the effect, the tier and whether it
-	 * splashes, so most of the signature is recoverable from it - but it does not state the alchemy
-	 * perks. An enhanced, extended Speed VIII potion is named exactly "Speed VIII Potion", and on the
-	 * tape it sells for 82,525 coins against 58,999 for the plain one wearing the same name.
-	 *
-	 * <p>A named dye is here for completeness rather than for measured harm: on the recorded tape
-	 * every dyed sale already fails one of the other clauses, so this one has never yet decided a
-	 * lookup. It is the clause that would matter first if that stopped being true, since a dye moves
-	 * a price by up to 833x at the item id and the display name never mentions it.
-	 *
-	 * <p>An ethermerge is the clause the dye was only theoretically: 315 of the 516 merged sales on
-	 * the tape carry nothing else, so without this line a merged Aspect of the Void reads as bare and
-	 * joins the coarse pool of plain ones - and then every plain Aspect of the Void is quoted off a
-	 * pool holding sales worth 4x it. The display name is identical either way.
-	 *
-	 * <p>A Dark Auction bid is here on the maxed dungeon flag's footing: measured to change nothing
-	 * and kept anyway. On the recorded tape the coarse fallback never fires for a bid-carrying item,
-	 * because its signature always had sales of its own, so the clause scored byte-identically to
-	 * omitting it. What it names is that "Midas Staff" is the display name at every bid, so the
-	 * coarse pool behind that name mixes a 3,000,000 coin staff with a 100,000,000 coin one - and
-	 * unlike the exact index, no ratio can rescue it, since the pool is not one configuration.
-	 *
-	 * <p>A dungeon quality roll is the attribute-roll bug again, and worse. Nothing about the drop's
-	 * tier reaches its display name, so a maxed tier-10 {@code SKELETON_MASTER_CHESTPLATE} with no
-	 * enchantments on it would read as bare and price off a pool whose median is a tier-7 at
-	 * 2,000,000 coins - against the 113,000,000 the tier-10s actually fetch.
-	 */
-	private static boolean isBare(DecodedItem item) {
-		return !item.isPet()
-				&& !item.isDyed()
-				&& !item.ethermerged()
-				&& !item.hasWinningBid()
-				&& !item.isPotion()
-				&& !item.hasQuality()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty()
-				&& item.runes().isEmpty();
 	}
 
 	private static Map<String, ValueEstimate> estimates(Map<String, List<Double>> prices,

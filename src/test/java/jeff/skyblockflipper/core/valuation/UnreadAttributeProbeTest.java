@@ -271,19 +271,15 @@ class UnreadAttributeProbeTest {
 				.orElseGet(() -> String.valueOf(extra.intOr(key, -1)));
 	}
 
-	/** {@link FairValueModel}'s admission test for the coarse index. */
+	/**
+	 * {@link FairValueModel}'s admission test for the coarse index.
+	 *
+	 * <p>Production's own, not a copy. This was a retyping of the clause list and had already drifted
+	 * two clauses behind - it read a merged Aspect of the Void and a bid-carrying Midas Staff as bare,
+	 * so the coverage it charged a candidate term was the wrong number.
+	 */
 	private static boolean bare(DecodedItem item) {
-		return !item.isPet()
-				&& !item.isPotion()
-				&& !item.hasQuality()
-				&& !item.isDyed()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty()
-				&& item.runes().isEmpty();
+		return Keying.PRODUCTION.isBare(item);
 	}
 
 	/** The decoded item, its raw {@code ExtraAttributes}, and its unit price. */

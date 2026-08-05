@@ -1,17 +1,15 @@
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
-import jeff.skyblockflipper.core.item.ItemDecoder;
-import jeff.skyblockflipper.core.model.ActiveListing;
-import jeff.skyblockflipper.core.nbt.NbtCompound;
-import jeff.skyblockflipper.core.nbt.NbtReader;
-import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.valuation.backtest.Backtest;
+import jeff.skyblockflipper.core.valuation.backtest.CounterfactualKeying;
+import jeff.skyblockflipper.core.valuation.backtest.TapeFixture;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,82 +36,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code medianRatio * thisItem'sBid}. That pools across bids instead of splitting on them, so it
  * costs no coverage at all, and it is only right if the market actually prices these things
  * proportionally to the bid - which is what the first test measures before the second one scores it.
+ *
+ * <p>Re-measured against the model that ships rather than the hand-built copy the finding was taken
+ * on. Four of the five arms are now a {@link Keying} handed to the real model; the fifth - flooring
+ * the ratio quote at the pooled median - is a rule production has no way to express, so it is
+ * reconstructed by joining the two arms' rows on {@link Backtest.Priced#saleKey()}.
  */
 @EnabledIfSystemProperty(named = "skyblockflipper.tapeBacktest", matches = "true")
 class MidasBidBacktestTest {
-	private static final String DEFAULT_TAPE_DIR = "run/config/skyblock-flipper/tape";
-	private static final int ALL_DAYS = 365;
 	private static final long HOLDOUT_HOURS = 24L;
 
-	private static final String WINNING_BID = "winning_bid";
-
-	/** Every taped sale of an item id that ever carries a bid, decoded down to what is scored. */
-	private static List<Sale> sales;
-	private static long newestTimestamp;
-
-	/**
-	 * A taped sale of a bid-carrying item id.
-	 *
-	 * @param bid the coins burned at the Dark Auction, or 0 for a sale that carries no bid
-	 */
-	private record Sale(long timestamp, double price, long bid, String signature, String coarseKey,
-			boolean bare, String id) {
-		private boolean hasBid() {
-			return bid > 0L;
-		}
-	}
-
-	/** How the bid reaches the estimate, if at all. */
-	private enum Keying {
-		/** Today: every bid on one signature shares one median. */
-		POOLED,
-		/** The bid banded by powers of two in the key - the obvious wrong answer, measured. */
-		BANDED,
-		/** The candidate: quote the pooled price-to-bid ratio times this item's bid. */
-		RATIO,
-		/**
-		 * The ratio quote floored at the pooled median, in case the bid understates a floor price.
-		 * A Midas Staff bought for 50,000 coins is still a Midas Staff.
-		 */
-		RATIO_FLOORED,
-		/**
-		 * The ratio quote, plus keeping bid-carrying items out of the coarse index the way every
-		 * other unreadable-from-the-name attribute is kept out. A "Midas Staff" is named the same at
-		 * any bid, so the coarse pool mixes every bid together and is the pooled error again.
-		 */
-		RATIO_NOT_BARE
-	}
-
-	@BeforeAll
-	static void loadTape() throws Exception {
-		Set<String> ids = new HashSet<>();
-		long[] newest = {0L};
-
-		forEachSale((item, extra, timestamp, unitPrice) -> {
-			newest[0] = Math.max(newest[0], timestamp);
-
-			if (bid(extra) > 0L) {
-				ids.add(item.skyblockId());
-			}
-		});
-
-		assertTrue(!ids.isEmpty(), "no sales carrying " + WINNING_BID + " on the tape at " + tapeDir());
-		newestTimestamp = newest[0];
-
-		List<Sale> loaded = new ArrayList<>();
-
-		forEachSale((item, extra, timestamp, unitPrice) -> {
-			if (!ids.contains(item.skyblockId())) {
-				return;
-			}
-
-			loaded.add(new Sale(timestamp, unitPrice, bid(extra), item.signature(),
-					ActiveListing.coarseKey(item.displayName(), item.rarity()), bare(item),
-					item.skyblockId()));
-		});
-
-		sales = List.copyOf(loaded);
-	}
+	/** Longer than any tape, so training is the unbounded replay these findings were measured on. */
+	private static final Duration WHOLE_TAPE = Duration.ofDays(3650);
 
 	/**
 	 * Does the market price these proportionally to the bid at all?
@@ -124,369 +58,209 @@ class MidasBidBacktestTest {
 	 * is to leave it alone.
 	 */
 	@Test
-	void reportsHowSalePriceTracksTheBid() {
-		Map<String, List<Sale>> byId = new TreeMap<>();
-		sales.stream().filter(Sale::hasBid).forEach(sale ->
-				byId.computeIfAbsent(sale.id(), k -> new ArrayList<>()).add(sale));
-
-		System.out.printf("%n%,d sales of bid-carrying item ids, %,d of them carrying a bid, %,d of "
-				+ "those otherwise bare%n", sales.size(), sales.stream().filter(Sale::hasBid).count(),
-				sales.stream().filter(s -> s.hasBid() && s.bare()).count());
-
-		// How the sales sit in time, because the holdout is a slice of it and a lopsided tape would
-		// make a 24h holdout most of the market rather than a sample of it.
+	void reportsHowSalePriceTracksTheBid() throws Exception {
+		Map<String, List<double[]>> byId = new TreeMap<>();
+		Map<String, List<Double>> bySignature = new HashMap<>();
 		Map<String, Long> perDay = new TreeMap<>();
-		sales.forEach(sale -> perDay.merge(
-				java.time.Instant.ofEpochMilli(sale.timestamp()).toString().substring(0, 10), 1L, Long::sum));
+		int[] bare = {0};
+
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			if (!item.hasWinningBid()) {
+				return;
+			}
+
+			byId.computeIfAbsent(item.skyblockId(), k -> new ArrayList<>())
+					.add(new double[] {unitPrice, item.winningBid()});
+			bySignature.computeIfAbsent(item.signature(), k -> new ArrayList<>()).add(unitPrice);
+			perDay.merge(Instant.ofEpochMilli(timestamp).toString().substring(0, 10), 1L, Long::sum);
+
+			// What the coarse guard would cost if it ever fired: the bid-carrying sales that carry
+			// nothing else, and so would otherwise be priced off the pool of every bid on that name.
+			if (CounterfactualKeying.withTheBidUnread(false).isBare(item)) {
+				bare[0]++;
+			}
+		});
+
+		int carrying = byId.values().stream().mapToInt(List::size).sum();
+
+		System.out.printf("%n%,d sales carry a Dark Auction bid, %,d of them otherwise bare%n",
+				carrying, bare[0]);
 		System.out.printf("sales per UTC day: %s%n", perDay);
 		System.out.printf("%n%-28s %6s %16s %6s %14s %14s %7s %7s %7s%n",
 				"item id", "sales", "coins", "bids", "median bid", "median price",
 				"ratio", "p10", "p90");
 
-		for (Map.Entry<String, List<Sale>> entry : byId.entrySet()) {
-			List<Sale> forId = entry.getValue();
-			List<Double> ratios = forId.stream().map(s -> s.price() / s.bid()).toList();
-			List<Double> bids = forId.stream().map(s -> (double) s.bid()).toList();
-			List<Double> prices = forId.stream().map(Sale::price).toList();
+		byId.forEach((id, forId) -> {
+			List<Double> ratios = forId.stream().map(sale -> sale[0] / sale[1]).toList();
+			List<Double> bids = forId.stream().map(sale -> sale[1]).toList();
+			List<Double> prices = forId.stream().map(sale -> sale[0]).toList();
 
 			System.out.printf("%-28s %6d %16d %6d %14.0f %14.0f %7.3f %7.3f %7.3f%n",
-					entry.getKey(), forId.size(),
-					forId.stream().mapToLong(s -> (long) s.price()).sum(),
-					forId.stream().map(Sale::bid).distinct().count(),
-					median(bids, 1).orElse(0.0d), median(prices, 1).orElse(0.0d),
-					median(ratios, 1).orElse(0.0d),
+					id, forId.size(),
+					forId.stream().mapToLong(sale -> (long) sale[0]).sum(),
+					bids.stream().distinct().count(),
+					TapeFixture.median(bids, 1).orElse(0.0d),
+					TapeFixture.median(prices, 1).orElse(0.0d),
+					TapeFixture.median(ratios, 1).orElse(0.0d),
 					percentile(ratios, 0.1d), percentile(ratios, 0.9d));
-		}
+		});
 
-		// How wrong today's pooling is, in the direction money is lost in: a signature holding several
-		// bids quotes one median for all of them, so the low-bid sales in it are quoted high.
-		Map<String, List<Sale>> bySignature = new HashMap<>();
-		sales.stream().filter(Sale::hasBid).forEach(sale ->
-				bySignature.computeIfAbsent(sale.signature(), k -> new ArrayList<>()).add(sale));
+		assertTrue(!byId.isEmpty(), "no sales carrying a Dark Auction bid on the tape at "
+				+ TapeFixture.tapeDir());
 
-		int mixed = 0;
-		int quotable = 0;
+		// How wrong pooling is in the direction money is lost in: a signature holding several bids
+		// quotes one median for all of them, so the low-bid sales in it are quoted high.
 		int overvalued = 0;
-		long overvaluedCoins = 0L;
 
-		for (List<Sale> pool : bySignature.values()) {
-			if (pool.stream().map(Sale::bid).distinct().count() < 2) {
-				continue;
-			}
-
-			mixed++;
-			OptionalDouble quoted = median(pool.stream().map(Sale::price).toList(),
-					ValueEstimate.MIN_SAMPLES);
+		for (Map.Entry<String, List<Double>> pool : bySignature.entrySet()) {
+			OptionalDouble quoted = Backtest.quotableMedian(pool.getValue());
 
 			if (quoted.isEmpty()) {
 				continue;
 			}
 
-			quotable++;
-
-			for (Sale sale : pool) {
-				if (quoted.getAsDouble() >= 2.0d * sale.price()) {
+			for (double price : pool.getValue()) {
+				if (quoted.getAsDouble() >= 2.0d * price) {
 					overvalued++;
-					overvaluedCoins += (long) sale.price();
 				}
 			}
 		}
 
-		System.out.printf("%n%,d signatures hold more than one bid, %,d of them quotable; the pooled "
-				+ "median values %,d of their sales at 2x+ of what they fetched (%,d coins)%n",
-				mixed, quotable, overvalued, overvaluedCoins);
-
-		assertTrue(!byId.isEmpty(), "no bid-carrying sales survived decoding");
+		System.out.printf("%npooling every bid on a signature into one median values %,d of those "
+				+ "sales at 2x+ of what they fetched%n", overvalued);
 	}
 
 	/**
 	 * Whether the ratio quote beats the pooled median on held-out sales, and what banding would cost.
 	 *
 	 * <p>Trains on everything older than the newest 24 hours, scores what is in it, over the item ids
-	 * that ever carry a bid.
+	 * that ever carry a bid. Repeated at 48 and 72 hours, because the tape is lopsided in time and one
+	 * slice of it is not a finding.
 	 */
 	@Test
-	void scoresTheBidAgainstThePooledMedian() {
-		long cutoff = newestTimestamp - HOLDOUT_HOURS * 3_600_000L;
+	void scoresTheBidAgainstThePooledMedian() throws Exception {
+		Set<String> ids = idsThatEverCarryABid();
+		long cutoff = TapeFixture.newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
 
-		Scored pooled = score(cutoff, Keying.POOLED);
-		Scored banded = score(cutoff, Keying.BANDED);
-		Scored ratio = score(cutoff, Keying.RATIO);
-		Scored floored = score(cutoff, Keying.RATIO_FLOORED);
-		Scored guarded = score(cutoff, Keying.RATIO_NOT_BARE);
+		Backtest.Result pooled = arm(CounterfactualKeying.withTheBidUnread(false), ids, cutoff);
+		Backtest.Result banded = arm(CounterfactualKeying.withExtraTermInsteadOfTheBidRatio(
+				MidasBidBacktestTest::bidBand), ids, cutoff);
+		Backtest.Result ratio = arm(CounterfactualKeying.withTheBidUnread(true), ids, cutoff);
+		Backtest.Result guarded = arm(Keying.PRODUCTION, ids, cutoff);
 
-		System.out.printf("%nheld-out sales of bid-carrying ids (newest %dh):%n  %-24s %s%n  %-24s "
-				+ "%s%n  %-24s %s%n  %-24s %s%n  %-24s %s%n", HOLDOUT_HOURS,
-				"today (bid unread)", pooled, "bid banded into the key", banded,
-				"bid as a ratio quote", ratio, "ratio, floored at pooled", floored,
-				"ratio, not bare", guarded);
+		System.out.printf("%nheld-out sales of the %,d bid-carrying ids (newest %dh):%n"
+						+ "  %-30s %s%n  %-30s %s%n  %-30s %s%n  %-30s %s%n  %-30s %s%n",
+				ids.size(), HOLDOUT_HOURS,
+				"today (bid unread)", pooled,
+				"bid banded into the key", banded,
+				"bid as a ratio quote", ratio,
+				"ratio, floored at pooled", floored(pooled, ratio),
+				"ratio + coarse guard (shipped)", guarded);
 
-		explain(cutoff);
-
-		// A second, longer holdout, because 24h of a six-day tape is one slice and the whole finding
-		// rests on the ratio arm beating the pooled one on sales it was not trained on.
 		for (long hours : new long[] {48L, 72L}) {
-			long earlier = newestTimestamp - hours * 3_600_000L;
-			System.out.printf("%n  newest %dh:%n    %-22s %s%n    %-22s %s%n    %-22s %s%n", hours,
-					"today (bid unread)", score(earlier, Keying.POOLED),
-					"bid as a ratio quote", score(earlier, Keying.RATIO),
-					"ratio, not bare", score(earlier, Keying.RATIO_NOT_BARE));
+			long earlier = TapeFixture.newestTimestamp() - hours * 3_600_000L;
+			System.out.printf("%n  newest %dh:%n    %-28s %s%n    %-28s %s%n    %-28s %s%n", hours,
+					"today (bid unread)", arm(CounterfactualKeying.withTheBidUnread(false), ids, earlier),
+					"bid as a ratio quote", arm(CounterfactualKeying.withTheBidUnread(true), ids, earlier),
+					"ratio + coarse guard (shipped)", arm(Keying.PRODUCTION, ids, earlier));
 		}
 
-		// Banding is the version of this that follows the last five branches' pattern, and it is here
-		// to be rejected on measurement rather than by argument: a bid band splits a pool without
-		// pooling anything back, so it can only cost coverage.
-		assertTrue(banded.priced() <= pooled.priced(), "banding the bid is expected to cost coverage, "
-				+ "but priced sales went from " + pooled.priced() + " to " + banded.priced());
-		assertTrue(ratio.overvalued() < banded.overvalued(), "the ratio quote is expected to beat the "
-				+ "band it replaces on fake snipes, but it scored " + ratio.overvalued() + " against "
-				+ banded.overvalued());
+		// Banding is the version of this that follows the earlier branches' pattern, and it is here to
+		// be rejected on measurement rather than by argument: a bid band splits a pool without pooling
+		// anything back, so it can only cost coverage.
+		assertTrue(banded.priced().size() <= pooled.priced().size(), "banding the bid is expected to "
+				+ "cost coverage, but priced sales went from " + pooled.priced().size() + " to "
+				+ banded.priced().size());
+		assertTrue(ratio.overvaluedBy(2.0d) < banded.overvaluedBy(2.0d), "the ratio quote is expected "
+				+ "to beat the band it replaces on fake snipes, but it scored "
+				+ ratio.overvaluedBy(2.0d) + " against " + banded.overvaluedBy(2.0d));
 
 		// The finding, and what production now does. Unlike every signature term measured before it,
 		// this one is free: it is the same sales under the same key, asked a different question.
-		assertTrue(ratio.priced() >= pooled.priced(), "the ratio quote is expected to cost no "
-				+ "coverage at all, but priced sales went from " + pooled.priced() + " to "
-				+ ratio.priced());
-		assertTrue(ratio.overvalued() * 5 < pooled.overvalued(), "the ratio quote is expected to "
-				+ "remove most of the fake snipes, but they went from " + pooled.overvalued() + " to "
-				+ ratio.overvalued());
+		assertTrue(ratio.priced().size() >= pooled.priced().size(), "the ratio quote is expected to "
+				+ "cost no coverage at all, but priced sales went from " + pooled.priced().size()
+				+ " to " + ratio.priced().size());
+		assertTrue(ratio.overvaluedBy(2.0d) * 2 < pooled.overvaluedBy(2.0d), "the ratio quote is "
+				+ "expected to remove most of the fake snipes, but they went from "
+				+ pooled.overvaluedBy(2.0d) + " to " + ratio.overvaluedBy(2.0d));
 
 		// Flooring it at the pooled median throws the finding away: the pooled median is the wrong
 		// number, so taking the larger of the two keeps being wrong whenever it is wrong upward.
-		assertTrue(floored.overvalued() > ratio.overvalued(), "flooring the ratio quote at the pooled "
-				+ "median is expected to reintroduce the pooled error");
+		assertTrue(floored(pooled, ratio).overvalued() > ratio.overvaluedBy(2.0d),
+				"flooring the ratio quote at the pooled median is expected to reintroduce the pooled "
+						+ "error");
+	}
 
-		// And the coarse guard costs nothing here, which is why it ships dormant rather than not at
-		// all: no bid-carrying sale on this tape ever needed the coarse pool.
-		assertTrue(guarded.priced() == ratio.priced() && guarded.overvalued() == ratio.overvalued(),
-				"keeping bid-carrying items out of the coarse index scored differently from leaving "
-						+ "them in, so its cost is no longer zero and needs re-measuring");
+	private static Backtest.Result arm(Keying keying, Set<String> ids, long cutoff) throws Exception {
+		return Backtest.holdout(keying, cutoff, WHOLE_TAPE, item -> ids.contains(item.skyblockId()));
 	}
 
 	/**
-	 * Where the two arms differ, per item id, so the headline is attributable to something.
+	 * The rejected variant, reconstructed from the two arms that ran.
 	 *
-	 * <p>Written because the in-sample pools look almost harmless - five quotable signatures, four
-	 * sales overvalued - while the holdout says the pooled median is out by a factor of 8. Both can
-	 * be true only if the harm is in the spread of bids over time rather than in any single pool, and
-	 * that claim is worth seeing rather than assuming.
+	 * <p>"Quote the larger of the ratio estimate and the pooled median" is not a rule any
+	 * {@link Keying} can express - it reads two indices and compares them - so rather than teach the
+	 * model a rule it does not have, the two arms' rows are joined on the sale they priced and the
+	 * maximum taken. Sales only one arm priced take that arm's quote, which is what a
+	 * {@code max}-of-two-optionals rule would do.
 	 */
-	private static void explain(long cutoff) {
-		Map<String, List<Double>> trained = new HashMap<>();
-		Map<String, List<Double>> ratios = new HashMap<>();
-		Map<String, int[]> counts = new TreeMap<>();
+	private static Floored floored(Backtest.Result pooled, Backtest.Result ratio) {
+		Map<String, Backtest.Priced> pooledByKey = new HashMap<>();
+		pooled.priced().forEach(priced -> pooledByKey.put(priced.saleKey(), priced));
 
-		for (Sale sale : sales) {
-			if (sale.timestamp() < cutoff) {
-				trained.computeIfAbsent(sale.signature(), k -> new ArrayList<>()).add(sale.price());
-
-				if (sale.hasBid()) {
-					ratios.computeIfAbsent(sale.signature(), k -> new ArrayList<>())
-							.add(sale.price() / sale.bid());
-				}
-			}
-		}
-
-		System.out.printf("%n%-28s %6s %7s %10s %10s %14s %14s%n",
-				"item id", "train", "held", "pooled 2x", "ratio 2x", "median price", "pooled quote");
-
-		Map<String, List<Sale>> heldById = new TreeMap<>();
-		sales.stream().filter(s -> s.timestamp() >= cutoff).forEach(sale ->
-				heldById.computeIfAbsent(sale.id(), k -> new ArrayList<>()).add(sale));
-
-		heldById.forEach((id, held) -> {
-			int[] tally = counts.computeIfAbsent(id, k -> new int[2]);
-			List<Double> quotes = new ArrayList<>();
-
-			for (Sale sale : held) {
-				OptionalDouble pooled = median(trained.get(sale.signature()), ValueEstimate.MIN_SAMPLES);
-				OptionalDouble ratio = median(ratios.get(sale.signature()), ValueEstimate.MIN_SAMPLES)
-						.stream().map(r -> r * sale.bid()).findFirst();
-
-				pooled.ifPresent(quotes::add);
-
-				if (pooled.isPresent() && pooled.getAsDouble() >= 2.0d * sale.price()) {
-					tally[0]++;
-				}
-
-				if (ratio.isPresent() && ratio.getAsDouble() >= 2.0d * sale.price()) {
-					tally[1]++;
-				}
-			}
-
-			System.out.printf("%-28s %6d %7d %10d %10d %14.0f %14.0f%n", id,
-					sales.stream().filter(s -> s.id().equals(id) && s.timestamp() < cutoff).count(),
-					held.size(), tally[0], tally[1],
-					median(held.stream().map(Sale::price).toList(), 1).orElse(Double.NaN),
-					median(quotes, 1).orElse(Double.NaN));
-		});
-	}
-
-	/**
-	 * @param bidPriced held-out sales carrying a bid that got a valuation at all
-	 * @param overvalued sales valued at 2x or more of what they fetched, the fake snipes
-	 */
-	private record Scored(int priced, int bidPriced, int overvalued, double median, double p90) {
-		@Override
-		public String toString() {
-			return String.format("%,5d priced (%,d with a bid), %,d over 2x, median |log err| %.3f, "
-					+ "p90 %.3f", priced, bidPriced, overvalued, median, p90);
-		}
-	}
-
-	/** Builds the indices production would build under one keying, then prices the holdout. */
-	private static Scored score(long cutoff, Keying keying) {
-		Map<String, List<Double>> exact = new HashMap<>();
-		Map<String, List<Double>> coarse = new HashMap<>();
-		Map<String, List<Double>> ratios = new HashMap<>();
-		List<Sale> holdout = new ArrayList<>();
-
-		for (Sale sale : sales) {
-			if (sale.timestamp() >= cutoff) {
-				holdout.add(sale);
-				continue;
-			}
-
-			exact.computeIfAbsent(key(sale, keying), k -> new ArrayList<>()).add(sale.price());
-
-			if (sale.bare() && !(keying == Keying.RATIO_NOT_BARE && sale.hasBid())) {
-				coarse.computeIfAbsent(sale.coarseKey(), k -> new ArrayList<>()).add(sale.price());
-			}
-
-			if (sale.hasBid()) {
-				ratios.computeIfAbsent(sale.signature(), k -> new ArrayList<>())
-						.add(sale.price() / sale.bid());
-			}
-		}
-
-		List<Double> errors = new ArrayList<>();
-		int bidPriced = 0;
+		Set<String> seen = new HashSet<>();
+		int priced = 0;
 		int overvalued = 0;
 
-		for (Sale sale : holdout) {
-			OptionalDouble estimate = OptionalDouble.empty();
-			boolean ratioArm = keying != Keying.POOLED && keying != Keying.BANDED;
+		for (Backtest.Priced sale : ratio.priced()) {
+			Backtest.Priced other = pooledByKey.get(sale.saleKey());
+			double estimate = other == null ? sale.estimate()
+					: Math.max(sale.estimate(), other.estimate());
 
-			// The ratio quote takes precedence over the pooled median for a sale that carries a bid,
-			// because it is the more specific statement about the same pool.
-			if (ratioArm && sale.hasBid()) {
-				estimate = median(ratios.get(sale.signature()), ValueEstimate.MIN_SAMPLES)
-						.stream().map(r -> r * sale.bid()).findFirst();
-			}
+			priced++;
+			seen.add(sale.saleKey());
+			overvalued += estimate >= 2.0d * sale.actual() ? 1 : 0;
+		}
 
-			OptionalDouble pooledMedian = median(exact.get(key(sale, keying)), ValueEstimate.MIN_SAMPLES);
-
-			if (keying == Keying.RATIO_FLOORED && estimate.isPresent() && pooledMedian.isPresent()) {
-				estimate = OptionalDouble.of(Math.max(estimate.getAsDouble(), pooledMedian.getAsDouble()));
-			}
-
-			if (estimate.isEmpty()) {
-				estimate = pooledMedian;
-			}
-
-			boolean coarseEligible = sale.bare()
-					&& !(keying == Keying.RATIO_NOT_BARE && sale.hasBid());
-
-			if (estimate.isEmpty() && coarseEligible) {
-				estimate = median(coarse.get(sale.coarseKey()), ValueEstimate.MIN_SAMPLES);
-			}
-
-			if (estimate.isEmpty() || estimate.getAsDouble() <= 0.0d || sale.price() <= 0.0d) {
+		for (Backtest.Priced sale : pooled.priced()) {
+			if (seen.contains(sale.saleKey())) {
 				continue;
 			}
 
-			double ratio = estimate.getAsDouble() / sale.price();
-			errors.add(Math.abs(Math.log(ratio)));
-
-			if (ratio >= 2.0d) {
-				overvalued++;
-			}
-
-			if (sale.hasBid()) {
-				bidPriced++;
-			}
+			priced++;
+			overvalued += sale.overvaluedBy(2.0d) ? 1 : 0;
 		}
 
-		List<Double> sorted = errors.stream().sorted().toList();
-
-		return new Scored(sorted.size(), bidPriced, overvalued,
-				sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() / 2),
-				sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() * 9 / 10));
+		return new Floored(priced, overvalued);
 	}
 
-	private static String key(Sale sale, Keying keying) {
-		if (keying != Keying.BANDED || !sale.hasBid()) {
-			return sale.signature();
+	private record Floored(int priced, int overvalued) {
+		@Override
+		public String toString() {
+			return String.format("%,5d priced, %,d over 2x", priced, overvalued);
+		}
+	}
+
+	/** The obvious wrong answer, measured: the bid banded by powers of two, in the key. */
+	private static String bidBand(DecodedItem item) {
+		if (!item.hasWinningBid()) {
+			return "";
 		}
 
-		return sale.signature() + "|bid=2^" + (63 - Long.numberOfLeadingZeros(sale.bid()));
+		return "bid2^" + (63 - Long.numberOfLeadingZeros(Math.max(1L, item.winningBid())));
 	}
 
-	private static long bid(NbtCompound extra) {
-		return (long) extra.number(WINNING_BID).orElse(0.0d);
-	}
+	private static Set<String> idsThatEverCarryABid() throws Exception {
+		Set<String> ids = new HashSet<>();
 
-	/** {@link FairValueModel}'s admission test for the coarse index. */
-	private static boolean bare(DecodedItem item) {
-		return !item.isPet()
-				&& !item.isPotion()
-				&& !item.hasQuality()
-				&& !item.isDyed()
-				&& !item.ethermerged()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty()
-				&& item.runes().isEmpty();
-	}
-
-	/** The decoded item, its raw {@code ExtraAttributes}, when it sold, and its unit price. */
-	private interface SaleVisitor {
-		void accept(DecodedItem item, NbtCompound extra, long timestamp, double unitPrice);
-	}
-
-	private static void forEachSale(SaleVisitor visitor) throws Exception {
-		tape().forEachRecent(ALL_DAYS, sale -> {
-			if (!sale.bin() || sale.price() <= 0L) {
-				return;
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			if (item.hasWinningBid()) {
+				ids.add(item.skyblockId());
 			}
-
-			NbtCompound root;
-
-			try {
-				root = NbtReader.readItemBytes(sale.itemBytes());
-			} catch (Exception e) {
-				return;
-			}
-
-			if (!(root.list("i").stream().findFirst().orElse(null) instanceof NbtCompound stack)) {
-				return;
-			}
-
-			NbtCompound extra = stack.child("tag").child("ExtraAttributes");
-
-			ItemDecoder.fromRoot(root).ifPresent(item -> visitor.accept(item, extra, sale.timestamp(),
-					(double) sale.price() / Math.max(1, item.count())));
 		});
-	}
 
-	private static SalesTape tape() {
-		return new SalesTape(Path.of(tapeDir()), 3650);
-	}
-
-	private static String tapeDir() {
-		return System.getProperty("skyblockflipper.tapeDir", DEFAULT_TAPE_DIR);
-	}
-
-	private static OptionalDouble median(List<Double> values, int minSamples) {
-		if (values == null || values.size() < minSamples) {
-			return OptionalDouble.empty();
-		}
-
-		List<Double> sorted = values.stream().sorted().toList();
-		return OptionalDouble.of(sorted.get(sorted.size() / 2));
+		assertTrue(!ids.isEmpty(), "no bid-carrying sales on the tape at " + TapeFixture.tapeDir());
+		return ids;
 	}
 
 	private static double percentile(List<Double> values, double fraction) {
@@ -495,7 +269,6 @@ class MidasBidBacktestTest {
 		}
 
 		List<Double> sorted = values.stream().sorted().toList();
-		int index = (int) Math.round(fraction * (sorted.size() - 1));
-		return sorted.get(Math.clamp(index, 0, sorted.size() - 1));
+		return sorted.get(Math.min(sorted.size() - 1, (int) (sorted.size() * fraction)));
 	}
 }

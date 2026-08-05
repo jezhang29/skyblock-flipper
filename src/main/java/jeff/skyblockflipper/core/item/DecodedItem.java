@@ -189,14 +189,22 @@ public record DecodedItem(
 		// One bit, and the only entry from the unread-attribute list in four to survive being
 		// measured at this key rather than at the item id. An Etherwarp Conduit merged into an
 		// ASPECT_OF_THE_VOID is permanent and the market pays about 4x for it - 396 plain sales at
-		// 5,900,000 sit in the same signature as 288 merged ones at 24,900,000, quoted at 6,100,000
-		// - so unread it both blinds the model to every merged sale and, where the merged sales
-		// happen to dominate a key, quotes a plain sword at 3.4x what plain swords fetch. On a 24h
-		// holdout it moves p90 |log err| from 1.387 to 0.300 and costs 4 valuations in 1,032.
+		// 5,900,000 sit in the same signature as 288 merged ones at 24,900,000 - so unread it both
+		// blinds the model to every merged sale and quotes a plain sword at several times what
+		// plain swords fetch.
+		//
+		// Re-measured against the model that ships rather than a hand-built copy of it, and it is
+		// worse unread than the copy said: on a 24h holdout of the ids that ever merge, sales quoted
+		// at 2x or more of what they fetched go from 175 to 20 and p90 |log err| from 1.440 to
+		// 0.230, for 7 valuations in 1,053. The copy kept every sample where the Builder keeps the
+		// most recent 200, which is what hid the harm: on a key pooling two populations the ring
+		// fills with whichever sold lately, so the pooled median swings to the dearer one and every
+		// cheap sale reads as a snipe. Keying the merge is what stops the pooling.
 		//
 		// tuned_transmission, the Transmission Tuner level that rides along on merged items, is
-		// deliberately not here: it is worth 1.06x on top of the merge and splitting on it costs
-		// seven more valuations for no fewer overvaluations. See EthermergeBacktestTest.
+		// deliberately not here: it is worth 1.06x on top of the merge, and splitting merged sales
+		// again strands 6 of them below the sample floor for a difference the market barely prices.
+		// See EthermergeBacktestTest.
 		if (ethermerged) {
 			key.add("ethermerge");
 		}
