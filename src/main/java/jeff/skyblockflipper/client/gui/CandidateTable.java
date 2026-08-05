@@ -2,6 +2,7 @@ package jeff.skyblockflipper.client.gui;
 
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.text.Waits;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -10,6 +11,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -88,7 +90,17 @@ final class CandidateTable {
 		PROFIT("Profit/hr", Comparator.comparingDouble(FlipCandidate::profitPerHour)),
 		CAPITAL("Capital", Comparator.comparingLong(FlipCandidate::capitalRequired)),
 		RETURN("ROC", Comparator.comparingDouble(FlipCandidate::returnOnCapital)),
-		CONFIDENCE("Conf", Comparator.comparingDouble(FlipCandidate::confidence));
+		CONFIDENCE("Conf", Comparator.comparingDouble(FlipCandidate::confidence)),
+
+		/**
+		 * How long the plan takes to turn over, and the column the screen was missing.
+		 *
+		 * <p>A plan quoting 6.78M an hour that needs eleven hours to fill and one that clears in
+		 * twenty minutes ranked identically and looked identical. Sorted with the unknowns last,
+		 * because "no estimate" is not "fast".
+		 */
+		FILL("Fill", Comparator.comparingDouble(
+				c -> c.timeToTurnOver().map(Duration::toSeconds).orElse(Long.MAX_VALUE)));
 
 		private final String label;
 		private final Comparator<FlipCandidate> ascending;
@@ -230,6 +242,8 @@ final class CandidateTable {
 		rightAligned(graphics, font, Column.CAPITAL, candidate, textY, TEXT);
 		rightAligned(graphics, font, Column.RETURN, candidate, textY, TEXT_DIM);
 		rightAligned(graphics, font, Column.CONFIDENCE, candidate, textY, TEXT_DIM);
+		rightAligned(graphics, font, Column.FILL, candidate, textY,
+				candidate.fillMeasured() ? TEXT : TEXT_DIM);
 
 		PriceTrend trend = trends.trendFor(candidate.itemId()).orElse(null);
 		Sparkline.draw(graphics, trend, x + width - SPARK_WIDTH - 4, rowY + 3, SPARK_WIDTH);
@@ -413,7 +427,10 @@ final class CandidateTable {
 		// Chosen before they are placed, and in the order they matter rather than the order they
 		// happen to fit. Stopping at the first column that misses keeps the visible set a prefix of
 		// this list: "the two most useful columns" is explainable, "all but Capital" is a puzzle.
-		for (Column column : List.of(Column.PROFIT, Column.CAPITAL, Column.RETURN, Column.CONFIDENCE)) {
+		// Fill sits second: whether an order clears at all decides more than how hard the coins
+		// work while it does not.
+		for (Column column : List.of(Column.PROFIT, Column.FILL, Column.CAPITAL, Column.RETURN,
+				Column.CONFIDENCE)) {
 			int widest = width(font, column);
 
 			// Profit is what the list is ranked by, so it is placed whether it fits or not.
@@ -426,7 +443,8 @@ final class CandidateTable {
 		}
 
 		// Right to left, because it is the right-hand edge each column is aligned to.
-		for (Column column : List.of(Column.CONFIDENCE, Column.RETURN, Column.CAPITAL, Column.PROFIT)) {
+		for (Column column : List.of(Column.CONFIDENCE, Column.RETURN, Column.CAPITAL, Column.FILL,
+				Column.PROFIT)) {
 			if (shown.contains(column)) {
 				rightEdge.put(column, right);
 				right -= width(font, column) + GAP;
@@ -497,6 +515,11 @@ final class CandidateTable {
 			case CAPITAL -> Coins.format(candidate.capitalRequired());
 			case RETURN -> String.format("%.0f%%", candidate.returnOnCapital() * 100.0d);
 			case CONFIDENCE -> String.format("%.2f", candidate.confidence());
+			// A tilde marks an estimate from an assumed share of flow rather than from recorded
+			// displacement, so a guess never reads as a measurement.
+			case FILL -> candidate.timeToTurnOver()
+					.map(d -> (candidate.fillMeasured() ? "" : "~") + Waits.format(d))
+					.orElse("-");
 		};
 	}
 

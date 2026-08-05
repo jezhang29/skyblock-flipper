@@ -1,6 +1,10 @@
 package jeff.skyblockflipper.core.strategy;
 
+import jeff.skyblockflipper.core.pricing.FillModel;
+
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * One ranked opportunity, in a shape every strategy can produce and the UI can sort uniformly.
@@ -26,6 +30,9 @@ import java.util.List;
  *                        which route was chosen and why, how much the item actually trades, which
  *                        item id this really is. Facts a player would otherwise have to take on
  *                        trust
+ * @param fill            how fast the two legs are expected to clear, and whether that was measured
+ *                        or assumed. Null for strategies that do not rest an order on a book, and
+ *                        for the tests and callers that predate it
  */
 public record FlipCandidate(
 		String itemId,
@@ -40,7 +47,8 @@ public record FlipCandidate(
 		double confidence,
 		List<String> steps,
 		List<String> risks,
-		List<String> notes
+		List<String> notes,
+		FillModel.FillEstimate fill
 ) implements Comparable<FlipCandidate> {
 	public FlipCandidate {
 		steps = List.copyOf(steps);
@@ -59,6 +67,39 @@ public record FlipCandidate(
 			double profitPerHour, double confidence, List<String> steps, List<String> risks) {
 		this(itemId, displayName, kind, unitBuyPrice, unitSellPrice, unitNetProfit, units,
 				capitalRequired, profitPerHour, confidence, steps, risks, List.of());
+	}
+
+	/** The shape before fill facts were carried, for the strategies that have none to offer. */
+	public FlipCandidate(String itemId, String displayName, StrategyKind kind, double unitBuyPrice,
+			double unitSellPrice, double unitNetProfit, long units, long capitalRequired,
+			double profitPerHour, double confidence, List<String> steps, List<String> risks,
+			List<String> notes) {
+		this(itemId, displayName, kind, unitBuyPrice, unitSellPrice, unitNetProfit, units,
+				capitalRequired, profitPerHour, confidence, steps, risks, notes, null);
+	}
+
+	/**
+	 * How long the slower leg takes to turn the whole plan over, or empty when it never does.
+	 *
+	 * <p>This is the number the flip screen was missing. A plan that quotes 6.78M an hour and takes
+	 * eleven hours to fill is not the same opportunity as one that quotes 6.78M and clears in
+	 * twenty minutes, and nothing on the screen distinguished them.
+	 */
+	public Optional<Duration> timeToTurnOver() {
+		if (fill == null) {
+			return Optional.empty();
+		}
+
+		double perHour = fill.throughputPerHour();
+
+		return perHour <= 0.0d || units <= 0L
+				? Optional.empty()
+				: Optional.of(Duration.ofSeconds(Math.round(units / perHour * 3600.0d)));
+	}
+
+	/** Whether {@link #fill()} rests on recorded history rather than on an assumed share of flow. */
+	public boolean fillMeasured() {
+		return fill != null && fill.measured();
 	}
 
 	/** Total net profit if the whole plan fills. */
