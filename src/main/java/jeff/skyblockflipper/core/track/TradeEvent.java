@@ -40,7 +40,14 @@ public record TradeEvent(long at, Kind kind, Side side, String displayName, long
 		 * paid, and it fires for a partial collection in the same wording as a complete one.
 		 */
 		ORDER_CLAIMED,
-		/** An order was cancelled. On a sell offer the refund is in units of the item. */
+		/**
+		 * An order was cancelled.
+		 *
+		 * <p>A sell offer refunds the items, so the line names them and this carries the units. A
+		 * buy order refunds the escrowed coins and names nothing, so this carries the coins with an
+		 * empty {@link #displayName()} and zero units, and the order it belongs to has to be found
+		 * by the refund amount.
+		 */
 		ORDER_CANCELLED,
 		/** An instant buy or instant sell, which settles in one line with no order behind it. */
 		INSTANT,

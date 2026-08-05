@@ -140,6 +140,23 @@ class ChatParserTest {
 		assertEquals(441L, event.units());
 	}
 
+	/**
+	 * Measured in live play on 2026-08-04, and missed by the first capture session because every
+	 * cancel in it was a sell offer. A buy order refunds coins and names neither the item nor the
+	 * units, so the fields a sell cancel fills are empty here by necessity.
+	 */
+	@Test
+	void readsABuyCancelAsCoinsComingBack() {
+		TradeEvent event = parse(
+				"[Bazaar] Cancelled! Refunded 6,554,823 coins from cancelling Buy Order!");
+
+		assertEquals(TradeEvent.Kind.ORDER_CANCELLED, event.kind());
+		assertEquals(TradeEvent.Side.BUY, event.side());
+		assertEquals(6_554_823.0d, event.coins());
+		assertEquals("", event.displayName());
+		assertEquals(0L, event.units());
+	}
+
 	@Test
 	void readsAnAuctionSaleAndAPurchase() {
 		TradeEvent sold = parse(
