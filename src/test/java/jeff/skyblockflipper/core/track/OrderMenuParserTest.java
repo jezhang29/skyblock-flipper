@@ -1,14 +1,8 @@
 package jeff.skyblockflipper.core.track;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -34,17 +28,8 @@ class OrderMenuParserTest {
 
 	@BeforeAll
 	static void loadCapture() throws IOException {
-		try (InputStream in = OrderMenuParserTest.class.getResourceAsStream("/trade-capture-sample.jsonl");
-				BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-			Gson gson = new Gson();
-
-			for (String line = reader.readLine(); line != null; line = reader.readLine()) {
-				JsonObject json = gson.fromJson(line, JsonObject.class);
-
-				if (json.get("type").getAsString().equals("menu")) {
-					MENUS.add(toMenu(json));
-				}
-			}
+		try (InputStream in = OrderMenuParserTest.class.getResourceAsStream("/trade-capture-sample.jsonl")) {
+			MENUS.addAll(CaptureSession.read(new InputStreamReader(in, StandardCharsets.UTF_8)).menus());
 		}
 	}
 
@@ -166,24 +151,4 @@ class OrderMenuParserTest {
 		return MENUS.stream().flatMap(m -> OrderMenuParser.parse(m).stream()).toList();
 	}
 
-	private static CapturedMenu toMenu(JsonObject json) {
-		List<CapturedSlot> slots = new ArrayList<>();
-
-		for (JsonElement element : json.getAsJsonArray("slots")) {
-			JsonObject slot = element.getAsJsonObject();
-			List<String> lore = new ArrayList<>();
-
-			JsonArray lines = slot.getAsJsonArray("lore");
-
-			if (lines != null) {
-				lines.forEach(line -> lore.add(line.getAsString()));
-			}
-
-			slots.add(new CapturedSlot(slot.get("index").getAsInt(), slot.get("name").getAsString(),
-					lore, slot.get("itemId").getAsString(), slot.get("count").getAsInt(),
-					slot.get("customData").getAsString()));
-		}
-
-		return new CapturedMenu(json.get("at").getAsLong(), json.get("title").getAsString(), slots);
-	}
 }
