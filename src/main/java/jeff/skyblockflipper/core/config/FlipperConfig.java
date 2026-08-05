@@ -3,9 +3,13 @@ package jeff.skyblockflipper.core.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import jeff.skyblockflipper.core.strategy.StrategyKind;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * User settings, persisted as JSON.
@@ -144,6 +148,19 @@ public final class FlipperConfig {
 	 */
 	public int fillHorizonMinutes = 60;
 
+	/**
+	 * Which strategy the unqualified views show: {@code ALL}, or one {@code StrategyKind} name.
+	 *
+	 * <p>{@code /flip}, the HUD and the flip screen's opening tab all answered "every strategy at
+	 * once" before this existed, which is the wrong answer for a player working one market. The
+	 * per-strategy commands and tabs ignore it: asking for {@code /flip npc} is a clearer statement
+	 * of intent than any setting.
+	 */
+	public String strategyFilter = FILTER_ALL;
+
+	/** The value of {@link #strategyFilter} that means no filtering at all. */
+	public static final String FILTER_ALL = "ALL";
+
 	/** Open the flip screen with a keybind. The screen is also reachable however you like via chat. */
 	public boolean guiKeybindEnabled = true;
 
@@ -224,6 +241,36 @@ public final class FlipperConfig {
 		return HudAnchor.parse(hudAnchor);
 	}
 
+	/**
+	 * {@link #strategyFilter} as a strategy, or null for every strategy.
+	 *
+	 * <p>Null rather than an Optional because that is what the ranking call already takes to mean
+	 * "no restriction", and wrapping it here would only be unwrapped there.
+	 */
+	public StrategyKind filteredKind() {
+		for (StrategyKind kind : StrategyKind.values()) {
+			if (kind.name().equalsIgnoreCase(strategyFilter)) {
+				return kind;
+			}
+		}
+
+		return null;
+	}
+
+	/** What the filter may be set to. {@code CRAFT} is left out while it has no strategy behind it. */
+	public static List<String> strategyFilterOptions() {
+		List<String> options = new ArrayList<>();
+		options.add(FILTER_ALL);
+
+		for (StrategyKind kind : StrategyKind.values()) {
+			if (kind != StrategyKind.CRAFT) {
+				options.add(kind.name());
+			}
+		}
+
+		return List.copyOf(options);
+	}
+
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
 		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll,
@@ -264,6 +311,10 @@ public final class FlipperConfig {
 		hudMarginX = Math.clamp(hudMarginX, 0, 400);
 		hudMarginY = Math.clamp(hudMarginY, 0, 400);
 		hudAnchor = anchor().name();
+		// An unknown name would silently mean "every strategy", which looks like the filter
+		// being ignored rather than being misspelled.
+		StrategyKind kind = filteredKind();
+		strategyFilter = kind == null ? FILTER_ALL : kind.name();
 		return this;
 	}
 }

@@ -97,6 +97,26 @@ public final class FlipScreen extends Screen {
 		boolean showsCandidates() {
 			return this != LEDGER && this != GUIDE;
 		}
+
+		/**
+		 * The tab the configured strategy filter names, or {@link #ALL} when it names none.
+		 *
+		 * <p>The screen used to open on All unconditionally, which meant a player working one market
+		 * clicked past two lists they had already said they did not want.
+		 */
+		static Tab forFilter(StrategyKind filter) {
+			if (filter == null) {
+				return ALL;
+			}
+
+			for (Tab candidate : values()) {
+				if (candidate.kind == filter) {
+					return candidate;
+				}
+			}
+
+			return ALL;
+		}
 	}
 
 	private final CandidateTable table = new CandidateTable();
@@ -113,7 +133,7 @@ public final class FlipScreen extends Screen {
 	/** Only laid out and drawn when Cloth Config is installed - see {@link Settings}. */
 	private final TextButton settingsButton = new TextButton("Settings", this::openSettings);
 
-	private Tab tab = Tab.ALL;
+	private Tab tab = Tab.forFilter(SkyblockFlipperClient.config().filteredKind());
 	private long renderedRevision = -1L;
 	private String notice = "";
 

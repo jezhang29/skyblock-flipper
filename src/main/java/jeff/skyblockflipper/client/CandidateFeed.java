@@ -84,6 +84,10 @@ public final class CandidateFeed {
 		}
 
 		cachedRevision = revision;
-		cached = data.hasBazaar() ? rank(null, CACHE_DEPTH) : List.of();
+		// The configured filter, so the HUD shows the market the player is actually working. A
+		// change to it does not move the book revision, which is what invalidate() is for.
+		cached = data.hasBazaar()
+				? rank(SkyblockFlipperClient.config().filteredKind(), CACHE_DEPTH)
+				: List.of();
 	}
 }

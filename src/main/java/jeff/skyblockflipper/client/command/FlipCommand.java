@@ -41,6 +41,7 @@ import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * The {@code /flip} command tree. Client-side only: the command never reaches the server, so it
@@ -60,7 +61,12 @@ public final class FlipCommand {
 	private static LiteralArgumentBuilder<FabricClientCommandSource> build() {
 		return ClientCommands.literal("flip")
 				.executes(ctx -> {
-					showTop(ctx.getSource(), null, "Top flips right now");
+					// Honours the configured filter, unlike the named subcommands: typing /flip
+					// bazaar is a statement of intent, typing /flip is not.
+					StrategyKind only = SkyblockFlipperClient.config().filteredKind();
+					showTop(ctx.getSource(), only, only == null
+							? "Top flips right now"
+							: "Top " + only.label().toLowerCase(Locale.ROOT) + " flips right now");
 					return 1;
 				})
 				.then(ClientCommands.literal("bazaar")

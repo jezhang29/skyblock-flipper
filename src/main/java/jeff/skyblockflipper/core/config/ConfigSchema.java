@@ -185,6 +185,11 @@ public final class ConfigSchema {
 			new Entry.Flag("hudEnabled", "Show HUD",
 					"Render the top-candidates overlay in the corner of the screen.",
 					c -> c.hudEnabled, (c, v) -> c.hudEnabled = v),
+			new Entry.Choice("strategyFilter", "Show only",
+					"Which strategy /flip, the HUD and the flip screen's opening tab list. The "
+							+ "per-strategy commands and tabs still show whatever you ask them for.",
+					FlipperConfig.strategyFilterOptions(),
+					c -> c.strategyFilter, (c, v) -> c.strategyFilter = v),
 			new Entry.IntRange("hudLines", "HUD lines",
 					"How many candidates the HUD lists. Kept short; the full list is what the flip "
 							+ "screen is for.",
