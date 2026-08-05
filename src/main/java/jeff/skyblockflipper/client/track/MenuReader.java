@@ -66,13 +66,15 @@ final class MenuReader {
 	/**
 	 * Hypixel's own item id, which is the thing chat cannot give you.
 	 *
-	 * <p>Read from {@code ExtraAttributes.id}, where the auction API's {@code item_bytes} blobs also
-	 * carry it. Whether menu stacks put it in the same place on this game version is exactly what
-	 * the capture session is meant to find out, so the raw compound is recorded alongside this and
-	 * an empty answer here is a result rather than a failure.
+	 * <p>Measured in the first capture session: menu stacks carry the {@code ExtraAttributes} keys
+	 * flattened onto the root of {@code minecraft:custom_data}, so the id is {@code id} and not
+	 * {@code ExtraAttributes.id} as it is inside the auction API's {@code item_bytes} blobs. All 497
+	 * stacks in that session that had custom data at all had a root {@code id}. The nested form is
+	 * still tried second, in case a menu somewhere sends the blob shape.
 	 */
 	private static String itemId(CompoundTag tag) {
-		return tag.getCompoundOrEmpty("ExtraAttributes").getStringOr("id", "");
+		String root = tag.getStringOr("id", "");
+		return root.isEmpty() ? tag.getCompoundOrEmpty("ExtraAttributes").getStringOr("id", "") : root;
 	}
 
 	private static List<String> lore(ItemStack stack) {
