@@ -10,12 +10,18 @@ import java.util.OptionalDouble;
  * runs below quoted margin as a rule, not as an accident. {@link #captureRate()} is that gap,
  * measured on your own fills.
  *
+ * @param closed         positions closed with a quote to hold them against, which is the sample
+ *                       the capture rate is computed on
+ * @param unquoted       positions the tracker recorded that no strategy ever quoted. They count
+ *                       toward the fill rate and are kept out of the capture rate, since a quote
+ *                       of zero in the denominator would read as a total shortfall
  * @param quotedOnFilled what the plans promised, counted only on units that actually transacted
  * @param realized       what those same units actually paid
  */
 public record LedgerStats(
 		int closed,
 		int abandoned,
+		int unquoted,
 		long unitsPlanned,
 		long unitsFilled,
 		double quotedOnFilled,
@@ -28,7 +34,7 @@ public record LedgerStats(
 	public static final int MIN_MEANINGFUL_SAMPLES = 5;
 
 	public static LedgerStats empty() {
-		return new LedgerStats(0, 0, 0L, 0L, 0.0d, 0.0d);
+		return new LedgerStats(0, 0, 0, 0L, 0L, 0.0d, 0.0d);
 	}
 
 	/**
