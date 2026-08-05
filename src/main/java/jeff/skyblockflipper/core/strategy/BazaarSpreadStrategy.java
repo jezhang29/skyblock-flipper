@@ -192,7 +192,9 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 		}
 
 		double horizonHours = hoursOf(context.fillHorizon());
-		long affordableUnits = (long) (context.bankroll() / buyPrice);
+		// The per-flip cap, not the whole bankroll: profit per hour rises with size, so without a
+		// ceiling the ranking's own logic puts everything into one item.
+		long affordableUnits = (long) (context.maxCapitalPerFlip() / buyPrice);
 
 		if (affordableUnits <= 0L) {
 			return java.util.Optional.empty();

@@ -69,6 +69,43 @@ class StrategyTest {
 		assertTrue(candidate.unitNetProfit() > 0.0d);
 	}
 
+	/**
+	 * Live play on 2026-08-04 produced a single plan asking for 249,212,105 of a 250,000,000
+	 * bankroll, because profit per hour rises with size and affordability was the only ceiling.
+	 * A deep book is exactly the case that does it: throughput never runs out first.
+	 */
+	@Test
+	void sizesAPlanWithinTheCapitalCap() {
+		// A tight spread on an enormously liquid book, so throughput never runs out and the coins
+		// are the only thing that can bound the plan.
+		BazaarProduct deep = product(100.0d, 104.0d, 400, 5_000_000_000L);
+		StrategyContext capped = new StrategyContext(
+				new BazaarSnapshot(Instant.now(), Map.of(deep.productId(), deep)),
+				ItemCatalog.empty(),
+				List.of(),
+				TrendSnapshot.empty(),
+				new Fees(0, false),
+				BANKROLL,
+				0L,
+				0.0d,
+				0.0d,
+				StrategyContext.DEFAULT_FILL_HORIZON,
+				0.25d);
+
+		FlipCandidate candidate = new BazaarSpreadStrategy().findCandidates(capped).getFirst();
+
+		assertTrue(candidate.capitalRequired() <= BANKROLL / 4,
+				"capital " + candidate.capitalRequired() + " exceeded a quarter of " + BANKROLL);
+
+		// And the cap is what bound it, rather than the book running out: uncapped, the same book
+		// funds a materially larger position.
+		FlipCandidate uncapped = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(deep)).getFirst();
+
+		assertTrue(uncapped.capitalRequired() > candidate.capitalRequired(),
+				"the cap changed nothing: " + uncapped.capitalRequired() + " vs " + candidate.capitalRequired());
+	}
+
 	@Test
 	void netProfitIsAlwaysBelowTheGrossSpread() {
 		FlipCandidate candidate = new BazaarSpreadStrategy().findCandidates(contextFor(healthy())).getFirst();

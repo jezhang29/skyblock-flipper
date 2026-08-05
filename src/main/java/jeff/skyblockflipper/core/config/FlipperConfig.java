@@ -36,6 +36,17 @@ public final class FlipperConfig {
 	 */
 	public int bazaarFlipperLevel = 0;
 
+	/**
+	 * The largest share of {@link #bankroll} any single plan may ask for (0-1).
+	 *
+	 * <p>Profit per hour rises with position size, so the ranking on its own will always prefer the
+	 * biggest plan the coins allow. Measured on 2026-08-04 with a 250M bankroll and no cap: a
+	 * Recombobulator 3000 plan asked for 249,212,105 coins - 99.7% of everything, 25 units, on a
+	 * book that filled none of them. A quarter is four concurrent positions, which is enough for one
+	 * of them to be wrong without the session being over.
+	 */
+	public double maxCapitalShare = 0.25d;
+
 	/** Hide any candidate whose expected net profit is below this. */
 	public long minProfitPerFlip = 50_000L;
 
@@ -224,6 +235,9 @@ public final class FlipperConfig {
 		bankroll = Math.max(0L, bankroll);
 		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, 6);
 		minProfitPerFlip = Math.max(0L, minProfitPerFlip);
+		// A zero share would size every plan at one unit and rank nothing; above one it is not a
+		// share of anything.
+		maxCapitalShare = Math.clamp(maxCapitalShare, 0.01d, 1.0d);
 		minConfidence = Math.clamp(minConfidence, 0.0d, 1.0d);
 		hudLines = Math.clamp(hudLines, 1, 10);
 		// A zero or negative discount would call every listing at fair value a bargain and hand

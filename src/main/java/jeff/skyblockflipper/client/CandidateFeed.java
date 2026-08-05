@@ -55,7 +55,8 @@ public final class CandidateFeed {
 				config.minProfitPerFlip,
 				config.minConfidence,
 				config.maxAdverseDrift,
-				Duration.ofMinutes(config.fillHorizonMinutes));
+				Duration.ofMinutes(config.fillHorizonMinutes),
+				config.maxCapitalShare);
 	}
 
 	/** Fresh ranking across every strategy, or a single one when {@code kind} is non-null. */
