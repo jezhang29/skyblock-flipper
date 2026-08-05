@@ -123,12 +123,24 @@ public final class TrackerService {
 		send(message);
 	}
 
+	/**
+	 * Always deferred to the render thread, because the caller is not reliably on it.
+	 *
+	 * <p>Measured on 2026-08-04: a modpack alongside this one delivered four chat messages on the
+	 * netty IO thread rather than the client thread, and two of them killed the connection with
+	 * {@code Internal Exception: IllegalStateException: Rendersystem called from wrong thread}.
+	 * Adding a message to the chat GUI splits it with the font, and an uncached glyph asserts it is
+	 * on the render thread. This service is driven from a chat callback, so it inherits whatever
+	 * thread the message arrived on and would eventually do the same thing to a fill notification.
+	 */
 	private static void send(Component message) {
 		Minecraft client = Minecraft.getInstance();
 
-		if (client.player != null) {
-			client.player.sendSystemMessage(message);
-		}
+		client.execute(() -> {
+			if (client.player != null) {
+				client.player.sendSystemMessage(message);
+			}
+		});
 	}
 
 	/**
