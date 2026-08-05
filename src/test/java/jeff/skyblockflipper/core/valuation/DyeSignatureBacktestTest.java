@@ -1,22 +1,25 @@
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
-import jeff.skyblockflipper.core.item.ItemDecoder;
-import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.nbt.NbtCompound;
-import jeff.skyblockflipper.core.nbt.NbtReader;
-import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.valuation.backtest.Backtest;
+import jeff.skyblockflipper.core.valuation.backtest.CounterfactualKeying;
+import jeff.skyblockflipper.core.valuation.backtest.SignatureTerms;
+import jeff.skyblockflipper.core.valuation.backtest.TapeFixture;
+import jeff.skyblockflipper.core.valuation.backtest.UnreadTerms;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalDouble;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,22 +34,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <ul>
  *   <li>{@code dye_item} is a named dye somebody chose to apply, e.g. {@code DYE_PURE_BLACK}. It
  *       goes into the signature. See {@link #theNamedDyeSplitsKeysItCurrentlyPoolsWithThePlainItem}.
- *   <li>{@code color} is a raw {@code r:g:b} triple. It stays out, and the second test is the
- *       reason rather than an oversight. See {@link #theRawColourCannotBeKeyedOnWithoutLosingMore}.
+ *   <li>{@code color} is a raw {@code r:g:b} triple. It stays out, and the last two tests are the
+ *       reason rather than an oversight.
  *   </ul>
  *
- * <p>Neither is measured by holding out six hours and scoring key variants, the way the potion and
- * dungeon-quality splits were. That was tried first and has no power here: 674 dyed sales over six
- * days leave 46 in the holdout, of which the full signature prices <b>one</b>, with or without a dye
- * term. Painted items are rare enough that the question is not which key scores better on a holdout
- * but whether the key pools things it should not, so both tests below measure that directly.
+ * <p>The dye half is a pool-shape measurement rather than a holdout, and that is a limitation of the
+ * tape rather than a choice: 674 dyed sales over six days leave 46 in a six-hour holdout, of which
+ * the full signature prices one either way. The colour half does get a holdout, because the ids that
+ * carry a colour trade often enough to fill one.
  */
 @EnabledIfSystemProperty(named = "skyblockflipper.tapeBacktest", matches = "true")
 class DyeSignatureBacktestTest {
-	private static final String DEFAULT_TAPE_DIR = "run/config/skyblock-flipper/tape";
+	private static final long HOLDOUT_HOURS = 24L;
 
-	private static final long HOLDOUT_HOURS = 6L;
-	private static final int ALL_DAYS = 365;
+	/** Longer than any tape, so training is the unbounded replay these findings were measured on. */
+	private static final Duration WHOLE_TAPE = Duration.ofDays(3650);
+
+	private static final String DYE = "dye=";
+	private static final String COLOUR = "color";
 
 	/**
 	 * Why the named dye ships: it costs nothing and it separates sales that are currently one key.
@@ -76,21 +81,21 @@ class DyeSignatureBacktestTest {
 		Map<String, List<Double>> plain = new HashMap<>();
 		int[] counts = {0, 0};
 
-		forEachSale((item, timestamp, paint, unitPrice) -> {
-			String base = withoutPaint(item);
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			String base = SignatureTerms.without(item.signature(), DYE);
 
-			if (!paint[0].isEmpty()) {
+			if (item.isDyed()) {
 				counts[0]++;
 
 				// The claim the zero-cost argument rests on. A dyed item that were otherwise bare
 				// would lose its coarse valuation the moment the signature names the dye, because
 				// bareness is what admits an item to the coarse index at all.
-				if (bareApartFromPaint(item)) {
+				if (CounterfactualKeying.withoutTerm(DYE).isBare(item)) {
 					counts[1]++;
 				}
 
 				dyed.computeIfAbsent(base, k -> new ArrayList<>()).add(unitPrice);
-			} else if (paint[1].isEmpty()) {
+			} else if (colour(extra).isEmpty()) {
 				plain.computeIfAbsent(base, k -> new ArrayList<>()).add(unitPrice);
 			}
 		});
@@ -101,8 +106,8 @@ class DyeSignatureBacktestTest {
 		List<String> table = new ArrayList<>();
 
 		for (Map.Entry<String, List<Double>> entry : dyed.entrySet()) {
-			OptionalDouble withDye = median(entry.getValue(), 1);
-			OptionalDouble without = median(plain.get(entry.getKey()), 1);
+			OptionalDouble withDye = TapeFixture.median(entry.getValue(), 1);
+			OptionalDouble without = TapeFixture.median(plain.get(entry.getKey()), 1);
 
 			if (withDye.isEmpty() || without.isEmpty() || without.getAsDouble() <= 0.0d) {
 				continue;
@@ -143,62 +148,24 @@ class DyeSignatureBacktestTest {
 	}
 
 	/**
-	 * Why the raw colour stays out, which is the more interesting half.
+	 * The raw colour is near-unique per sale, which is why no key can hold it.
 	 *
 	 * <p>It is a bigger pooling than the dye by any static measure - {@code GOBLIN_BOOTS} holds 466
-	 * sales at 12,000 coins and two at 60,000,000 on one key, 5,000x - and keying it still loses.
-	 * Three measured reasons, all checked below:
-	 *
-	 * <ol>
-	 *   <li><b>It shatters.</b> On the items that carry it densely it is near-unique per sale, so an
-	 *       exact colour key names a cell of one and prices nothing. Nor could a coarser one help:
-	 *       an exotic colour is a one-off, so it never reaches {@link ValueEstimate#MIN_SAMPLES}
-	 *       under any key that distinguishes it. Keying it turns a wrong number into no number.
-	 *   <li><b>The wrong number is mostly right.</b> The items where colour is dense are fashion
-	 *       items whose every sale is coloured, so their coarse pool is entirely coloured and prices
-	 *       them correctly. Excluding coloured items from that pool - which is what a signature term
-	 *       plus the {@code isBare} guard would do - costs most of them their valuation to fix a
-	 *       handful of overvaluations.
-	 *   <li><b>It contaminates nothing.</b> The two 60,000,000 coin exotics sit in a pool of 466 at
-	 *       12,000, and the estimate is a median, so they do not move it. Plain items priced from
-	 *       the mixed pool score identically to plain items priced from a pool with every coloured
-	 *       sale removed.
-	 * </ol>
+	 * sales at 12,000 coins and two at 60,000,000 on one key, 5,000x - and it still cannot be keyed.
+	 * An exact colour names a cell of one, and a coarser one cannot help either: an exotic colour is a
+	 * one-off, so it never reaches {@link ValueEstimate#MIN_SAMPLES} under any key that distinguishes
+	 * it from the ordinary ones.
 	 */
 	@Test
-	void theRawColourCannotBeKeyedOnWithoutLosingMore() throws Exception {
+	void theRawColourShattersIntoCellsOfOne() throws Exception {
 		Map<String, Map<String, Integer>> coloursPerItem = new HashMap<>();
-		Map<String, List<Double>> mixedPool = new HashMap<>();
-		Map<String, List<Double>> uncolouredPool = new HashMap<>();
-		List<Held> heldColoured = new ArrayList<>();
-		List<Held> heldPlain = new ArrayList<>();
 
-		long cutoff = newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			String colour = colour(extra);
 
-		forEachSale((item, timestamp, paint, unitPrice) -> {
-			boolean coloured = !paint[1].isEmpty();
-
-			if (coloured) {
+			if (!colour.isEmpty()) {
 				coloursPerItem.computeIfAbsent(item.skyblockId(), k -> new HashMap<>())
-						.merge(paint[1], 1, Integer::sum);
-			}
-
-			// Only bare items reach the coarse index, so only they are affected either way.
-			if (!bareApartFromPaint(item)) {
-				return;
-			}
-
-			String coarse = ActiveListing.coarseKey(item.displayName(), item.rarity());
-
-			if (timestamp >= cutoff) {
-				(coloured ? heldColoured : heldPlain).add(new Held(unitPrice, coarse));
-				return;
-			}
-
-			mixedPool.computeIfAbsent(coarse, k -> new ArrayList<>()).add(unitPrice);
-
-			if (!coloured) {
-				uncolouredPool.computeIfAbsent(coarse, k -> new ArrayList<>()).add(unitPrice);
+						.merge(colour, 1, Integer::sum);
 			}
 		});
 
@@ -212,175 +179,94 @@ class DyeSignatureBacktestTest {
 		System.out.printf("%ncolour is near-unique per sale where it is dense: %s carries %,d "
 				+ "distinct colours across %,d sales%n", densest, distinct, sales);
 
-		Scored colouredToday = score(heldColoured, mixedPool);
-		Scored colouredExcluded = score(heldColoured, uncolouredPool);
-		Scored plainToday = score(heldPlain, mixedPool);
-		Scored plainCleaned = score(heldPlain, uncolouredPool);
-
-		System.out.printf("held-out coloured sales, priced coarsely:%n  %-34s %s%n  %-34s %s%n",
-				"today (mixed pool)", colouredToday, "if colour keyed out", colouredExcluded);
-		System.out.printf("held-out plain sales, priced coarsely:%n  %-34s %s%n  %-34s %s%n",
-				"today (mixed pool)", plainToday, "with coloured sales removed", plainCleaned);
-
-		// 1. It shatters. Nearly one colour per sale, so an exact colour key prices nothing.
 		assertTrue(distinct > sales * 9 / 10, "the raw colour is expected to be near-unique per sale "
 				+ "on the item that carries it most, but " + densest + " had " + distinct
 				+ " colours across " + sales + " sales");
-
-		// 2. Keying it out costs most coloured sales their valuation, and they are mostly correct
-		// today. If this ever inverts - if the coloured population stops being dominated by items
-		// whose whole pool is coloured - the call flips and colour should go into the signature.
-		assertTrue(colouredExcluded.priced() * 5 < colouredToday.priced(),
-				"keying the colour out should cost most coloured sales their coarse valuation, "
-						+ "but it went from " + colouredToday.priced() + " to "
-						+ colouredExcluded.priced());
-
-		assertTrue(colouredToday.overvaluedByHalf() * 10 < colouredToday.priced(),
-				"the mixed coarse pool is expected to be right about most coloured sales, but it "
-						+ "overvalued " + colouredToday.overvaluedByHalf() + " of "
-						+ colouredToday.priced());
-
-		// 3. And leaving them in poisons nothing, because the estimate is a median.
-		assertEquals(plainToday.overvaluedByHalf(), plainCleaned.overvaluedByHalf(),
-				"coloured sales sitting in the coarse pool are expected to move no plain valuation, "
-						+ "since a handful of outliers cannot shift a median");
-	}
-
-	/** A held-out sale and the coarse key it would be priced under. */
-	private record Held(double price, String key) {
 	}
 
 	/**
-	 * @param overvaluedByHalf sales the key valued at 2x or more of what they actually fetched -
-	 *                         the fake snipes, and the only direction of error that costs coins
-	 */
-	private record Scored(int priced, double median, double p90, int overvaluedByHalf) {
-		@Override
-		public String toString() {
-			return String.format("%,5d priced, median |log err| %.3f, p90 %.3f, %,d overvalued 2x+",
-					priced, median, p90, overvaluedByHalf);
-		}
-	}
-
-	private static Scored score(List<Held> held, Map<String, List<Double>> index) {
-		List<Double> errors = new ArrayList<>();
-		int overvalued = 0;
-
-		for (Held sale : held) {
-			OptionalDouble estimate = median(index.get(sale.key()), ValueEstimate.MIN_SAMPLES);
-
-			if (estimate.isEmpty() || estimate.getAsDouble() <= 0.0d || sale.price() <= 0.0d) {
-				continue;
-			}
-
-			errors.add(Math.abs(Math.log(estimate.getAsDouble() / sale.price())));
-
-			if (estimate.getAsDouble() >= 2.0d * sale.price()) {
-				overvalued++;
-			}
-		}
-
-		List<Double> sorted = errors.stream().sorted().toList();
-
-		if (sorted.isEmpty()) {
-			return new Scored(0, Double.NaN, Double.NaN, overvalued);
-		}
-
-		return new Scored(sorted.size(), sorted.get(sorted.size() / 2),
-				sorted.get(sorted.size() * 9 / 10), overvalued);
-	}
-
-	/**
-	 * {@link FairValueModel}'s admission test for the coarse index, minus the paint itself.
+	 * And keying it costs valuations without fixing anything, against the model that ships.
 	 *
-	 * <p>Deliberately not delegating to production: once the dye reaches the signature, production
-	 * says a dyed item is not bare, and what both tests need to know is what it was apart from the
-	 * paint. That is the quantity the zero-cost argument is about.
-	 */
-	private static boolean bareApartFromPaint(DecodedItem item) {
-		return !item.isPet()
-				&& !item.isPotion()
-				&& !item.hasQuality()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty()
-				&& item.runes().isEmpty();
-	}
-
-	/**
-	 * The signature with the shipped dye clause taken back off, so a dyed sale and a plain one are
-	 * compared on the key they share rather than on the one the split just gave them.
+	 * <p>This arm replaces a hand-built pair of coarse pools the finding was first taken on. The
+	 * question is the same - what happens to coloured and plain sales if the colour reaches the
+	 * signature and the bare guard - but the model around it is now the real one, with its rung
+	 * ladder, its 200-sample ring and its bid ratios.
 	 *
-	 * <p>Safe as a suffix strip because {@code signature()} adds the clause last and its contents
-	 * never contain the separator.
+	 * <p>On a 24h holdout of the 144 ids that ever carry a colour, keying it prices 10,221 sales
+	 * against 11,264 unread and takes fake snipes from 868 to 840. <b>It costs 1,043 valuations to fix
+	 * 28</b>, and coloured sales themselves go from 1,023 priced - 800 of them within 1.5x of what
+	 * they fetched - to 5.
+	 *
+	 * <p>The lesson the colour is the source of: <b>keying an attribute converts a wrong number into
+	 * no number, so check the wrong number is actually wrong first.</b> Here it mostly is not. The
+	 * items carrying a colour densely are fashion items whose entire pool is coloured, so the pool is
+	 * right about them, and the exotics that would justify a split are so rare that a median ignores
+	 * them.
 	 */
-	private static String withoutPaint(DecodedItem item) {
-		return item.signature().replaceFirst("\\|dye=[^|]*$", "");
+	@Test
+	void keyingTheRawColourCostsMoreThanItFixes() throws Exception {
+		Set<String> colouredIds = idsThatEverCarryAColour();
+		long cutoff = TapeFixture.newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
+
+		UnreadTerms pooledTerms = new UnreadTerms(DyeSignatureBacktestTest::colourTerm);
+		UnreadTerms keyedTerms = new UnreadTerms(DyeSignatureBacktestTest::colourTerm);
+
+		Backtest.Result pooled = Backtest.holdout(Keying.PRODUCTION, cutoff, WHOLE_TAPE,
+				item -> colouredIds.contains(item.skyblockId()), pooledTerms);
+		Backtest.Result keyed = Backtest.holdout(keyedTerms.keying(), cutoff, WHOLE_TAPE,
+				item -> colouredIds.contains(item.skyblockId()), keyedTerms);
+
+		System.out.printf("%n%,d item ids ever carry a raw colour%n", colouredIds.size());
+		System.out.printf("held-out sales of those ids:%n  %-26s %s%n  %-26s %s%n",
+				"today (colour unread)", pooled, "with colour= keyed", keyed);
+		System.out.printf("  coloured sales priced: %,d unread (%,d within 1.5x), %,d keyed%n",
+				pooled.count(pooledTerms::carries), pooled.within(1.5d, pooledTerms::carries),
+				keyed.count(keyedTerms::carries));
+
+		// The cost: an exact colour key is a cell of one, and the bare guard takes the coarse
+		// fallback away as well, so a coloured sale ends up with nothing.
+		assertTrue(keyed.count(keyedTerms::carries) * 5 < pooled.count(pooledTerms::carries),
+				"keying the colour should cost most coloured sales their valuation, but priced "
+						+ "coloured sales went from " + pooled.count(pooledTerms::carries) + " to "
+						+ keyed.count(keyedTerms::carries));
+
+		// The mixed pool is right about most of them, which is what makes that cost a loss.
+		assertTrue(pooled.within(1.5d, pooledTerms::carries) * 4 > pooled.count(pooledTerms::carries) * 3,
+				"the pooled key is expected to value most coloured sales within 1.5x of what they "
+						+ "fetched, but only " + pooled.within(1.5d, pooledTerms::carries) + " of "
+						+ pooled.count(pooledTerms::carries) + " landed there");
+
+		// And the benefit side. If keying the colour ever starts removing fake snipes in bulk, the
+		// exotics have begun moving medians and the call flips.
+		assertTrue(pooled.overvaluedBy(2.0d) - keyed.overvaluedBy(2.0d)
+						< pooled.priced().size() - keyed.priced().size(),
+				"the colour term is kept out because it fixes fewer overvaluations than the "
+						+ "valuations it costs, and this run fixed "
+						+ (pooled.overvaluedBy(2.0d) - keyed.overvaluedBy(2.0d)) + " for "
+						+ (pooled.priced().size() - keyed.priced().size()));
 	}
 
-	/** What the callers all need per sale: the decoded item, its paint, and its unit price. */
-	private interface SaleVisitor {
-		void accept(DecodedItem item, long timestamp, String[] paint, double unitPrice);
-	}
+	private static Set<String> idsThatEverCarryAColour() throws Exception {
+		Set<String> ids = new HashSet<>();
 
-	private static void forEachSale(SaleVisitor visitor) throws Exception {
-		SalesTape tape = new SalesTape(Path.of(
-				System.getProperty("skyblockflipper.tapeDir", DEFAULT_TAPE_DIR)), 3650);
-
-		tape.forEachRecent(ALL_DAYS, sale -> {
-			if (!sale.bin() || sale.price() <= 0L) {
-				return;
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			if (!colour(extra).isEmpty()) {
+				ids.add(item.skyblockId());
 			}
-
-			NbtCompound root;
-
-			try {
-				root = NbtReader.readItemBytes(sale.itemBytes());
-			} catch (Exception e) {
-				return;
-			}
-
-			// Every sale, painted or not: the plain pools are what the painted ones are compared
-			// against, so leaving them out would measure the comparison against nothing.
-			ItemDecoder.fromRoot(root).ifPresent(item -> visitor.accept(
-					item, sale.timestamp(), paint(root),
-					(double) sale.price() / Math.max(1, item.count())));
 		});
+
+		assertTrue(!ids.isEmpty(), "no coloured sales on the tape at " + TapeFixture.tapeDir());
+		return ids;
 	}
 
-	private static long newestTimestamp() throws Exception {
-		SalesTape tape = new SalesTape(Path.of(
-				System.getProperty("skyblockflipper.tapeDir", DEFAULT_TAPE_DIR)), 3650);
-		long[] newest = {0L};
-		tape.forEachRecent(ALL_DAYS, sale -> newest[0] = Math.max(newest[0], sale.timestamp()));
-
-		assertTrue(newest[0] > 0L, "no sales on the tape at " + DEFAULT_TAPE_DIR);
-		return newest[0];
+	/** The candidate term: the raw triple exactly as Hypixel writes it. */
+	private static String colourTerm(DecodedItem item, NbtCompound extra) {
+		String colour = colour(extra);
+		return colour.isEmpty() ? "" : "color=" + colour;
 	}
 
-	/** @return {@code {dye_item, color}}, either or both possibly "" */
-	private static String[] paint(NbtCompound root) {
-		if (!(root.list("i").stream().findFirst().orElse(null) instanceof NbtCompound item)) {
-			return new String[] {"", ""};
-		}
-
-		NbtCompound extra = item.child("tag").child("ExtraAttributes");
-
-		return new String[] {
-				extra.string("dye_item").orElse(""),
-				extra.string("color").orElse("")};
-	}
-
-	private static OptionalDouble median(List<Double> values, int minSamples) {
-		if (values == null || values.size() < minSamples) {
-			return OptionalDouble.empty();
-		}
-
-		List<Double> sorted = values.stream().sorted().toList();
-		return OptionalDouble.of(sorted.get(sorted.size() / 2));
+	private static String colour(NbtCompound extra) {
+		return extra.string(COLOUR).orElse("");
 	}
 
 	private static String trim(String key) {

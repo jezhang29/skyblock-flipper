@@ -1,16 +1,16 @@
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
-import jeff.skyblockflipper.core.item.ItemDecoder;
-import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.nbt.NbtCompound;
-import jeff.skyblockflipper.core.nbt.NbtReader;
-import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.valuation.backtest.Backtest;
+import jeff.skyblockflipper.core.valuation.backtest.CounterfactualKeying;
+import jeff.skyblockflipper.core.valuation.backtest.SignatureTerms;
+import jeff.skyblockflipper.core.valuation.backtest.TapeFixture;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -46,26 +46,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <li><b>It is nearly free.</b> Only 12 taped sales would lose their exact key, against 24 for the
  *     scroll and 405 configurations for the drill parts.
  * </ul>
+ *
+ * <p>The holdout arms run the model that ships, under a {@link Keying} that unreads the term. They
+ * used to run a hand-built pair of maps that resembled it; see {@link Backtest} for what that copy
+ * got wrong. Re-measuring against the real model made the case for the term <b>stronger</b>: fake
+ * snipes unread went from the copy's 13 to 175, and keying them away costs 7 valuations in 1,053.
+ *
+ * <p>The reason is the copy kept every sample where {@code FairValueModel.Builder} keeps the most
+ * recent 200. On a key that pools plain and merged sales the ring fills with whichever population
+ * sold lately, so the pooled median swings to the dearer one and every plain sale reads as a snipe -
+ * an error the copy could not produce and therefore never counted.
  */
 @EnabledIfSystemProperty(named = "skyblockflipper.tapeBacktest", matches = "true")
 class EthermergeBacktestTest {
-	private static final String DEFAULT_TAPE_DIR = "run/config/skyblock-flipper/tape";
-	private static final int ALL_DAYS = 365;
 	private static final long HOLDOUT_HOURS = 24L;
+
+	/** Longer than any tape, so training is the unbounded replay these findings were measured on. */
+	private static final Duration WHOLE_TAPE = Duration.ofDays(3650);
 
 	private static final String ETHERMERGE = "ethermerge";
 	private static final String TUNED = "tuned_transmission";
 	private static final String NONE = "(none)";
-
-	/** How the merge reaches the signature, if at all. */
-	private enum Keying {
-		/** Today: a merged Aspect of the Void is keyed exactly like an unmerged one. */
-		POOLED,
-		/** One bit, which is what ships. */
-		MERGE,
-		/** The bit plus the Transmission Tuner level, the finer term this rejects. */
-		MERGE_AND_TUNER
-	}
 
 	/**
 	 * The market, and which way its mixed pools are wrong.
@@ -81,7 +82,7 @@ class EthermergeBacktestTest {
 		long[] coins = {0L};
 		int[] bare = {0};
 
-		forEachSale((item, extra, timestamp, unitPrice) -> {
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
 			boolean merged = extra.flag(ETHERMERGE);
 
 			if (merged) {
@@ -113,9 +114,8 @@ class EthermergeBacktestTest {
 			}
 
 			mixed++;
-			OptionalDouble quoted = median(
-					variants.values().stream().flatMap(List::stream).toList(),
-					ValueEstimate.MIN_SAMPLES);
+			OptionalDouble quoted = Backtest.quotableMedian(
+					variants.values().stream().flatMap(List::stream).toList());
 
 			if (quoted.isEmpty()) {
 				continue;
@@ -126,7 +126,7 @@ class EthermergeBacktestTest {
 			double worst = 1.0d;
 
 			for (Map.Entry<String, List<Double>> variant : variants.entrySet()) {
-				double med = median(variant.getValue(), 1).orElseThrow();
+				double med = TapeFixture.median(variant.getValue(), 1).orElseThrow();
 				double ratio = quoted.getAsDouble() / med;
 				worst = Math.max(worst, Math.max(ratio, 1.0d / ratio));
 
@@ -171,128 +171,109 @@ class EthermergeBacktestTest {
 	@Test
 	void keyingTheMergeFixesMoreThanItCosts() throws Exception {
 		Set<String> ids = idsThatEverMerge();
-		long cutoff = newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
+		long cutoff = TapeFixture.newestTimestamp() - HOLDOUT_HOURS * 3_600_000L;
 
-		Scored pooled = score(ids, cutoff, Keying.POOLED);
-		Scored keyed = score(ids, cutoff, Keying.MERGE);
-		Scored tuned = score(ids, cutoff, Keying.MERGE_AND_TUNER);
+		Backtest.Result pooled = Backtest.holdout(CounterfactualKeying.withoutTerm(ETHERMERGE),
+				cutoff, WHOLE_TAPE, item -> ids.contains(item.skyblockId()));
+		Backtest.Result keyed = Backtest.holdout(Keying.PRODUCTION,
+				cutoff, WHOLE_TAPE, item -> ids.contains(item.skyblockId()));
 
 		System.out.printf("%n%,d item ids ever carry an ethermerge%n", ids.size());
-		System.out.printf("held-out sales of those ids:%n  %-26s %s%n  %-26s %s%n  %-26s %s%n",
-				"today (merge unread)", pooled, "with the merge keyed", keyed,
-				"with the tuner level too", tuned);
+		System.out.printf("held-out sales of those ids:%n  %-26s %s%n  %-26s %s%n",
+				"today (merge unread)", pooled, "with the merge keyed", keyed);
+		System.out.printf("  merged sales priced: %,d unread, %,d keyed%n",
+				pooled.count(DecodedItem::ethermerged), keyed.count(DecodedItem::ethermerged));
+		System.out.printf("  overvaluations by how the quote was matched:%n    unread %s%n    keyed  %s%n",
+				overvaluedByBasis(pooled), overvaluedByBasis(keyed));
 
-		// The tuner level rides along on a merged item and is worth 1.06x on top of it - 24,900,000
-		// against 26,400,000 under the largest mixed pool - so it splits cells for a difference the
-		// market barely prices. Keeping it out is what makes the term one bit.
-		assertTrue(tuned.priced() <= keyed.priced(), "the tuner level is expected to cost coverage "
-				+ "on top of the merge, since it splits merged sales again");
-		assertTrue(tuned.overvalued() >= keyed.overvalued(), "the tuner level is expected to fix no "
-				+ "overvaluation the merge alone does not");
-
-		assertTrue(keyed.overvalued() < pooled.overvalued(), "keying the merge is expected to remove "
-				+ "fake snipes, but overvaluations went from " + pooled.overvalued() + " to "
-				+ keyed.overvalued());
+		assertTrue(keyed.overvaluedBy(2.0d) < pooled.overvaluedBy(2.0d), "keying the merge is expected "
+				+ "to remove fake snipes, but overvaluations went from " + pooled.overvaluedBy(2.0d)
+				+ " to " + keyed.overvaluedBy(2.0d));
 
 		// Coverage is the price of every signature term, and this one is expected to be cheap.
-		assertTrue(keyed.priced() * 10 > pooled.priced() * 9, "the merge is expected to cost few "
-				+ "valuations, but priced sales went from " + pooled.priced() + " to " + keyed.priced());
+		assertTrue(keyed.priced().size() * 10 > pooled.priced().size() * 9, "the merge is expected to "
+				+ "cost few valuations, but priced sales went from " + pooled.priced().size() + " to "
+				+ keyed.priced().size());
 	}
 
 	/**
-	 * @param mergedPriced held-out merged sales that got a valuation at all
-	 * @param overvalued   sales valued at 2x or more of what they fetched, the fake snipes
+	 * Why the Transmission Tuner level stays out of the term, measured without a model.
+	 *
+	 * <p>{@code tuned_transmission} rides along on a merged item and is worth about 1.06x on top of
+	 * it, so splitting merged sales again buys a difference the market barely prices - and costs the
+	 * cells that fall under {@link ValueEstimate#MIN_SAMPLES} their valuation entirely.
+	 *
+	 * <p>A pool-shape measurement rather than a holdout, because the tuner level is not a term
+	 * {@link DecodedItem} reads: two sales differing only in tuner decode identically, so no
+	 * {@link Keying} over a decoded item can tell them apart. Counting the cells the split would
+	 * strand is the same claim, made where the evidence is.
 	 */
-	private record Scored(int priced, int mergedPriced, int overvalued, double median, double p90) {
-		@Override
-		public String toString() {
-			return String.format("%,5d priced (%,d merged), %,d over 2x, median |log err| %.3f, "
-					+ "p90 %.3f", priced, mergedPriced, overvalued, median, p90);
-		}
-	}
+	@Test
+	void theTunerLevelSplitsCellsForADifferenceTheMarketBarelyPrices() throws Exception {
+		Map<String, List<Double>> merged = new HashMap<>();
+		Map<String, List<Double>> mergedAndTuned = new HashMap<>();
 
-	/** Replays the tape into the two indices production builds, then prices the holdout from them. */
-	private static Scored score(Set<String> ids, long cutoff, Keying keying) throws Exception {
-		Map<String, List<Double>> exact = new HashMap<>();
-		Map<String, List<Double>> coarse = new HashMap<>();
-		List<Held> holdout = new ArrayList<>();
-
-		forEachSale((item, extra, timestamp, unitPrice) -> {
-			if (!ids.contains(item.skyblockId())) {
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
+			if (!extra.flag(ETHERMERGE)) {
 				return;
 			}
 
-			boolean merged = extra.flag(ETHERMERGE);
 			String base = unmerged(item);
-			String term = merged ? switch (keying) {
-				case POOLED -> "";
-				case MERGE -> "|ethermerge";
-				case MERGE_AND_TUNER -> "|" + term(extra);
-			} : "";
-			String key = base + term;
-			boolean bare = bareApartFromMerge(item) && term.isEmpty();
-			String coarseKey = ActiveListing.coarseKey(item.displayName(), item.rarity());
-
-			if (timestamp >= cutoff) {
-				holdout.add(new Held(unitPrice, key, bare ? coarseKey : "", merged));
-				return;
-			}
-
-			exact.computeIfAbsent(key, k -> new ArrayList<>()).add(unitPrice);
-
-			if (bare) {
-				coarse.computeIfAbsent(coarseKey, k -> new ArrayList<>()).add(unitPrice);
-			}
+			merged.computeIfAbsent(base, k -> new ArrayList<>()).add(unitPrice);
+			mergedAndTuned.computeIfAbsent(base + "|" + term(extra), k -> new ArrayList<>())
+					.add(unitPrice);
 		});
 
-		List<Double> errors = new ArrayList<>();
-		int mergedPriced = 0;
-		int overvalued = 0;
+		// Sales, not cells. A cell of 309 splitting into 288 and 21 leaves two quotable cells where
+		// there was one, so counting cells reads as a gain; what the split actually costs is the
+		// sales that land in a cell too small to quote, and those lose their valuation outright.
+		int quotableSalesMerged = quotableSales(merged);
+		int quotableSalesTuned = quotableSales(mergedAndTuned);
+		int stranded = quotableSalesMerged - quotableSalesTuned;
 
-		for (Held sale : holdout) {
-			OptionalDouble estimate = median(exact.get(sale.key()), ValueEstimate.MIN_SAMPLES);
+		System.out.printf("%n%,d merged cells holding %,d quotable sales; split by tuner level: "
+						+ "%,d cells holding %,d quotable sales, so %,d sales lose their valuation%n",
+				merged.size(), quotableSalesMerged, mergedAndTuned.size(), quotableSalesTuned,
+				stranded);
 
-			if (estimate.isEmpty() && !sale.coarseKey().isEmpty()) {
-				estimate = median(coarse.get(sale.coarseKey()), ValueEstimate.MIN_SAMPLES);
-			}
-
-			if (estimate.isEmpty() || estimate.getAsDouble() <= 0.0d || sale.price() <= 0.0d) {
-				continue;
-			}
-
-			double ratio = estimate.getAsDouble() / sale.price();
-			errors.add(Math.abs(Math.log(ratio)));
-
-			if (ratio >= 2.0d) {
-				overvalued++;
-			}
-
-			if (sale.merged()) {
-				mergedPriced++;
-			}
-		}
-
-		List<Double> sorted = errors.stream().sorted().toList();
-
-		return new Scored(sorted.size(), mergedPriced, overvalued,
-				sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() / 2),
-				sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() * 9 / 10));
+		assertTrue(mergedAndTuned.size() > merged.size(), "the tuner level is expected to split merged "
+				+ "cells, and it split none - either no merged sale is tuned, or the attribute moved");
+		assertTrue(stranded > 0, "the tuner level is kept out because splitting merged sales again "
+				+ "strands some of them below the sample floor, and this split stranded none");
 	}
 
-	/** A held-out sale, the key it would be priced under, and the coarse key if it is eligible. */
-	private record Held(double price, String key, String coarseKey, boolean merged) {
+	/**
+	 * Which index produced each fake snipe.
+	 *
+	 * <p>Worth printing because the coarse index is the one that pools on name and rarity alone, and
+	 * a run where the overvaluations are mostly {@code COARSE} is saying the fallback pool is
+	 * contaminated rather than that the term under test is wrong.
+	 */
+	private static Map<ValueEstimate.Basis, Long> overvaluedByBasis(Backtest.Result result) {
+		return result.priced().stream()
+				.filter(priced -> priced.overvaluedBy(2.0d))
+				.collect(java.util.stream.Collectors.groupingBy(Backtest.Priced::basis,
+						TreeMap::new, java.util.stream.Collectors.counting()));
+	}
+
+	/** Sales sitting in a cell with enough company to be quoted at all. */
+	private static int quotableSales(Map<String, List<Double>> cells) {
+		return cells.values().stream()
+				.filter(prices -> prices.size() >= ValueEstimate.MIN_SAMPLES)
+				.mapToInt(List::size)
+				.sum();
 	}
 
 	private static Set<String> idsThatEverMerge() throws Exception {
 		Set<String> ids = new HashSet<>();
 
-		forEachSale((item, extra, timestamp, unitPrice) -> {
+		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
 			if (extra.flag(ETHERMERGE)) {
 				ids.add(item.skyblockId());
 			}
 		});
 
-		assertTrue(!ids.isEmpty(), "no ethermerged sales on the tape at " + tapeDir());
+		assertTrue(!ids.isEmpty(), "no ethermerged sales on the tape at " + TapeFixture.tapeDir());
 		return ids;
 	}
 
@@ -309,85 +290,14 @@ class EthermergeBacktestTest {
 		return tuned > 0 ? "ethermerge,tuned=" + tuned : "ethermerge";
 	}
 
-	/**
-	 * The signature this item had before the merge was read, which is the baseline being measured.
-	 *
-	 * <p>Now that the term ships, {@link DecodedItem#signature()} already carries it, so the "today"
-	 * arm has to take it back off. Safe as a strip because the clause is a fixed string and the only
-	 * thing that can follow it is the dye clause.
-	 */
+	/** The signature this item had before the merge was read, which is the baseline being measured. */
 	private static String unmerged(DecodedItem item) {
-		return item.signature().replaceFirst("\\|ethermerge(?=\\||$)", "");
+		return SignatureTerms.without(item.signature(), ETHERMERGE);
 	}
 
-	/** {@link FairValueModel}'s admission test for the coarse index, minus the merge itself. */
+	/** Bare once the merge is unread - the sales that would join the coarse pool of plain ones. */
 	private static boolean bareApartFromMerge(DecodedItem item) {
-		return !item.isPet()
-				&& !item.isPotion()
-				&& !item.hasQuality()
-				&& !item.isDyed()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty()
-				&& item.runes().isEmpty();
-	}
-
-	/** The decoded item, its raw {@code ExtraAttributes}, when it sold, and its unit price. */
-	private interface SaleVisitor {
-		void accept(DecodedItem item, NbtCompound extra, long timestamp, double unitPrice);
-	}
-
-	private static void forEachSale(SaleVisitor visitor) throws Exception {
-		tape().forEachRecent(ALL_DAYS, sale -> {
-			if (!sale.bin() || sale.price() <= 0L) {
-				return;
-			}
-
-			NbtCompound root;
-
-			try {
-				root = NbtReader.readItemBytes(sale.itemBytes());
-			} catch (Exception e) {
-				return;
-			}
-
-			if (!(root.list("i").stream().findFirst().orElse(null) instanceof NbtCompound stack)) {
-				return;
-			}
-
-			NbtCompound extra = stack.child("tag").child("ExtraAttributes");
-
-			ItemDecoder.fromRoot(root).ifPresent(item -> visitor.accept(item, extra, sale.timestamp(),
-					(double) sale.price() / Math.max(1, item.count())));
-		});
-	}
-
-	private static long newestTimestamp() throws Exception {
-		long[] newest = {0L};
-		tape().forEachRecent(ALL_DAYS, sale -> newest[0] = Math.max(newest[0], sale.timestamp()));
-
-		assertTrue(newest[0] > 0L, "no sales on the tape at " + tapeDir());
-		return newest[0];
-	}
-
-	private static SalesTape tape() {
-		return new SalesTape(Path.of(tapeDir()), 3650);
-	}
-
-	private static String tapeDir() {
-		return System.getProperty("skyblockflipper.tapeDir", DEFAULT_TAPE_DIR);
-	}
-
-	private static OptionalDouble median(List<Double> values, int minSamples) {
-		if (values == null || values.size() < minSamples) {
-			return OptionalDouble.empty();
-		}
-
-		List<Double> sorted = values.stream().sorted().toList();
-		return OptionalDouble.of(sorted.get(sorted.size() / 2));
+		return CounterfactualKeying.withoutTerm(ETHERMERGE).isBare(item);
 	}
 
 	private static String trim(String key) {
