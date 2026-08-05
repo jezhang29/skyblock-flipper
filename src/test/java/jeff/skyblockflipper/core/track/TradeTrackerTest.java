@@ -196,6 +196,53 @@ class TradeTrackerTest {
 		assertFalse(tracker.orders().isEmpty());
 	}
 
+	/**
+	 * The wording live play produced on 2026-08-04, which the recorded session never contained
+	 * because every cancel in it was a sell offer.
+	 *
+	 * <p>A cancelled buy order refunds coins and names nothing, so the refund amount is the only
+	 * evidence of which order it was. Two buy orders rest at once here to check the amount is
+	 * really what selects, rather than the cancel landing on whichever order is first.
+	 */
+	@Test
+	void cancelsTheBuyOrderWhoseEscrowMatchesTheRefund() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 311x Purple Candy for 6,554,823 coins."));
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 64x Cobblestone for 5,000 coins."));
+		tracker.accept(chat("[Bazaar] Cancelled! Refunded 6,554,823 coins from cancelling Buy Order!"));
+
+		assertEquals(TrackedOrder.Status.CANCELLED, order(tracker, "Purple Candy").status());
+		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Cobblestone").status());
+
+		// The 311 units that never filled are what the fill rate is measured from, so the cancel
+		// has to leave the original total behind rather than shrinking the order to nothing.
+		assertEquals(311L, order(tracker, "Purple Candy").total());
+		assertEquals(0L, order(tracker, "Purple Candy").filled());
+	}
+
+	/** An amount matching no resting order cancels nothing, rather than cancelling the nearest. */
+	@Test
+	void ignoresACoinRefundThatMatchesNoOrder() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 311x Purple Candy for 6,554,823 coins."));
+		tracker.accept(chat("[Bazaar] Cancelled! Refunded 1,000 coins from cancelling Buy Order!"));
+
+		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Purple Candy").status());
+	}
+
+	private static CapturedChat chat(String line) {
+		return new CapturedChat(0L, line);
+	}
+
+	private static TrackedOrder order(TradeTracker tracker, String displayName) {
+		return tracker.orders().stream()
+				.filter(o -> o.displayName().equals(displayName))
+				.findFirst()
+				.orElseThrow();
+	}
+
 	private static TradeTracker track() {
 		return TradeTracker.replay(session, ME);
 	}

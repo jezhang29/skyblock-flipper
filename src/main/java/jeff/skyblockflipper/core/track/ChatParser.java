@@ -45,6 +45,18 @@ public final class ChatParser {
 	private static final Pattern ORDER_CANCELLED = Pattern.compile(
 			"^\\[Bazaar] Cancelled! Refunded " + NUMBER + "x (.+?) from cancelling (Buy Order|Sell Offer)!$");
 
+	/**
+	 * The other half of a cancel, and the half that was missed until live play produced it.
+	 *
+	 * <p>A cancelled sell offer hands back the items and names them; a cancelled buy order hands
+	 * back the escrowed coins and names nothing. Measured on 2026-08-04:
+	 * {@code [Bazaar] Cancelled! Refunded 6,554,823 coins from cancelling Buy Order!}. With no item
+	 * and no unit count there is nothing here to match an order on but the coins, which is why
+	 * {@link TradeTracker} matches this form on the refund amount rather than on the name.
+	 */
+	private static final Pattern ORDER_CANCELLED_COINS = Pattern.compile(
+			"^\\[Bazaar] Cancelled! Refunded " + NUMBER + " coins from cancelling (Buy Order|Sell Offer)!$");
+
 	private static final Pattern INSTANT = Pattern.compile(
 			"^\\[Bazaar] (Bought|Sold) " + NUMBER + "x (.+?) for " + NUMBER + " coins!$");
 
@@ -105,6 +117,13 @@ public final class ChatParser {
 		if (matcher.matches()) {
 			return event(at, TradeEvent.Kind.ORDER_CANCELLED, side(matcher.group(3)), matcher.group(2),
 					number(matcher.group(1)), 0.0d, 0.0d);
+		}
+
+		matcher = ORDER_CANCELLED_COINS.matcher(text);
+
+		if (matcher.matches()) {
+			return event(at, TradeEvent.Kind.ORDER_CANCELLED, side(matcher.group(2)), "",
+					0L, number(matcher.group(1)), 0.0d);
 		}
 
 		matcher = INSTANT.matcher(text);

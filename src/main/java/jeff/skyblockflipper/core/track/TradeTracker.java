@@ -30,6 +30,15 @@ import java.util.stream.Stream;
  * <p>Not thread-safe. Feed it from one thread, in the order the client saw things.
  */
 public final class TradeTracker {
+	/**
+	 * How far a coin refund may sit from an order's escrow and still be taken as that order's.
+	 *
+	 * <p>Wide enough for the rounding between a fractional unit price and a whole-coin total, and
+	 * narrow enough that two buy orders would have to rest within a tenth of a percent of the same
+	 * coins to be confused.
+	 */
+	private static final double REFUND_TOLERANCE = 0.001d;
+
 	private final String player;
 	private final ItemNameIndex names = new ItemNameIndex();
 	private final List<TrackedOrder> orders = new ArrayList<>();
@@ -111,7 +120,15 @@ public final class TradeTracker {
 				settle(event, Settlement.Venue.BAZAAR_ORDER);
 			}
 
-			case ORDER_CANCELLED -> matchForCancel(event).ifPresent(order -> order.cancel(event.units()));
+			// A sell cancel names the item and the units; a buy cancel names only the coins, so the
+			// two find their order by different evidence and cancel by different amounts.
+			case ORDER_CANCELLED -> {
+				if (event.displayName().isEmpty()) {
+					matchForCoinRefund(event).ifPresent(order -> order.cancel(order.remaining()));
+				} else {
+					matchForCancel(event).ifPresent(order -> order.cancel(event.units()));
+				}
+			}
 
 			case INSTANT -> settle(event, Settlement.Venue.BAZAAR_INSTANT);
 
@@ -226,6 +243,38 @@ public final class TradeTracker {
 		return exact.isPresent()
 				? exact
 				: candidates(event).filter(o -> o.remaining() >= event.units()).findFirst();
+	}
+
+	/**
+	 * Which order a coin refund cancelled, matched on the refund amount because it is the only
+	 * thing the line carries.
+	 *
+	 * <p>The escrow held on a resting buy order is its uncommitted units at its resting price, and
+	 * Hypixel refunds exactly that, so the amount identifies the order whenever two orders on the
+	 * same side are not resting on the same coins. A tolerance rather than equality because the
+	 * setup line's total is rounded to the coin while the unit price is not.
+	 *
+	 * <p>Nothing is cancelled when no order comes close. Cancelling the wrong order would take a
+	 * live position off the book inside the tracker and leave its later fills homeless, which is a
+	 * worse outcome than a stale order the next menu snapshot buries anyway.
+	 */
+	private Optional<TrackedOrder> matchForCoinRefund(TradeEvent event) {
+		return orders.stream()
+				.filter(TrackedOrder::isResting)
+				.filter(o -> o.side() == event.side())
+				.filter(o -> Math.abs(escrow(o) - event.coins()) <= event.coins() * REFUND_TOLERANCE)
+				.min(Comparator.comparingDouble(o -> Math.abs(escrow(o) - event.coins())));
+	}
+
+	/** Coins an order still has tied up, from a menu price when there is one and the setup line otherwise. */
+	private static double escrow(TrackedOrder order) {
+		if (order.unitPrice() > 0.0d) {
+			return order.remaining() * order.unitPrice();
+		}
+
+		return order.total() == 0L
+				? 0.0d
+				: order.setupCoins() * order.remaining() / order.total();
 	}
 
 	private Stream<TrackedOrder> candidates(TradeEvent event) {
