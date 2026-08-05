@@ -3,8 +3,7 @@
 A client-side Fabric mod for Minecraft 26.2 that ranks Hypixel Skyblock trading opportunities by
 expected profit per hour, after the full fee stack.
 
-It is **advisory**. It surfaces numbers and rankings; it never clicks, buys, sells, or touches your
-inventory. Everything it knows comes from Hypixel's public API.
+Everything it knows comes from Hypixel's public API.
 
 ## What it does
 

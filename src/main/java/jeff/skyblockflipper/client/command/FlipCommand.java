@@ -14,6 +14,7 @@ import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.client.gui.Settings;
 import jeff.skyblockflipper.client.track.CaptureService;
+import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
@@ -25,6 +26,7 @@ import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.track.CaptureLog;
+import jeff.skyblockflipper.core.track.TradeTracker;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import java.io.IOException;
@@ -124,6 +126,11 @@ public final class FlipCommand {
 				.then(ClientCommands.literal("capture")
 						.executes(ctx -> {
 							toggleCapture(ctx.getSource());
+							return 1;
+						}))
+				.then(ClientCommands.literal("track")
+						.executes(ctx -> {
+							toggleAutoTrack(ctx.getSource());
 							return 1;
 						}))
 				.then(ClientCommands.literal("gui")
@@ -357,6 +364,38 @@ public final class FlipCommand {
 		}
 	}
 
+	/**
+	 * Turns automatic ledger filling on or off.
+	 *
+	 * <p>Says what it will and will not see, because the two limits are not guessable: a partial
+	 * fill is announced in no chat line at all, and a sale of stock bought before tracking started
+	 * settles against no position and is dropped.
+	 */
+	private static void toggleAutoTrack(FabricClientCommandSource source) {
+		FlipperConfig config = SkyblockFlipperClient.config();
+		config.autoTrackEnabled = !config.autoTrackEnabled;
+
+		if (!SkyblockFlipperClient.saveConfig()) {
+			source.sendError(Component.literal(
+					"Tracking toggled for this session, but the config could not be saved.")
+					.withStyle(ChatFormatting.RED));
+			return;
+		}
+
+		if (!config.autoTrackEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Automatic tracking off. Positions already open stay in the ledger.")
+					.withStyle(ChatFormatting.GRAY)));
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Tracking your trades into the ledger. Open your bazaar orders menu now and then - "
+						+ "a partial fill is announced nowhere else. Sales of stock you had before "
+						+ "this was on settle against nothing and are skipped.")
+				.withStyle(ChatFormatting.GREEN)));
+	}
+
 	private static void showStatus(FabricClientCommandSource source) {
 		MarketData data = MarketDataService.data();
 
@@ -429,6 +468,17 @@ public final class FlipCommand {
 
 		line(source, "bazaar tax", String.format("%.3f%%",
 				new Fees(SkyblockFlipperClient.config().bazaarFlipperLevel, mayor.isDerpy()).bazaarTaxRate() * 100.0d));
+		// Resting orders are the half of tracking that has no other display: the ledger shows
+		// positions, and an order that has filled but not been collected is not one yet.
+		if (SkyblockFlipperClient.config().autoTrackEnabled) {
+			TradeTracker tracker = TrackerService.tracker();
+			int waiting = tracker.awaitingClaim().size();
+
+			line(source, "trade tracking", tracker.resting().size() + " resting order(s), "
+					+ tracker.settlements().size() + " trade(s) seen this session"
+					+ (waiting > 0 ? ", " + waiting + " with coins to collect" : ""));
+		}
+
 		line(source, "poll failures", String.valueOf(data.pollFailures()));
 
 		if (!data.lastError().isEmpty()) {

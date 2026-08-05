@@ -25,7 +25,7 @@ import java.util.List;
  * @param notes           statements of fact about the flip that are neither an action nor a risk:
  *                        which route was chosen and why, how much the item actually trades, which
  *                        item id this really is. Facts a player would otherwise have to take on
- *                        trust, which is the whole reason the mod is advisory
+ *                        trust
  */
 public record FlipCandidate(
 		String itemId,
