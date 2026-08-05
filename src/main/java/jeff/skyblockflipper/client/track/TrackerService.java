@@ -1,0 +1,148 @@
+package jeff.skyblockflipper.client.track;
+
+import jeff.skyblockflipper.SkyblockFlipper;
+import jeff.skyblockflipper.client.LedgerService;
+import jeff.skyblockflipper.client.MarketDataService;
+import jeff.skyblockflipper.client.SkyblockFlipperClient;
+import jeff.skyblockflipper.core.ledger.LedgerEntry;
+import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.track.CapturedChat;
+import jeff.skyblockflipper.core.track.CapturedMenu;
+import jeff.skyblockflipper.core.track.Settlement;
+import jeff.skyblockflipper.core.track.TradeTracker;
+
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Turns the trades Hypixel reports into ledger entries while you play.
+ *
+ * <p>The same chat lines and menus {@link CaptureService} records, read live instead of written to
+ * a file. {@link TradeTracker} does the understanding; this owns the instance, decides when a
+ * settlement is new, and hands it to the ledger.
+ *
+ * <p>Off unless {@code autoTrackEnabled}, and independent of trade capture: capture writes a file
+ * nothing reads, this writes the ledger, and either can run without the other.
+ *
+ * <p>Client thread only, like the ledger it writes to.
+ */
+public final class TrackerService {
+	private static TradeTracker tracker = new TradeTracker("");
+
+	/** Whose orders the tracker is reading, so an account switch does not inherit the last one's. */
+	private static String player = "";
+
+	/** How many of the tracker's settlements have reached the ledger. It only ever grows. */
+	private static int booked;
+
+	/** Set after the first ledger write failure, so a broken disk costs one log line, not one a trade. */
+	private static boolean broken;
+
+	private TrackerService() {
+	}
+
+	public static boolean enabled() {
+		return SkyblockFlipperClient.config().autoTrackEnabled && !broken;
+	}
+
+	public static void accept(CapturedChat chat) {
+		tracker().accept(chat);
+		drain();
+	}
+
+	public static void accept(CapturedMenu menu) {
+		tracker().accept(menu);
+		drain();
+	}
+
+	/** Resting orders the tracker believes you have, for {@code /flip status} to report. */
+	public static TradeTracker tracker() {
+		String name = playerName();
+
+		// A different account has different orders, and the co-op orders menu is filtered by name,
+		// so carrying the old tracker over would either lose every order or adopt someone else's.
+		if (!name.equals(player)) {
+			player = name;
+			tracker = new TradeTracker(name);
+			booked = 0;
+		}
+
+		return tracker;
+	}
+
+	private static void drain() {
+		List<Settlement> settlements = tracker.settlements();
+
+		for (int i = booked; i < settlements.size(); i++) {
+			book(settlements.get(i));
+		}
+
+		booked = settlements.size();
+	}
+
+	private static void book(Settlement settlement) {
+		try {
+			LedgerService.ledger().record(settlement, fees()).ifPresent(entry -> report(settlement, entry));
+		} catch (IOException e) {
+			broken = true;
+			SkyblockFlipper.LOGGER.error("Auto-tracking stopped: could not write {}",
+					LedgerService.file(), e);
+		}
+	}
+
+	/**
+	 * Says something only when a position finishes.
+	 *
+	 * <p>A line per settlement would be a second copy of Hypixel's own chat. A line per close is
+	 * the one moment the mod knows something the player does not: what the trade actually made, and
+	 * for a quoted position, how that compares with what was promised.
+	 */
+	private static void report(Settlement settlement, LedgerEntry entry) {
+		if (entry.status() != LedgerEntry.Status.CLOSED) {
+			return;
+		}
+
+		long realized = Math.round(entry.realizedTotal());
+		Component message = Component.literal("[Flipper] ").withStyle(ChatFormatting.GOLD)
+				.append(Component.literal(entry.displayName() + " closed: "
+						+ Coins.format(realized) + " net on " + entry.unitsSold() + " units")
+						.withStyle(realized < 0L ? ChatFormatting.RED : ChatFormatting.GREEN));
+
+		if (entry.isQuoted() && entry.quotedOnFilled() != 0.0d) {
+			message = message.copy().append(Component.literal(String.format(" (%.0f%% of quoted)",
+					entry.realizedTotal() / entry.quotedOnFilled() * 100.0d))
+					.withStyle(ChatFormatting.GRAY));
+		}
+
+		send(message);
+	}
+
+	private static void send(Component message) {
+		Minecraft client = Minecraft.getInstance();
+
+		if (client.player != null) {
+			client.player.sendSystemMessage(message);
+		}
+	}
+
+	/**
+	 * The fee model the quotes were computed with, so realized and quoted stay comparable. Derpy
+	 * quadruples auction fees, so the mayor has to be read at close time rather than assumed.
+	 */
+	private static Fees fees() {
+		return new Fees(SkyblockFlipperClient.config().bazaarFlipperLevel,
+				MarketDataService.data().mayor().isDerpy());
+	}
+
+	private static String playerName() {
+		return Optional.ofNullable(Minecraft.getInstance().getUser())
+				.map(user -> user.getName())
+				.orElse("");
+	}
+}

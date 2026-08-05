@@ -25,10 +25,15 @@ import java.nio.file.Path;
  * Records what Hypixel says while trading, so the tracker that will read it can be written against
  * real text.
  *
- * <p>Read-only in every direction: it listens to chat the client already received and to menus the
- * player already opened, and it never sends, clicks or types anything. Off unless
+ * <p>It listens to chat the client already received and to menus the
+ * player already opened. Off unless
  * {@code tradeCaptureEnabled} is set, and the flag is read at use time rather than at registration,
  * so {@code /flip capture} takes effect on the next line without a restart.
+ *
+ * <p>The same records feed {@link TrackerService} when {@code autoTrackEnabled} is on. One pair of
+ * hooks, two consumers: the reading of chat and menus is the expensive and fiddly part, and a
+ * second set of listeners would settle menus on its own schedule and disagree with this one about
+ * what a menu said.
  */
 public final class CaptureService {
 	/**
@@ -61,14 +66,24 @@ public final class CaptureService {
 	public static void register() {
 		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
 			// Action bar text repaints every tick and carries no trade wording worth having.
-			if (overlay || !enabled()) {
+			if (overlay || !active()) {
 				return;
 			}
 
 			String line = message.getString();
 
-			if (CaptureFilter.keepChat(line)) {
-				write(() -> LOG.append(new CapturedChat(System.currentTimeMillis(), line)));
+			if (!CaptureFilter.keepChat(line)) {
+				return;
+			}
+
+			CapturedChat chat = new CapturedChat(System.currentTimeMillis(), line);
+
+			if (capturing()) {
+				write(() -> LOG.append(chat));
+			}
+
+			if (TrackerService.enabled()) {
+				TrackerService.accept(chat);
 			}
 		});
 
@@ -80,7 +95,16 @@ public final class CaptureService {
 		});
 	}
 
-	private static boolean enabled() {
+	/** Whether either consumer wants records, which is what decides if the hooks do any work. */
+	private static boolean active() {
+		return capturing() || TrackerService.enabled();
+	}
+
+	/**
+	 * Recording to the file specifically. A full log or a failed write stops the file without
+	 * stopping the tracker, which needs nothing from the disk.
+	 */
+	private static boolean capturing() {
 		return SkyblockFlipperClient.config().tradeCaptureEnabled && !LOG.isFull() && !broken;
 	}
 
@@ -140,7 +164,7 @@ public final class CaptureService {
 		}
 
 		private void tick() {
-			if (!enabled()) {
+			if (!active()) {
 				return;
 			}
 
@@ -166,7 +190,14 @@ public final class CaptureService {
 
 			writtenHash = menu.contentsHash();
 			everWritten = true;
-			write(() -> LOG.append(menu));
+
+			if (capturing()) {
+				write(() -> LOG.append(menu));
+			}
+
+			if (TrackerService.enabled()) {
+				TrackerService.accept(menu);
+			}
 		}
 
 		/**

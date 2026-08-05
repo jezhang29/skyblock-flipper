@@ -174,6 +174,16 @@ public final class FlipperConfig {
 	 */
 	public boolean tradeCaptureEnabled = false;
 
+	/**
+	 * Fill the ledger from the trades Hypixel reports, instead of typing them in.
+	 *
+	 * <p>Off by default because it writes to your ledger: a wrong reading is worse than an empty
+	 * ledger, since the capture rate is the one number that is supposed to contradict the mod. Reads
+	 * the same chat lines and menus {@link #tradeCaptureEnabled} records, and needs neither that
+	 * flag nor the file.
+	 */
+	public boolean autoTrackEnabled = false;
+
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	public static FlipperConfig load(Path file) throws IOException {

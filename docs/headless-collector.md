@@ -144,7 +144,7 @@ non-recoverable window — rules out the serverless options:
   object storage.
 - **Free container tiers** (Render, Koyeb): ephemeral disk. A redeploy wipes the tape.
 
-What works is a persistent VM with a disk. Oracle Cloud's Always Free Ampere A1 (4 OCPU / 24GB /
+What works is a persistent VM with a disk. Oracle Cloud's Always Free Ampere A1 (2 OCPU / 12GB /
 200GB) is far more than this needs and is the only free tier that could also carry the auction
 sweep. A Raspberry Pi or an old laptop at home is just as good and has no capacity roulette — at
 ~9GB a month no ISP will notice. GCP's `e2-micro` free tier works for tape-only; its single shared

@@ -97,9 +97,17 @@ Key invariants:
   a trade produces, so the fill parser can be written against measured text. It splits on the same
   layering rule as everything else: `core/track` holds the filter, the JSONL log and the records
   (Minecraft-free, unit-tested); `client/track` holds `CaptureService` and `MenuReader`, which are
-  the only parts that touch the game. Off by default (`tradeCaptureEnabled`), read-only — no clicks,
-  no typed commands, no packets — and nothing consumes the file at runtime. `CaptureLog` stops at
+  the only parts that touch the game. Off by default (`tradeCaptureEnabled`), and nothing consumes the file at runtime. `CaptureLog` stops at
   32MB rather than rotating, because a session's early records are worth more than its late ones.
+- Automatic tracking (`/flip track`, `autoTrackEnabled`, off by default) reads the same live records
+  and writes the ledger. `TradeTracker` is the reconciler: **chat is the event stream and the orders
+  menu overrules it**, because a partial fill is announced in no chat line and a fill that happens
+  with the client closed is announced in none either. It emits `Settlement`s — coins that actually
+  moved — and `Ledger.record` books those. **A sale with no open position is dropped, never booked
+  against nothing**, and `LedgerEntry.Origin` keeps trades the mod never quoted out of the capture
+  rate while leaving them in the fill rate. `CaptureService` owns the one pair of hooks and feeds
+  both consumers; a second set of listeners would settle menus on its own schedule and disagree
+  about what a menu said.
 - Mixins: `skyblock-flipper.mixins.json` is wired but empty (no mixin package yet); a first mixin
   goes in `jeff.skyblockflipper.client.mixin` and must satisfy `requireAnnotations: true`.
 

@@ -5,8 +5,7 @@ orders, so the only things that know a trade happened are the chat lines the ser
 menus it fills in. This records both, verbatim, so the parser that will read them can be built
 against measured text.
 
-Nothing reads the file at runtime. It is off by default and it only ever reads: no clicks, no typed
-commands, no packets sent.
+Nothing reads the file at runtime. It is off by default.
 
 ## Running a session
 
@@ -57,3 +56,26 @@ The file becomes a fixture under `src/test/resources` and the parser gets writte
 it first: the chat filter is deliberately loose (any line containing `coins`, `order`, `bid` and so
 on), so it will have picked up unrelated lines, and it can pick up other players' chat in a public
 lobby.
+
+## Automatic tracking
+
+`/flip track` (`autoTrackEnabled`) is what the capture was groundwork for. It reads the same live
+chat lines and menu snapshots — it needs neither the capture flag nor the file — and writes the
+ledger: a buy opens a position, a sale closes it, and a position can close in pieces because one
+order often fills in pieces.
+
+Chat is the event stream and the orders menu overrules it, because two things happen that chat never
+mentions. A partial fill sends no notification at all, and an order that fills while the client is
+closed sends nothing either. So **open your bazaar orders menu now and then**; that is the only way
+those fills are ever seen.
+
+Two limits worth knowing before you turn it on:
+
+- A sale of stock you owned before tracking started settles against no position and is dropped. In
+  the recorded session that is 2,340 Slimeballs — booking them against nothing would have reported
+  about 87,000 coins of profit that was really just inventory.
+- A trade the mod never quoted is recorded as `AUTO_UNQUOTED`. It counts toward the fill rate and
+  stays out of the capture rate, because there was no quote for it to fall short of.
+
+`/flip status` reports resting orders, trades seen this session, and how many are sitting on coins
+you have not collected.

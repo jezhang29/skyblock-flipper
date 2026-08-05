@@ -145,8 +145,21 @@ public final class Guide {
 					+ "produce, to a file in the config folder. It is groundwork for tracking your "
 					+ "buys and sells automatically: the parser that will read them has to be "
 					+ "written against Hypixel's real wording, and this is how that wording gets "
-					+ "collected. It reads only; it never clicks, types or sends anything. Nothing "
-					+ "in the mod uses the file yet, so leave it off unless you are collecting")));
+					+ "collected. Nothing in the mod uses the file yet, so leave it off unless "
+					+ "you are collecting"),
+			new Term("Automatic tracking", "/flip track fills the ledger from the trades Hypixel "
+					+ "reports, instead of you typing them in. A buy opens a position, a sale "
+					+ "closes it, and a position can close in pieces because one order often fills "
+					+ "in pieces. Off by default, because a wrong entry is worse than an empty "
+					+ "ledger"),
+			new Term("Tracked without a quote", "A trade the mod never suggested. It is recorded, "
+					+ "and it counts toward the fill rate, but it stays out of the capture rate: "
+					+ "there was no quote to fall short of, and counting zero as the promise would "
+					+ "report every ordinary trade as a total failure"),
+			new Term("Open your orders menu", "Tracking reads chat, and Hypixel announces a partial "
+					+ "fill nowhere in it. The bazaar orders menu is the only place an order that "
+					+ "stopped half way shows up, so opening it now and then is what keeps a "
+					+ "tracked position honest")));
 
 	private static final Section SETTINGS = new Section("settings", "Settings that change the list",
 			List.of(
@@ -174,8 +187,6 @@ public final class Guide {
 							+ "the order of the list without hiding anything from it")));
 
 	private static final Section LIMITS = new Section("limits", "What this does not do", List.of(
-			new Term("Advisory only", "It surfaces numbers and rankings. It does not click, buy, "
-					+ "sell, relist or touch your inventory, and it never will"),
 			new Term("Prices go stale", "Everything here is from the last poll. Re-check the book "
 					+ "before you commit coins to any of it")));
 }

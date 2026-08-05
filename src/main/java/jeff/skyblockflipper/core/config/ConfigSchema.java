@@ -228,7 +228,14 @@ public final class ConfigSchema {
 							+ "chat-capture.jsonl in the config folder. Nothing reads it at runtime; "
 							+ "it exists so automatic trade tracking can be built against what "
 							+ "Hypixel actually says. Leave it off unless you are collecting.",
-					c -> c.tradeCaptureEnabled, (c, v) -> c.tradeCaptureEnabled = v)));
+					c -> c.tradeCaptureEnabled, (c, v) -> c.tradeCaptureEnabled = v),
+			new Entry.Flag("autoTrackEnabled", "Track trades automatically",
+					"Fill the ledger from the trades Hypixel reports, rather than typing them in "
+							+ "with /flip take and /flip close. Buys open positions, sales close "
+							+ "them, and a trade the mod never quoted is recorded but kept out of "
+							+ "the capture rate. Open your bazaar orders menu now and then: a "
+							+ "partial fill is announced nowhere else.",
+					c -> c.autoTrackEnabled, (c, v) -> c.autoTrackEnabled = v)));
 
 	private static List<String> zoomOptions() {
 		return List.of(ZOOM_AUTO, "0.5", "0.6", "0.7", "0.8", "0.9", "1.0");

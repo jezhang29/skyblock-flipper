@@ -18,9 +18,9 @@ import java.util.Optional;
  * spread closes - it is that the valuation is wrong, which is why nothing reaches this class until
  * it has been matched against realized sales of the same signature.
  *
- * <p>What this cannot do is guarantee the listing is still there. The mod is advisory and does not
- * click; by the time a human reads a line and opens the auction house, a genuine underprice may
- * well have been taken. That is stated on every candidate rather than implied away.
+ * <p>What this cannot do is guarantee the listing is still there.
+ * By the time a human reads a line and opens the auction house, a genuine underprice may
+ * well have been taken by bots. That is stated on every candidate rather than implied away.
  *
  * <p>Resale time comes from the observed sale rate of that configuration rather than from
  * optimism. Profit per hour on an item that sells twice a week is not the same business as the
