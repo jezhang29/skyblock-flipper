@@ -47,6 +47,15 @@ public final class Guide {
 					+ "the coins work rather than how many coins come back. A 10% ROC flip beats a "
 					+ "1% one at equal profit per hour, because it leaves the rest of your bankroll "
 					+ "free for another flip"),
+			new Term("Fill", "How long the slower leg is expected to take to turn the whole plan "
+					+ "over. A tilde in front of it means the figure comes from an assumed share of "
+					+ "the item's weekly flow rather than from displacement this client has "
+					+ "recorded, which needs about an hour of continuous uptime to start "
+					+ "measuring. A dash means the book never clears a position this size"),
+			new Term("Outbid", "How often somebody posts inside your resting order, measured from "
+					+ "recorded history. This is what decides whether a buy order fills or sits: a "
+					+ "wide margin on an item you get outbid five times an hour is a margin you "
+					+ "never actually get"),
 			new Term("Conf", "Confidence, 0 to 1: how much the inputs deserve to be trusted. High "
 					+ "for a fixed NPC price you instant-buy into, lower for anything resting on an "
 					+ "estimate, a fill you have to wait for, or a thin book"),

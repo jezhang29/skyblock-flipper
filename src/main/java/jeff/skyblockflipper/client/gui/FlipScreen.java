@@ -12,6 +12,7 @@ import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
+import jeff.skyblockflipper.core.text.Waits;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 
 import net.minecraft.ChatFormatting;
@@ -402,6 +403,19 @@ public final class FlipScreen extends Screen {
 				String.format("%.0f%%", candidate.returnOnCapital() * 100.0d));
 		cursor = field(graphics, x, cursor, wrapWidth, "Confidence",
 				String.format("%.2f", candidate.confidence()));
+
+		// Stated as fields rather than left in the prose notes: whether an order fills is the first
+		// question about a resting plan, and it was three paragraphs down.
+		if (candidate.fill() != null) {
+			cursor = field(graphics, x, cursor, wrapWidth, "Fill",
+					candidate.timeToTurnOver().map(Waits::format).orElse("never at this size")
+							+ (candidate.fillMeasured() ? " (measured)" : " (assumed)"));
+
+			if (candidate.fill().outbidsPerHour() > 0.0d) {
+				cursor = field(graphics, x, cursor, wrapWidth, "Outbid",
+						String.format("%.1f times an hour", candidate.fill().outbidsPerHour()));
+			}
+		}
 
 		PriceTrend trend = MarketDataService.data().trends().trendFor(candidate.itemId()).orElse(null);
 

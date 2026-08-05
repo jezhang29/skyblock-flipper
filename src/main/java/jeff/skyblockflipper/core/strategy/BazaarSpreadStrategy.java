@@ -226,7 +226,8 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 				confidence(weeklyVolume, product, trend),
 				steps(name, buyPrice, sellPrice, units),
 				risks(product, trend, fill, units, context),
-				notes(fill, units)));
+				notes(fill, units),
+				fill));
 	}
 
 	private static double hoursOf(Duration horizon) {
