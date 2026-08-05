@@ -501,7 +501,21 @@ public final class FlipScreen extends Screen {
 		} else {
 			int idWidth = font.width(Component.literal("0000")) + 8;
 			int capitalWidth = font.width(Component.literal("000.00M")) + 8;
-			int nameWidth = panelWidth - 2 * PANEL_PAD - idWidth - capitalWidth;
+			// How much of the position has come back. Without it an open row says only what was
+			// planned, which reads as nothing having happened even while fills are being booked.
+			int filledWidth = font.width(Component.literal("0000/0000")) + 8;
+			int nameWidth = panelWidth - 2 * PANEL_PAD - idWidth - capitalWidth - filledWidth;
+
+			// Named, because "596/899" beside a coin figure is not self-explanatory.
+			Component soldHeading = Component.literal("sold");
+			graphics.text(font, soldHeading,
+					x + PANEL_PAD + idWidth + nameWidth + filledWidth - 8 - font.width(soldHeading),
+					cursor, TEXT_DIM);
+
+			Component capitalHeading = Component.literal("in");
+			graphics.text(font, capitalHeading,
+					x + panelWidth - PANEL_PAD - font.width(capitalHeading), cursor, TEXT_DIM);
+			cursor += font.lineHeight + 2;
 
 			positionRowsTop = cursor;
 
@@ -517,6 +531,11 @@ public final class FlipScreen extends Screen {
 
 				graphics.text(font, Component.literal(Labels.fit(font, entry.displayName(), nameWidth)),
 						x + PANEL_PAD + idWidth, cursor, TEXT);
+
+				Component filled = Component.literal(entry.unitsSold() + "/" + entry.units());
+				graphics.text(font, filled,
+						x + PANEL_PAD + idWidth + nameWidth + filledWidth - 8 - font.width(filled),
+						cursor, entry.unitsSold() == 0L ? TEXT_DIM : TEXT_GOOD);
 
 				Component capital = Component.literal(Coins.format(entry.capital()));
 				graphics.text(font, capital,
