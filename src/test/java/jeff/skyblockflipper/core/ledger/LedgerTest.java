@@ -3,6 +3,8 @@ package jeff.skyblockflipper.core.ledger;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.track.Settlement;
+import jeff.skyblockflipper.core.track.TradeEvent;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -154,6 +156,85 @@ class LedgerTest {
 		assertEquals(1, ledger.stats(StrategyKind.BAZAAR_SPREAD).closed());
 		assertEquals(0, ledger.stats(StrategyKind.NPC_FLIP).closed());
 		assertFalse(ledger.stats(StrategyKind.NPC_FLIP).captureRate().isPresent());
+	}
+
+	@Test
+	void aPositionCanSellItselfInPieces(@TempDir Path dir) throws Exception {
+		// A 1,344 unit sell offer that filled 903 at 38.2 and the rest at 36.0, which is the shape
+		// the recorded session produced and the shape a single close() call cannot express.
+		Ledger ledger = ledgerIn(dir);
+		LedgerEntry opened = ledger.open(candidate("SLIME_BALL", 30.0d, 40.0d, 1_344L, 9.5d), 1L);
+
+		LedgerEntry part = ledger.record(sale(903L, 38.2d), FEES).orElseThrow();
+
+		assertTrue(part.isOpen());
+		assertEquals(903L, part.unitsSold());
+		assertEquals(38.2d, part.unitSellPrice());
+
+		LedgerEntry whole = ledger.record(sale(441L, 36.0d), FEES).orElseThrow();
+
+		assertEquals(opened.id(), whole.id());
+		assertEquals(LedgerEntry.Status.CLOSED, whole.status());
+		assertEquals(1_344L, whole.unitsSold());
+
+		// Weighted by units, so the cheap two thirds are not flattered by the dear third.
+		assertEquals((903L * 38.2d + 441L * 36.0d) / 1_344L, whole.unitSellPrice(), 1e-9);
+		assertEquals(whole.unitSellPrice() * 0.9875d - 30.0d, whole.realizedUnitNet(), 1e-9);
+	}
+
+	@Test
+	void sellingMoreThanWasPlannedDoesNotGrowThePosition(@TempDir Path dir) throws Exception {
+		// The extra units came from stock this position knows nothing about, and counting them
+		// would credit that stock's profit to this plan.
+		Ledger ledger = ledgerIn(dir);
+		ledger.open(candidate("SLIME_BALL", 30.0d, 40.0d, 100L, 9.5d), 1L);
+
+		LedgerEntry entry = ledger.record(sale(250L, 40.0d), FEES).orElseThrow();
+
+		assertEquals(100L, entry.unitsSold());
+		assertEquals(LedgerEntry.Status.CLOSED, entry.status());
+	}
+
+	@Test
+	void aTradeNobodyQuotedStaysOutOfTheCaptureRate(@TempDir Path dir) throws Exception {
+		// Bought and sold under tracking with no candidate behind it. Its quoted profit is zero, so
+		// including it would report a total shortfall on a trade that did nothing wrong.
+		Ledger ledger = ledgerIn(dir);
+		ledger.record(new Settlement(1L, Settlement.Venue.BAZAAR_INSTANT, TradeEvent.Side.BUY,
+				"SLIME_BALL", "Slimeball", 10L, 30.0d, 300.0d), FEES);
+		ledger.record(sale(10L, 40.0d), FEES);
+
+		LedgerStats stats = ledger.stats(null);
+
+		assertEquals(0, stats.closed());
+		assertEquals(1, stats.unquoted());
+		assertFalse(stats.captureRate().isPresent());
+
+		// It still says what fraction of a position comes back out, which needs no quote.
+		assertEquals(1.0d, stats.fillRate().orElseThrow(), 1e-9);
+	}
+
+	@Test
+	void entriesWrittenBeforeOriginsExistedAreHandTypedOnes(@TempDir Path dir) throws Exception {
+		// Old ledger files have no origin field at all. Reading those as a null origin would drop
+		// every one of them out of the capture rate the moment the field was added.
+		Path file = dir.resolve("ledger.jsonl");
+		Files.writeString(file, "{\"id\":\"old1\",\"itemId\":\"A\",\"displayName\":\"A\","
+				+ "\"kind\":\"BAZAAR_SPREAD\",\"status\":\"CLOSED\",\"openedAt\":1,\"units\":10,"
+				+ "\"unitBuyPrice\":100.0,\"quotedUnitNet\":8.625,\"capital\":1000,\"closedAt\":2,"
+				+ "\"unitsSold\":10,\"unitSellPrice\":110.0,\"realizedUnitNet\":8.625}\n");
+
+		Ledger ledger = new Ledger(file);
+		ledger.load();
+
+		assertEquals(LedgerEntry.Origin.MANUAL, ledger.all().getFirst().origin());
+		assertEquals(1, ledger.stats(null).closed());
+		assertEquals(1.0d, ledger.stats(null).captureRate().orElseThrow(), 1e-9);
+	}
+
+	private static Settlement sale(long units, double unitPrice) {
+		return new Settlement(1L, Settlement.Venue.BAZAAR_ORDER, TradeEvent.Side.SELL, "SLIME_BALL",
+				"Slimeball", units, unitPrice, unitPrice * units * 0.9875d);
 	}
 
 	@Test

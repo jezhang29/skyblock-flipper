@@ -6,6 +6,8 @@ import com.google.gson.JsonSyntaxException;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.track.Settlement;
+import jeff.skyblockflipper.core.track.TradeEvent;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,8 +27,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>Without this, every number the mod prints is a claim about the future that is never checked
  * against anything. With it, {@link #stats(StrategyKind)} answers the one question that decides
  * whether any of the rest is worth trusting: of the profit the strategies quoted, how much showed
- * up? Entries are opened by hand and closed by hand, because the mod is advisory and cannot see
- * your purse.
+ * up? Entries arrive two ways: typed in with {@code /flip take} and {@code /flip close}, or booked
+ * by {@link #record} from trades the tracker watched happen. Both end in the same file, and
+ * {@link LedgerEntry#origin()} says which, because a trade nobody quoted cannot answer the capture
+ * question and would poison it if counted.
  *
  * <p>Unlike {@link jeff.skyblockflipper.core.tape.SalesTape}, this file is rewritten rather than
  * appended: entries are mutated when they close, there are tens of them rather than millions, and
@@ -102,6 +106,55 @@ public final class Ledger {
 		return Optional.of(updated);
 	}
 
+	/**
+	 * Books a trade the tracker watched happen, opening or advancing a position as needed.
+	 *
+	 * <p>A buy claims the oldest hand-opened position on that item that has sold nothing yet, and
+	 * replaces its quoted buy price with what was actually paid - that position stops being a plan
+	 * and becomes the trade itself, which is what {@link LedgerEntry.Origin#AUTO_QUOTED} means. A
+	 * buy with no such position opens an {@link LedgerEntry.Origin#AUTO_UNQUOTED} one instead,
+	 * because a trade the mod never suggested still says something about how much of a position
+	 * comes back.
+	 *
+	 * <p>A sale fills the oldest open position on that item. A sale with no position behind it is
+	 * ignored and returns empty: it is stock bought before tracking started or somewhere else
+	 * entirely, and booking it against nothing would report its whole price as profit.
+	 *
+	 * <p>Fees are re-derived from the displayed price through {@code fees} rather than taken from
+	 * the settlement's measured net coins, even though the measured figure is right there and is
+	 * exact. The capture rate compares realized against quoted, the quote was computed on this fee
+	 * model, and two different fee bases would put the model's own error into a number that is
+	 * supposed to measure the strategy.
+	 *
+	 * @return the entry this settled against, or empty if it settled against nothing
+	 */
+	public Optional<LedgerEntry> record(Settlement settlement, Fees fees) throws IOException {
+		StrategyKind kind = kindOf(settlement.venue());
+
+		if (settlement.side() == TradeEvent.Side.BUY) {
+			return Optional.of(recordBuy(settlement, kind));
+		}
+
+		Optional<LedgerEntry> position = entries.values().stream()
+				.filter(LedgerEntry::isOpen)
+				.filter(entry -> isSameItem(entry, settlement))
+				.filter(entry -> entry.unitsSold() < entry.units())
+				.findFirst();
+
+		if (position.isEmpty()) {
+			return Optional.empty();
+		}
+
+		double net = netProceedsPerUnit(kind, settlement.unitPrice(), fees)
+				- position.get().unitBuyPrice();
+		LedgerEntry filled = position.get()
+				.filled(settlement.at(), settlement.units(), settlement.unitPrice(), net);
+
+		entries.put(filled.id(), filled);
+		save();
+		return Optional.of(filled);
+	}
+
 	/** Marks a position as never having worked out. Counts against the fill rate, not the capture rate. */
 	public Optional<LedgerEntry> abandon(String id) throws IOException {
 		LedgerEntry entry = entries.get(id);
@@ -137,6 +190,7 @@ public final class Ledger {
 	public LedgerStats stats(StrategyKind kind) {
 		int closed = 0;
 		int abandoned = 0;
+		int unquoted = 0;
 		long unitsPlanned = 0L;
 		long unitsFilled = 0L;
 		double quoted = 0.0d;
@@ -149,6 +203,8 @@ public final class Ledger {
 
 			// Abandoned positions carry no realized price, but their unsold units are real
 			// evidence about how much of a plan is reachable, so they count toward the fill rate.
+			// So do tracked trades the mod never quoted: nothing promised anything about them,
+			// but how much of a position comes back out is still measured the same way.
 			unitsPlanned += entry.units();
 			unitsFilled += entry.unitsSold();
 
@@ -157,12 +213,19 @@ public final class Ledger {
 				continue;
 			}
 
+			// A trade with no quote has a quoted profit of zero, and putting that in the
+			// denominator turns a perfectly ordinary trade into an infinite shortfall.
+			if (!entry.isQuoted()) {
+				unquoted++;
+				continue;
+			}
+
 			closed++;
 			quoted += entry.quotedOnFilled();
 			realized += entry.realizedTotal();
 		}
 
-		return new LedgerStats(closed, abandoned, unitsPlanned, unitsFilled, quoted, realized);
+		return new LedgerStats(closed, abandoned, unquoted, unitsPlanned, unitsFilled, quoted, realized);
 	}
 
 	public Path file() {
@@ -182,6 +245,45 @@ public final class Ledger {
 			// say where they actually go.
 			case BAZAAR_SPREAD, CRAFT -> fees.bazaarSaleProceeds(unitSellPrice);
 		};
+	}
+
+	private LedgerEntry recordBuy(Settlement settlement, StrategyKind kind) throws IOException {
+		LedgerEntry quoted = entries.values().stream()
+				.filter(entry -> entry.isOpen() && entry.isUntouched())
+				.filter(entry -> entry.origin() == LedgerEntry.Origin.MANUAL)
+				.filter(entry -> isSameItem(entry, settlement))
+				.findFirst()
+				.orElse(null);
+
+		LedgerEntry entry = quoted == null
+				? LedgerEntry.bought(nextId(), settlement.itemId(), settlement.displayName(), kind,
+						settlement.at(), settlement.units(), settlement.unitPrice())
+				: quoted.confirmedBuy(settlement.units(), settlement.unitPrice());
+
+		entries.put(entry.id(), entry);
+		save();
+		return entry;
+	}
+
+	/**
+	 * Whether a settlement is about the position's item.
+	 *
+	 * <p>Ids when there are ids, and names only when there are not. An item the tracker never saw
+	 * in a menu carries no id, and treating that empty string as a match would settle every such
+	 * trade against the first position in the file.
+	 */
+	private static boolean isSameItem(LedgerEntry entry, Settlement settlement) {
+		if (!settlement.itemId().isEmpty() && !entry.itemId().isEmpty()) {
+			return entry.itemId().equals(settlement.itemId());
+		}
+
+		return entry.displayName().equals(settlement.displayName());
+	}
+
+	private static StrategyKind kindOf(Settlement.Venue venue) {
+		return venue == Settlement.Venue.AUCTION
+				? StrategyKind.AUCTION_VALUE
+				: StrategyKind.BAZAAR_SPREAD;
 	}
 
 	private String nextId() {
