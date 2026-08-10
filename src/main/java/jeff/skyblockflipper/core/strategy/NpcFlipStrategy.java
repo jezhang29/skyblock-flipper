@@ -148,8 +148,62 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	public List<FlipCandidate> findCandidates(StrategyContext context) {
 		List<FlipCandidate> candidates = new ArrayList<>();
 
+		for (Priced priced : pricedProducts(context)) {
+			evaluate(priced.product(), priced.entry(), priced.npcPrice(), context)
+					.ifPresent(candidates::add);
+		}
+
+		candidates.sort(null);
+		return candidates;
+	}
+
+	/**
+	 * Every item worth resting a buy order on right now, priced but not sized against order slots.
+	 *
+	 * <p>What {@link NpcBasket} allocates over. Public so that the basket does not have to
+	 * re-implement a filter chain that has to stay identical to the one behind the ranked list:
+	 * persistence, the margin floor and the chase charge are decided here, once.
+	 *
+	 * <p>Unsorted, because the two callers rank differently and for good reason. A ranked list is
+	 * asking which single plan is worth the most per hour; a basket is asking what to do with a
+	 * fixed number of order slots, which is profit per inventory load.
+	 */
+	public static List<NpcPlan> restingPlans(StrategyContext context) {
+		List<NpcPlan> plans = new ArrayList<>();
+
+		for (Priced priced : pricedProducts(context)) {
+			BazaarProduct product = priced.product();
+
+			if (climbingTowardTheNpcPrice(product, context)) {
+				continue;
+			}
+
+			Limits limits = Limits.of(priced.entry(), priced.npcPrice(), context);
+
+			if (limits.capUnits() <= 0L) {
+				continue;
+			}
+
+			NpcPlan plan = buyOrderPlan(product, priced.npcPrice(), limits,
+					context.npc().edgeFor(product.productId()).orElse(null), context);
+
+			if (plan != null) {
+				plans.add(plan);
+			}
+		}
+
+		return plans;
+	}
+
+	/** One bazaar product an NPC will buy, with the catalog entry that says at what price. */
+	private record Priced(BazaarProduct product, ItemCatalog.Entry entry, double npcPrice) {
+	}
+
+	private static List<Priced> pricedProducts(StrategyContext context) {
+		List<Priced> priced = new ArrayList<>();
+
 		if (context.catalog().isEmpty()) {
-			return candidates;
+			return priced;
 		}
 
 		for (BazaarProduct product : context.bazaar().products().values()) {
@@ -160,12 +214,11 @@ public final class NpcFlipStrategy implements FlipStrategy {
 			}
 
 			entry.get().npcPrice()
-					.flatMap(npcPrice -> evaluate(product, entry.get(), npcPrice, context))
-					.ifPresent(candidates::add);
+					.filter(npcPrice -> npcPrice > 0.0d)
+					.ifPresent(npcPrice -> priced.add(new Priced(product, entry.get(), npcPrice)));
 		}
 
-		candidates.sort(null);
-		return candidates;
+		return priced;
 	}
 
 	/**
@@ -177,17 +230,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	 */
 	private Optional<FlipCandidate> evaluate(BazaarProduct product, ItemCatalog.Entry entry,
 			double npcPrice, StrategyContext context) {
-		if (npcPrice <= 0.0d) {
-			return Optional.empty();
-		}
-
-		// A bazaar price climbing toward a price that cannot climb with it is the only market move
-		// that kills this trade. Note the direction: the spread strategies reject falling items,
-		// because they have to sell what they bought. Here a falling bid is a wider margin.
-		PriceTrend trend = context.trends().trendFor(product.productId()).orElse(null);
-
-		if (trend != null && trend.isUsable() && context.maxAdverseDrift() > 0.0d
-				&& trend.isRising(context.maxAdverseDrift())) {
+		if (climbingTowardTheNpcPrice(product, context)) {
 			return Optional.empty();
 		}
 
@@ -199,7 +242,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 
 		NpcEdge edge = context.npc().edgeFor(product.productId()).orElse(null);
 		Route instant = instantBuyRoute(product, npcPrice, limits, context);
-		Route order = buyOrderRoute(product, npcPrice, limits, edge, context);
+		Route order = Route.resting(buyOrderPlan(product, npcPrice, limits, edge, context), limits);
 
 		Route best = better(instant, order);
 
@@ -290,14 +333,31 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	}
 
 	/**
+	 * A bazaar price climbing toward a price that cannot climb with it.
+	 *
+	 * <p>The only market move that kills this trade, and note the direction: the spread strategies
+	 * reject falling items, because they have to sell what they bought. Here a falling bid is a
+	 * wider margin.
+	 */
+	private static boolean climbingTowardTheNpcPrice(BazaarProduct product, StrategyContext context) {
+		PriceTrend trend = context.trends().trendFor(product.productId()).orElse(null);
+
+		return trend != null && trend.isUsable() && context.maxAdverseDrift() > 0.0d
+				&& trend.isRising(context.maxAdverseDrift());
+	}
+
+	/**
 	 * Post a bid, reprice it at every check-in, and sell what fills to the NPC.
 	 *
 	 * <p>The route the basket is built out of, and the one every measured parameter is about. Three
 	 * things bound it and each is measured rather than assumed: the gap has to be a standing feature
 	 * of the book, the margin net of chasing has to clear the floor, and the size is what the book
 	 * actually dumps into a top-of-book order over the resting window.
+	 *
+	 * <p>Order slots are the one ceiling not applied here, because they are shared - see
+	 * {@link NpcPlan#maxUnits()}.
 	 */
-	private static Route buyOrderRoute(BazaarProduct product, double npcPrice, Limits limits,
+	private static NpcPlan buyOrderPlan(BazaarProduct product, double npcPrice, Limits limits,
 			NpcEdge edge, StrategyContext context) {
 		if (product.buyOrders().isEmpty()
 				|| product.movingWeek().instantSold() < MIN_WEEKLY_VOLUME) {
@@ -341,18 +401,12 @@ public final class NpcFlipStrategy implements FlipStrategy {
 
 		double fillPerHour = fill.buyUnitsPerHour();
 		long affordable = (long) (context.maxCapitalPerFlip() / unitCost);
-		// Trimmed to the slots rather than refused for wanting too many. A plan that would need
-		// more orders than the account has is a real plan at the size the slots allow, and the
-		// player would place it that way; refusing it hid every large unstackable item.
-		long units = Math.min(
-				Math.min(affordable, limits.maxRestingUnits()),
-				Math.min(limits.capUnits(), (long) (fillPerHour * limits.restingHours())));
+		long maxUnits = Math.min(Math.min(affordable, limits.capUnits()),
+				(long) (fillPerHour * limits.restingHours()));
 
-		if (units <= 0L) {
+		if (maxUnits <= 0L) {
 			return null;
 		}
-
-		long orders = ceilDiv(units, limits.maxUnitsPerOrder());
 
 		// The NPC leg is certain, so confidence is about the entry: how reliably the gap has been
 		// there, and how briskly the item is dumped into. Unmeasured persistence tops out at 0.65,
@@ -361,8 +415,20 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				+ 0.30d * (edge == null ? 0.0d : edge.persistence())
 				+ 0.15d * Math.min(1.0d, product.instantSellsPerHour() / LIQUID_FILL_RATE);
 
-		return new Route(true, postPrice, unitCost, unitNet, units, units * unitCost, confidence,
-				fillPerHour, fill.measured(), orders);
+		return new NpcPlan(
+				product.productId(),
+				context.catalog().displayName(product.productId()),
+				npcPrice,
+				postPrice,
+				unitCost,
+				unitNet,
+				maxUnits,
+				limits.maxUnitsPerOrder(),
+				limits.unitsPerLoad(),
+				fillPerHour,
+				fill.measured(),
+				edge,
+				confidence);
 	}
 
 	private static Route better(Route a, Route b) {
@@ -445,6 +511,27 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	private record Route(boolean viaOrder, double postPrice, double unitCost, double unitNetProfit,
 			long units, double capital, double confidence, double fillPerHour, boolean fillMeasured,
 			long orders) {
+		/**
+		 * One item's whole resting plan, trimmed to the order slots this account has.
+		 *
+		 * <p>Trimmed rather than refused for wanting too many, which is what this used to do: a
+		 * plan needing more orders than the slots allow is a real plan at the size the slots allow,
+		 * and the player would place it that way. Refusing it hid every large unstackable item.
+		 */
+		static Route resting(NpcPlan plan, Limits limits) {
+			if (plan == null) {
+				return null;
+			}
+
+			long units = Math.min(plan.maxUnits(), limits.maxRestingUnits());
+
+			return units <= 0L
+					? null
+					: new Route(true, plan.postPrice(), plan.unitCost(), plan.unitNetProfit(), units,
+							units * plan.unitCost(), plan.confidence(), plan.fillPerHour(),
+							plan.fillMeasured(), plan.ordersFor(units));
+		}
+
 		double totalProfit() {
 			return unitNetProfit * units;
 		}
