@@ -71,8 +71,12 @@ public final class PriceHistory {
 	 * <p>Six times the nominal cadence, so an ordinary missed poll or a slow snapshot still counts
 	 * and a closed client does not. Generous on purpose: a caller sampling slower than nominal
 	 * should lose precision, not lose the measurement entirely.
+	 *
+	 * <p>Shared with {@link NpcEdgeHistory}, which streams the same tape at the same cadence and has
+	 * to draw the same line. Two definitions of "the client was closed" would eventually disagree,
+	 * and the two rates would then be measured over different denominators.
 	 */
-	private static final long MAX_OBSERVED_GAP_MILLIS = NOMINAL_SAMPLE_MINUTES * 6L * 60_000L;
+	static final long MAX_OBSERVED_GAP_MILLIS = NOMINAL_SAMPLE_MINUTES * 6L * 60_000L;
 
 	private final Map<String, Series> series = new HashMap<>();
 	private final Duration window;

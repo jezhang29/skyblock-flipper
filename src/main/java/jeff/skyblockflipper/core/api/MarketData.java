@@ -4,6 +4,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
+import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -27,6 +28,8 @@ public final class MarketData {
 	private final AtomicReference<Instant> salesFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<FairValueModel> values = new AtomicReference<>(FairValueModel.empty());
 	private final AtomicReference<TrendSnapshot> trends = new AtomicReference<>(TrendSnapshot.empty());
+	private final AtomicReference<NpcEdgeSnapshot> npcEdges =
+			new AtomicReference<>(NpcEdgeSnapshot.empty());
 	private final AtomicReference<List<PricedListing>> underpriced = new AtomicReference<>(List.of());
 	private final AtomicReference<Instant> auctionsScannedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<String> scanSummary = new AtomicReference<>("");
@@ -88,6 +91,21 @@ public final class MarketData {
 
 	public void setTrends(TrendSnapshot snapshot) {
 		trends.set(snapshot);
+	}
+
+	/**
+	 * How durably each product's bid has sat under the price an NPC pays for it.
+	 *
+	 * <p>Published far less often than {@link #trends()} because it is a much longer statistic:
+	 * rebuilding it reads three days of tape, and a persistence fraction measured over that does not
+	 * move between polls.
+	 */
+	public NpcEdgeSnapshot npcEdges() {
+		return npcEdges.get();
+	}
+
+	public void setNpcEdges(NpcEdgeSnapshot snapshot) {
+		npcEdges.set(snapshot);
 	}
 
 	/** Live listings found below fair value by the last sweep. */
