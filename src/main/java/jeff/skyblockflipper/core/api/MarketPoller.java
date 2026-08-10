@@ -3,10 +3,13 @@ package jeff.skyblockflipper.core.api;
 import jeff.skyblockflipper.core.config.ScanSettings;
 import jeff.skyblockflipper.core.model.BazaarSample;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.SaleDailyStat;
 import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
+import jeff.skyblockflipper.core.valuation.NpcEdgeHistory;
+import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PriceHistory;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
 
@@ -70,6 +73,17 @@ public final class MarketPoller implements AutoCloseable {
 	 * fetch only what will actually be recorded.
 	 */
 	private static final Duration BAZAAR_TAPE_INTERVAL = Duration.ofMinutes(5);
+
+	/**
+	 * How far back the NPC edge measurement looks, and how often it is redone.
+	 *
+	 * <p>Three days is what every parameter in {@code docs/npc-flipping.md} was measured over, and
+	 * comfortably more than the seventeen hours {@code NpcEdge.MIN_SAMPLES} needs. Redoing it means
+	 * re-reading and parsing that whole window - a couple of million taped lines - so it runs on the
+	 * maintenance thread and no more often than a three-day statistic can meaningfully change.
+	 */
+	private static final Duration NPC_EDGE_WINDOW = Duration.ofDays(3);
+	private static final Duration NPC_EDGE_INTERVAL = Duration.ofHours(2);
 
 	private final HypixelApi api;
 	private final MarketData data;
@@ -142,6 +156,11 @@ public final class MarketPoller implements AutoCloseable {
 		// bazaar's stays with the poller, which is the only thread allowed to touch the price ring.
 		scheduleMaintenance(this::maintainSalesTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
 		schedule(this::maintainBazaarTape, Duration.ofMinutes(2), PRUNE_INTERVAL);
+		// Also on the maintenance thread, and for the same reason: this re-reads three days of the
+		// bazaar tape, which is far too long to hold up a 45-second sales poll. It touches neither
+		// the price ring nor anything the poller writes - the tape is read-only from here. Delayed
+		// past the first item fetch, which is what supplies the NPC prices it measures against.
+		scheduleMaintenance(this::rebuildNpcEdges, Duration.ofMinutes(3), NPC_EDGE_INTERVAL);
 
 		// Replays yesterday's tape into the ring before the first live sample, so trends are
 		// available immediately on a client that has run before rather than three hours in.
@@ -327,6 +346,40 @@ public final class MarketPoller implements AutoCloseable {
 				scan.listingsSeen() + " listings, " + scan.decoded() + " decoded, "
 						+ scan.rejectedOnExactValue() + " rejected on exact match, "
 						+ scan.results().size() + " under fair value");
+	}
+
+	/**
+	 * Re-measures how durably each product's bid sits under its NPC price.
+	 *
+	 * <p>Skipped until the item catalog has arrived: the NPC price is the thing being measured
+	 * against, and a pass with no catalog would publish an empty snapshot over a good one. Skipped
+	 * with the tape off too, since there would be nothing to read.
+	 */
+	private void rebuildNpcEdges() {
+		if (!settings.get().bazaarTapeEnabled()) {
+			return;
+		}
+
+		ItemCatalog catalog = data.catalog();
+
+		if (catalog.isEmpty()) {
+			return;
+		}
+
+		NpcEdgeHistory edges = new NpcEdgeHistory(catalog, Instant.now(), NPC_EDGE_WINDOW);
+
+		try {
+			int days = (int) Math.max(1L, NPC_EDGE_WINDOW.toDays());
+			int read = bazaarTape.forEachRecent(days, edges::append);
+			NpcEdgeSnapshot snapshot = edges.snapshot();
+			data.setNpcEdges(snapshot);
+
+			log.accept("NPC edges measured from " + read + " taped samples: "
+					+ snapshot.productsWithMeasuredEdge() + " of " + snapshot.size()
+					+ " NPC-priced products have enough history");
+		} catch (IOException e) {
+			log.accept("Failed reading the bazaar tape to measure NPC edges: " + e);
+		}
 	}
 
 	private void maintainSalesTape() {
