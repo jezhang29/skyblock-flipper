@@ -194,13 +194,13 @@ class LedgerTest {
 		Ledger ledger = ledgerIn(dir);
 		LedgerEntry opened = ledger.open(candidate("SLIME_BALL", 30.0d, 40.0d, 1_344L, 9.5d), 1L);
 
-		LedgerEntry part = ledger.record(sale(903L, 38.2d), FEES).orElseThrow();
+		LedgerEntry part = ledger.record(sale(903L, 38.2d), FEES, true).orElseThrow();
 
 		assertTrue(part.isOpen());
 		assertEquals(903L, part.unitsSold());
 		assertEquals(38.2d, part.unitSellPrice());
 
-		LedgerEntry whole = ledger.record(sale(441L, 36.0d), FEES).orElseThrow();
+		LedgerEntry whole = ledger.record(sale(441L, 36.0d), FEES, true).orElseThrow();
 
 		assertEquals(opened.id(), whole.id());
 		assertEquals(LedgerEntry.Status.CLOSED, whole.status());
@@ -218,7 +218,7 @@ class LedgerTest {
 		Ledger ledger = ledgerIn(dir);
 		ledger.open(candidate("SLIME_BALL", 30.0d, 40.0d, 100L, 9.5d), 1L);
 
-		LedgerEntry entry = ledger.record(sale(250L, 40.0d), FEES).orElseThrow();
+		LedgerEntry entry = ledger.record(sale(250L, 40.0d), FEES, true).orElseThrow();
 
 		assertEquals(100L, entry.unitsSold());
 		assertEquals(LedgerEntry.Status.CLOSED, entry.status());
@@ -230,8 +230,8 @@ class LedgerTest {
 		// including it would report a total shortfall on a trade that did nothing wrong.
 		Ledger ledger = ledgerIn(dir);
 		ledger.record(new Settlement(1L, Settlement.Venue.BAZAAR_INSTANT, TradeEvent.Side.BUY,
-				"SLIME_BALL", "Slimeball", 10L, 30.0d, 300.0d), FEES);
-		ledger.record(sale(10L, 40.0d), FEES);
+				"SLIME_BALL", "Slimeball", 10L, 30.0d, 300.0d), FEES, true);
+		ledger.record(sale(10L, 40.0d), FEES, true);
 
 		LedgerStats stats = ledger.stats(null);
 
@@ -259,6 +259,42 @@ class LedgerTest {
 		assertEquals(LedgerEntry.Origin.MANUAL, ledger.all().getFirst().origin());
 		assertEquals(1, ledger.stats(null).closed());
 		assertEquals(1.0d, ledger.stats(null).captureRate().orElseThrow(), 1e-9);
+	}
+
+	@Test
+	void forgettingAnEntryLeavesNoTraceOfItInTheRates(@TempDir Path dir) throws Exception {
+		// Abandoning keeps the units in the fill rate, which is right for a plan that failed and
+		// wrong for a stack of materials tracking recorded off an ordinary shopping trip.
+		Path file = dir.resolve("ledger.jsonl");
+		Ledger ledger = new Ledger(file);
+		LedgerEntry kept = ledger.open(candidate("A", 100.0d, 110.0d, 10L, 8.6d), 1L);
+		LedgerEntry junk = ledger.open(candidate("B", 100.0d, 110.0d, 500L, 8.6d), 2L);
+
+		assertEquals(junk.id(), ledger.forget(junk.id()).orElseThrow().id());
+		assertTrue(ledger.forget(junk.id()).isEmpty());
+
+		ledger.close(kept.id(), 10L, 110.0d, FEES);
+
+		assertEquals(10L, ledger.stats(null).unitsPlanned());
+
+		Ledger reloaded = new Ledger(file);
+		reloaded.load();
+
+		assertEquals(1, reloaded.all().size());
+	}
+
+	@Test
+	void clearingUnquotedEntriesKeepsTheFlipsYouTook(@TempDir Path dir) throws Exception {
+		Ledger ledger = ledgerIn(dir);
+		LedgerEntry taken = ledger.open(candidate("A", 100.0d, 110.0d, 10L, 8.6d), 1L);
+		ledger.record(new Settlement(1L, Settlement.Venue.BAZAAR_INSTANT, TradeEvent.Side.BUY,
+				"SLIME_BALL", "Slimeball", 10L, 30.0d, 300.0d), FEES, true);
+
+		assertEquals(1L, ledger.count(entry -> !entry.isQuoted()));
+		assertEquals(1, ledger.forgetAll(entry -> !entry.isQuoted()));
+
+		assertEquals(List.of(taken.id()), ledger.all().stream().map(LedgerEntry::id).toList());
+		assertEquals(0, ledger.forgetAll(entry -> !entry.isQuoted()));
 	}
 
 	private static Settlement sale(long units, double unitPrice) {
