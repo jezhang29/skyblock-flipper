@@ -190,30 +190,49 @@ public final class Guide {
 					+ "a bazaar price it can, which is why bazaar spreads are quoted with a cancel "
 					+ "rule instead")));
 
-	private static final Section NPC_CAP = new Section("npccap", "The daily NPC coin cap", List.of(
-			new Term("What it is", "NPCs stop paying out after a fixed number of coins each day, "
-					+ "shared across every item and refilling at UTC midnight. It counts what the "
-					+ "NPC hands you, not your profit, so it is spent by the sale price"),
-			new Term("Why it changes the ranking", "An expensive item burns the budget far faster "
-					+ "than a cheap one at the same profit per hour. Enchanted Diamond Blocks at "
-					+ "204,800 each exhaust a 500M budget in about fifteen minutes; Fig Logs at 8 "
-					+ "each could not spend it in a week. Plans are therefore ranked over a session "
-					+ "rather than an hour, because a daily limit cannot be expressed hourly"),
-			new Term("Cap efficiency", "Coins of profit per coin of budget spent, which is just the "
-					+ "margin divided by the NPC price. When the cap is what limits you rather than "
-					+ "your time, this is the number that decides what to spend the day on"),
+	private static final Section NPC_CAP = new Section("npc", "NPC flipping", List.of(
+			new Term("The trade", "Post a buy order under the fixed price an NPC pays, then sell "
+					+ "what fills through /trades. The exit price cannot move, so an order either "
+					+ "fills at your price or does not fill. Coins in an unfilled order are stuck "
+					+ "until you cancel it, never lost"),
+			new Term("Margin floor", "How wide the gap has to be before a plan is offered, as a "
+					+ "percent of the NPC price, in settings. The default 15% is the measured peak: "
+					+ "over a day of simulated baskets, 15% made 172.5M against 104.6M at 5%, and "
+					+ "above 20% too few items qualify to spend the day's budget"),
+			new Term("Chase stop", "The same number read the other way. Never reprice a buy order "
+					+ "above the NPC price less the floor - at 15%, above 85% of what the NPC pays. "
+					+ "Past there the slot is worth more on another item, and the plan says the "
+					+ "exact price to stop at"),
+			new Term("Chase cost", "What staying at the front of the book costs over the window, "
+					+ "measured from how far the best bid has actually drifted upward per hour. It "
+					+ "is taken out of the margin before you see it, so the profit quoted is the "
+					+ "profit after repricing"),
+			new Term("Edge held", "The fraction of taped samples in which a buy order would have "
+					+ "priced under the NPC. These gaps are mostly standing features rather than "
+					+ "races: of 223 liquid items with a gap, 204 held it in over 95% of three days "
+					+ "of samples. Anything below 95% is skipped, and that protects order slots "
+					+ "rather than coins - a gap that vanishes costs you a slot for the window"),
+			new Term("Check-in", "How often you intend to come back and move your orders to the top "
+					+ "of the book, in settings. It is what fills get measured against: an order "
+					+ "repriced every 30 minutes collects the 30-minute rate, and one posted and "
+					+ "left alone for eight hours collects about a fifth as much"),
 			new Term("Resting window", "How long an NPC buy order is left sitting before you would "
 					+ "rather have the coins back, in settings. Nothing is at risk while it rests - "
-					+ "the NPC's price cannot move, so an order fills at your price or is "
-					+ "cancelled - so this says how long capital may be tied up, and raising it "
-					+ "promotes slow books over ones that fill while you watch"),
+					+ "the NPC's price cannot move - so this says how long capital may be tied up, "
+					+ "and it is the window every NPC plan is sized over"),
+			new Term("Daily coin cap", "NPCs stop paying out after a fixed number of coins each "
+					+ "day, shared across every item and refilling at UTC midnight. It counts what "
+					+ "the NPC hands you, not your profit, so it is spent by the sale price. It is "
+					+ "large enough for roughly two eight-hour cycles, so it limits a day rather "
+					+ "than a plan"),
 			new Term("How much is left", "Counted from your ledger: closed NPC flips, units sold "
 					+ "times the NPC price. Flips you never recorded are invisible to it, so the "
 					+ "budget will read fuller than it is if you trade outside the mod"),
 			new Term("Order slots", "You can rest 14 bazaar orders at once, plus 7 per Bazaar "
-					+ "Flipper level. One order holds 71,680 units of a stackable item or 256 of an "
-					+ "unstackable one, so a large plan in unstackable items needs several slots and "
-					+ "is rejected if it needs more than you have")));
+					+ "Flipper level, and settings can hold NPC plans to fewer if you share a coop "
+					+ "bazaar. One order holds 71,680 units of a stackable item or 256 of an "
+					+ "unstackable one, so a plan is trimmed to what your slots hold rather than "
+					+ "quoting a size you cannot place")));
 
 	private static final Section LIQUIDITY = new Section("liquidity", "Liquidity", List.of(
 			new Term("Weekly volume", "Units that changed hands over seven days, counted separately "
@@ -223,9 +242,10 @@ public final class Guide {
 					+ "not a supply. An item with 4000 units under the NPC price but 40 units of "
 					+ "weekly turnover is not a 4000-unit opportunity, it is a week of holding "
 					+ "something nobody wants. Every plan is sized from the flow, not the depth"),
-			new Term("Trips", "NPC flips are also capped by hand: 36 inventory slots at a 64 stack, "
-					+ "twelve round trips an hour. Buying is instant, selling is not. Unstackable "
-					+ "items are the same 36 slots holding one each, so a trip carries 36 of them"),
+			new Term("Hauling", "How many inventory loads an NPC plan moves: 36 slots at a 64 "
+					+ "stack, or 36 unstackable items. There is no walking involved - /trades "
+					+ "reaches a shop from anywhere with a booster cookie - so this is a count of "
+					+ "how much clicking the plan is, not a limit on it"),
 			new Term("Time to fill", "How long your order is expected to take at the size the plan "
 					+ "quotes. Two things set it: how fast people trade with that side of the book, "
 					+ "and how long you stay at the front of it"),

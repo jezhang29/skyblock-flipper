@@ -6,6 +6,7 @@ import jeff.skyblockflipper.core.model.OrderLevel;
 import jeff.skyblockflipper.core.pricing.FillModel;
 import jeff.skyblockflipper.core.pricing.FillModel.FillEstimate;
 import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.valuation.NpcEdge;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 
 import java.time.Instant;
@@ -19,7 +20,9 @@ import java.util.Optional;
  *
  * <p>NPC prices never move, so this is one-sided arbitrage against a constant: no spread to
  * capture, no counterparty to wait for on the sell leg, and no sales tax, because selling to an NPC
- * is not a bazaar transaction.
+ * is not a bazaar transaction. <b>Every parameter here is measured, and the measurements are in
+ * {@code docs/npc-flipping.md}</b> - three days of the user's own bazaar tape, the live items
+ * resource, and a holdout backtest.
  *
  * <p><b>There are two ways to acquire the stock, and they are not close.</b>
  *
@@ -28,65 +31,83 @@ import java.util.Optional;
  *       the size is capped by how much of the book sits below the NPC price.</li>
  *   <li><b>Buy order</b> - post a bid and wait for someone to dump into it. You pay the bid instead
  *       of the ask, which on a wide book is most of the profit. Measured on
- *       {@code ENCHANTED_MELON_BLOCK} against the live bazaar: instant-buying at 50933.5 against
- *       an NPC price of 51200 nets 266 a unit, while a buy order at 49654.2 nets 1545 - 5.8x more
- *       per unit. What it costs is time, and only that: the NPC price cannot move away while you
- *       wait, so an unfilled order is a cancelled order, not a loss.</li>
+ *       {@code ENCHANTED_MELON_BLOCK}: instant-buying at 50933.5 against an NPC price of 51200 nets
+ *       266 a unit, while a buy order at 49654.2 nets 1545 - 5.8x more per unit. That example
+ *       measures the size of the difference; at a 3.0% margin it does not itself clear the margin
+ *       floor below. What the order route costs is time, and only that: the NPC price cannot move
+ *       away while you wait, so an unfilled order is a cancelled order, not a loss.</li>
  * </ul>
  *
- * <p>So both are evaluated and the better one by profit per hour is what gets recommended, with the
- * other reported alongside it. The strategy used to hard-code "do not post a buy order", which was
- * right about the mechanics - the ask-side edge does close in minutes - and wrong about the
- * conclusion, because it left the larger and more durable half of the trade on the table.
+ * <p>Both are evaluated and the better one by profit over the resting window is what gets
+ * recommended, with the other reported alongside it.
+ *
+ * <p><b>The resting route is filtered three ways, and each filter protects order slots rather than
+ * coins.</b> With the exit price fixed and a hard chase stop, a gap that vanishes does not lose
+ * money - the order simply never fills. What it costs is one of about 21 slots for a whole cycle,
+ * and slots are the binding resource.
+ *
+ * <ul>
+ *   <li><b>Persistence.</b> The gap must have been there in 95% of taped samples. On a holdout
+ *       backtest none of 161 products above that line realized a loss, against 2 of 22 between
+ *       50% and 95%.</li>
+ *   <li><b>Margin floor.</b> {@code npcMinMarginRatio}, default 15% of the NPC price. Measured
+ *       peak of a sweep: 172.5M a day at 15% against 104.6M at 5% and 161.1M at 20%, where above
+ *       20% the pool gets too small to spend the day's budget.</li>
+ *   <li><b>Chase cost.</b> Repricing to stay at the front of the book is charged against the margin
+ *       before the floor is applied, from measured upward bid drift.</li>
+ * </ul>
+ *
+ * <p>None of the three apply to the instant route, which occupies no slot and settles immediately:
+ * the only thing a thin instant margin costs is the click.
+ *
+ * <p><b>The fill horizon for a resting order is the check-in interval, not the resting window.</b>
+ * An order collects flow only while it is at the top of the book, and repricing puts it back there,
+ * so what a player who returns every 30 minutes collects is the average over 30 minutes, applied
+ * for the whole window. Measured per 8-hour cycle: 11.5M posting once and walking away, 59.7M
+ * repricing every 30 minutes, 73.2M staying permanently at the top. The old flat 25% share of flow
+ * quoted 40.1M for a plan that would really have made 11.5M.
  *
  * <p><b>Both routes are sized from traded volume, not from the book.</b> Resting depth is a
- * snapshot; a plan measured in units per hour needs a flow. An item with 4000 units resting below
- * the NPC price but 30 units of weekly turnover is not a 4000-unit opportunity, it is a trap that
- * takes a week to exit, and sizing off the book is how a tool ends up recommending it.
+ * snapshot; a plan measured in units needs a flow. An item with 4000 units resting below the NPC
+ * price but 30 units of weekly turnover is not a 4000-unit opportunity, it is a trap that takes a
+ * week to exit.
  *
- * <p><b>Three separate ceilings apply, and which one binds is the whole ranking.</b> Carrying
- * capacity limits units per hour. {@link StrategyContext#npcCapRemaining()} limits gross NPC coins
- * per day, across every item at once. Capital limits both. Sizing against only the first is what
- * makes an expensive item look like a business: {@code ENCHANTED_DIAMOND_BLOCK} at 204,800 a unit
- * quotes 23M an hour and exhausts a 500M daily budget in about fifteen minutes, while
- * {@code FIG_LOG} at 8 a unit could never spend that budget in a week of grinding. Plans are
- * therefore sized over {@link StrategyContext#npcRestingHours()} rather than over an hour, because
- * an hourly figure cannot express a limit that is measured per day.
+ * <p><b>There is no walking.</b> With a booster cookie {@code /trades} reaches an NPC shop from
+ * anywhere, confirmed in play on 2026-08-09, so nothing here is sized in round trips. The daily
+ * coin cap is real and hard, but measured against a full basket it does not bind inside one cycle -
+ * capital and order slots do, which is what {@code NpcBasket} allocates.
  */
 public final class NpcFlipStrategy implements FlipStrategy {
 	/** How deep into the ask side to walk before giving up. */
 	private static final int MAX_LEVELS = 10;
 
-	/** Usable inventory slots for one trip to an NPC. */
-	private static final long SLOTS_PER_TRIP = 36L;
-
-	/** Round trips an attentive player manages per hour: buy, walk to the NPC, sell, return. */
-	private static final long TRIPS_PER_HOUR = 12L;
-
 	/**
 	 * Units one bazaar order may cover: 71,680 for a stackable item, 256 for one that is not.
 	 *
 	 * <p>A plan larger than this is not impossible, it just needs more than one order, and orders
-	 * are a limited resource - see {@code Fees.bazaarOrderSlots()}. For a stackable item this never
-	 * binds inside a two-hour session, because carrying capacity runs out at 55,296 units first.
-	 * For an unstackable one it binds immediately: 864 carried units is four orders of 256.
+	 * are the resource this whole strategy is competing for. For an unstackable item it binds
+	 * immediately: fourteen slots is 3,584 units, whatever the book would have filled.
 	 */
 	private static final long MAX_UNITS_PER_ORDER_STACKABLE = 71_680L;
 	private static final long MAX_UNITS_PER_ORDER_UNSTACKABLE = 256L;
 
 	/**
 	 * Below this weekly turnover on the side you are acquiring from, the item does not trade enough
-	 * for an hourly plan to mean anything.
+	 * for a plan to mean anything. 223 of the 260 products with a gap clear it.
 	 */
 	private static final long MIN_WEEKLY_VOLUME = 10_000L;
 
+	/** Share of samples the gap must have been present in. See the class javadoc. */
+	private static final double MIN_PERSISTENCE = 0.95d;
+
 	/**
-	 * Share of the hour's inbound instant-sells a top-of-book buy order actually collects.
+	 * Share of flow a resting order collects where the tape has not measured displacement yet.
 	 *
-	 * <p>Not all of it: outbidding puts you first in the queue, but anyone can outbid you back, and
-	 * the orders already resting at your price were not there for decoration.
+	 * <p>A fallback and nothing more. Where {@code FillStats} exists - 759 products on the live
+	 * tape - {@link FillModel} uses measured displacement instead, and the two disagree by 3.5x on
+	 * a post-and-wait plan. A candidate resting on this says so in its risks.
 	 */
-	private static final double ORDER_FILL_SHARE = 0.25d;
+	private static final double UNMEASURED_FILL_SHARE = 0.25d;
 
 	/**
 	 * Share of the hour's ask-side flow you can realistically lift.
@@ -98,6 +119,9 @@ public final class NpcFlipStrategy implements FlipStrategy {
 
 	/** Instant-sells per hour at which a resting order is as reliable as this strategy gets. */
 	private static final double LIQUID_FILL_RATE = 500.0d;
+
+	/** Inventory slots one load through {@code /trades} carries, which is what hauling is counted in. */
+	private static final long SLOTS_PER_LOAD = 36L;
 
 	/**
 	 * Start of the NPC day the given instant falls in, as epoch millis.
@@ -145,7 +169,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	}
 
 	/**
-	 * One plan per item: whichever acquisition route pays more over the session.
+	 * One plan per item: whichever acquisition route pays more over the resting window.
 	 *
 	 * <p>Deliberately not one candidate per route. They are the same trade with two executions, and
 	 * listing both would push genuinely different items off a ranked list to show the same item
@@ -169,22 +193,22 @@ public final class NpcFlipStrategy implements FlipStrategy {
 
 		Limits limits = Limits.of(entry, npcPrice, context);
 
-		if (limits.sessionUnits() <= 0L) {
+		if (limits.capUnits() <= 0L) {
 			return Optional.empty();
 		}
 
+		NpcEdge edge = context.npc().edgeFor(product.productId()).orElse(null);
 		Route instant = instantBuyRoute(product, npcPrice, limits, context);
-		Route order = buyOrderRoute(product, npcPrice, limits, context);
+		Route order = buyOrderRoute(product, npcPrice, limits, edge, context);
 
 		Route best = better(instant, order);
 
-		if (best == null || best.profitPerHour(limits.sessionHours()) < context.minProfitPerFlip()) {
+		if (best == null || best.profitPerHour(limits.restingHours()) < context.minProfitPerFlip()) {
 			return Optional.empty();
 		}
 
 		Route other = best == instant ? order : instant;
 		String name = context.catalog().displayName(product.productId());
-		long trips = ceilDiv(best.units(), limits.unitsPerTrip());
 
 		return Optional.of(new FlipCandidate(
 				product.productId(),
@@ -195,11 +219,11 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				best.unitNetProfit(),
 				best.units(),
 				Math.round(best.capital()),
-				best.profitPerHour(limits.sessionHours()),
+				best.profitPerHour(limits.restingHours()),
 				best.confidence(),
-				best.steps(name, npcPrice, trips),
-				risks(best, product, trips, limits),
-				notes(best, other, product, npcPrice, limits, context)));
+				best.steps(name, npcPrice, context.npc()),
+				risks(best, product, edge, limits, context),
+				notes(best, other, product, npcPrice, edge, limits, context)));
 	}
 
 	/**
@@ -246,7 +270,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 		double averageCost = spend / depthUnits;
 		double flowPerHour = product.instantBuysPerHour() * INSTANT_TAKE_SHARE;
 		long units = Math.min(depthUnits,
-				Math.min(limits.sessionUnits(), (long) (flowPerHour * limits.sessionHours())));
+				Math.min(limits.capUnits(), (long) (flowPerHour * limits.restingHours())));
 
 		if (units <= 0L) {
 			return null;
@@ -261,60 +285,84 @@ public final class NpcFlipStrategy implements FlipStrategy {
 		// ceiling still applies; it just costs another click rather than another slot.
 		return unitNet <= 0.0d
 				? null
-				: new Route(false, averageCost, unitNet, units, units * averageCost, 0.95d,
-						flowPerHour, false, ceilDiv(units, limits.maxUnitsPerOrder()));
+				: new Route(false, averageCost, averageCost, unitNet, units, units * averageCost,
+						0.95d, flowPerHour, false, ceilDiv(units, limits.maxUnitsPerOrder()));
 	}
 
 	/**
-	 * Post a bid and wait. Pays the bid instead of the ask, and fills only as fast as people dump.
+	 * Post a bid, reprice it at every check-in, and sell what fills to the NPC.
+	 *
+	 * <p>The route the basket is built out of, and the one every measured parameter is about. Three
+	 * things bound it and each is measured rather than assumed: the gap has to be a standing feature
+	 * of the book, the margin net of chasing has to clear the floor, and the size is what the book
+	 * actually dumps into a top-of-book order over the resting window.
 	 */
 	private static Route buyOrderRoute(BazaarProduct product, double npcPrice, Limits limits,
-			StrategyContext context) {
+			NpcEdge edge, StrategyContext context) {
 		if (product.buyOrders().isEmpty()
 				|| product.movingWeek().instantSold() < MIN_WEEKLY_VOLUME) {
 			return null;
 		}
 
-		double bid = product.outbidBuyOrder().orElseThrow();
-		double unitNet = npcPrice - bid;
+		NpcContext npc = context.npc();
 
-		if (bid <= 0.0d || unitNet <= 0.0d) {
+		// A gap the tape has watched flicker is not worth committing a slot to for a cycle. An
+		// unmeasured one is allowed through and says so: a fresh install has no tape at all, and
+		// refusing every candidate until it does would be a filter on uptime, not on the trade.
+		if (edge != null && !edge.holdsEdge(MIN_PERSISTENCE)) {
 			return null;
 		}
 
-		// Measured where the tape has covered this product, and the old flat share where it has
-		// not. The unit cap stays hourly regardless: this route is bounded by how many inventory
-		// trips a player makes, not only by how fast the order fills.
+		double postPrice = product.outbidBuyOrder().orElseThrow();
+
+		if (postPrice <= 0.0d) {
+			return null;
+		}
+
+		// What staying at the front of the book costs over the window, from measured upward drift.
+		// Charged before the floor rather than reported beside it, so the floor filters on what the
+		// trade actually pays: eight hours of chasing costs MANTID_CLAW 14.4% of its NPC price,
+		// which turns a 30% margin into 15.6%, while CLIPPED_WINGS pays 0.00%.
+		double chaseCost = edge == null ? 0.0d : edge.chaseCostRatio(npc.restingWindow()) * npcPrice;
+		double unitCost = postPrice + chaseCost;
+		double unitNet = npcPrice - unitCost;
+
+		if (unitNet <= 0.0d || unitNet / npcPrice < npc.minMarginRatio()) {
+			return null;
+		}
+
+		// Horizon is the check-in interval: an order that gets repriced back to the top every 30
+		// minutes collects the 30-minute average rate, not the rate of one left alone all cycle.
 		FillEstimate fill = FillModel.estimate(
 				product,
 				context.trends().fillStatsFor(product.productId()).orElse(null),
-				context.fillHorizon(),
-				ORDER_FILL_SHARE);
+				npc.checkIn(),
+				UNMEASURED_FILL_SHARE);
 
 		double fillPerHour = fill.buyUnitsPerHour();
-		long affordable = (long) (context.maxCapitalPerFlip() / bid);
-		long units = Math.min(affordable,
-				Math.min(limits.sessionUnits(), (long) (fillPerHour * limits.sessionHours())));
+		long affordable = (long) (context.maxCapitalPerFlip() / unitCost);
+		// Trimmed to the slots rather than refused for wanting too many. A plan that would need
+		// more orders than the account has is a real plan at the size the slots allow, and the
+		// player would place it that way; refusing it hid every large unstackable item.
+		long units = Math.min(
+				Math.min(affordable, limits.maxRestingUnits()),
+				Math.min(limits.capUnits(), (long) (fillPerHour * limits.restingHours())));
 
 		if (units <= 0L) {
 			return null;
 		}
 
-		// Every unit of this route rests on the book, so the plan has to fit in the order slots the
-		// account actually has. Unstackable items reach this quickly: 256 units to an order.
 		long orders = ceilDiv(units, limits.maxUnitsPerOrder());
 
-		if (orders > context.fees().bazaarOrderSlots()) {
-			return null;
-		}
+		// The NPC leg is certain, so confidence is about the entry: how reliably the gap has been
+		// there, and how briskly the item is dumped into. Unmeasured persistence tops out at 0.65,
+		// which is the honest reading of "this looks like a flip and nothing has watched it".
+		double confidence = 0.50d
+				+ 0.30d * (edge == null ? 0.0d : edge.persistence())
+				+ 0.15d * Math.min(1.0d, product.instantSellsPerHour() / LIQUID_FILL_RATE);
 
-		// The NPC leg is certain; only the fill is not, so confidence tracks how briskly the item
-		// is actually being dumped rather than anything about the price.
-		double confidence = 0.55d + 0.30d
-				* Math.min(1.0d, product.instantSellsPerHour() / LIQUID_FILL_RATE);
-
-		return new Route(true, bid, unitNet, units, units * bid, confidence, fillPerHour,
-				fill.measured(), orders);
+		return new Route(true, postPrice, unitCost, unitNet, units, units * unitCost, confidence,
+				fillPerHour, fill.measured(), orders);
 	}
 
 	private static Route better(Route a, Route b) {
@@ -326,8 +374,8 @@ public final class NpcFlipStrategy implements FlipStrategy {
 			return a;
 		}
 
-		// Both routes are sized over the same session, so comparing totals and comparing rates give
-		// the same ordering. Totals avoid dividing by the session twice.
+		// Both routes are sized over the same window, so comparing totals and comparing rates give
+		// the same ordering. Totals avoid dividing by the window twice.
 		return a.totalProfit() >= b.totalProfit() ? a : b;
 	}
 
@@ -336,100 +384,97 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	}
 
 	/**
-	 * The three ceilings on one plan, resolved once so both routes size against the same numbers.
+	 * The ceilings that do not depend on which route is taken, resolved once so both size against
+	 * the same numbers.
 	 *
-	 * @param unitsPerTrip     units one inventory holds, 2,304 stackable and 36 not
-	 * @param sessionHours     how long the player intends to keep going
-	 * @param carryUnits       units the session's trips can move, ignoring every other limit
+	 * @param unitsPerLoad     units one inventory load carries through {@code /trades}
+	 * @param restingHours     how long an order may sit, which is what plans are sized over
 	 * @param capUnits         units the remaining daily NPC budget can pay for
 	 * @param maxUnitsPerOrder units one bazaar order may cover
+	 * @param orderSlots       slots NPC plans may rest orders in, settings and account together
 	 */
-	private record Limits(long unitsPerTrip, double sessionHours, long carryUnits, long capUnits,
-			long maxUnitsPerOrder) {
+	private record Limits(long unitsPerLoad, double restingHours, long capUnits,
+			long maxUnitsPerOrder, int orderSlots) {
 		static Limits of(ItemCatalog.Entry entry, double npcPrice, StrategyContext context) {
-			long unitsPerTrip = SLOTS_PER_TRIP * entry.stackSize();
-			double sessionHours = context.npcRestingHours();
-			long carryUnits = (long) (unitsPerTrip * TRIPS_PER_HOUR * sessionHours);
+			NpcContext npc = context.npc();
 
-			// Unlimited stays unlimited rather than becoming an enormous but finite unit count, so
-			// that a caller with no cap to report gets the sizing this had before the cap existed.
-			long capUnits = context.npcCapRemaining() == StrategyContext.NPC_CAP_UNLIMITED
-					? Long.MAX_VALUE
-					: (long) (context.npcCapRemaining() / npcPrice);
-
-			return new Limits(unitsPerTrip, sessionHours, carryUnits, capUnits,
+			return new Limits(
+					SLOTS_PER_LOAD * entry.stackSize(),
+					npc.restingHours(),
+					npc.capUnits(npcPrice),
 					entry.unstackable()
 							? MAX_UNITS_PER_ORDER_UNSTACKABLE
-							: MAX_UNITS_PER_ORDER_STACKABLE);
+							: MAX_UNITS_PER_ORDER_STACKABLE,
+					npc.orderSlots(context.fees()));
 		}
 
-		/** The binding ceiling before market flow and capital are considered. */
-		long sessionUnits() {
-			return Math.min(carryUnits, capUnits);
-		}
-
-		/** True when the daily NPC budget runs out before the session's trips do. */
-		boolean capBinds() {
-			return capUnits < carryUnits;
+		/** Units that fit in the order slots at all, which only the resting route is bounded by. */
+		long maxRestingUnits() {
+			return maxUnitsPerOrder * orderSlots;
 		}
 
 		/** Whether the budget is what actually held this plan to {@code units}. */
 		boolean capSized(long units) {
-			return capBinds() && units == capUnits;
+			return capUnits != Long.MAX_VALUE && units == capUnits;
 		}
 
 		/** False when the caller stated no budget, and so nothing about it is worth reporting. */
-		boolean known() {
+		boolean capKnown() {
 			return capUnits != Long.MAX_VALUE;
 		}
 
-		/** Hours of trips the remaining budget will survive, or empty when it outlasts a day. */
-		Optional<Double> hoursUntilCapped() {
-			double perHour = unitsPerTrip * TRIPS_PER_HOUR;
-
-			return !capBinds() || perHour <= 0.0d
-					? Optional.empty()
-					: Optional.of(capUnits / perHour);
+		/** Inventory loads the plan hauls through {@code /trades}. */
+		long loads(long units) {
+			return ceilDiv(units, unitsPerLoad);
 		}
 	}
 
 	/**
-	 * @param viaOrder      true when the stock is acquired with a resting buy order rather than by
-	 *                      crossing the spread
-	 * @param fillPerHour   units an hour the acquisition leg is expected to bring in
-	 * @param fillMeasured  whether {@code fillPerHour} came from recorded displacement or from an
-	 *                      assumed share of volume. Always false for the instant route, which rests
-	 *                      no order and so has nothing to be displaced from
-	 * @param orders        bazaar orders the plan needs, given the per-order unit ceiling
+	 * @param viaOrder     true when the stock is acquired with a resting buy order rather than by
+	 *                     crossing the spread
+	 * @param postPrice    the price to actually type into the bazaar. Below {@code unitCost} on the
+	 *                     resting route, because chasing the book upward is part of what you pay
+	 *                     but not part of what you post
+	 * @param unitCost     expected coins per unit including the chase
+	 * @param fillPerHour  units an hour the acquisition leg is expected to bring in
+	 * @param fillMeasured whether {@code fillPerHour} came from recorded displacement or from an
+	 *                     assumed share of volume. Always false for the instant route, which rests
+	 *                     no order and so has nothing to be displaced from
+	 * @param orders       bazaar orders the plan needs, given the per-order unit ceiling
 	 */
-	private record Route(boolean viaOrder, double unitCost, double unitNetProfit, long units,
-			double capital, double confidence, double fillPerHour, boolean fillMeasured,
+	private record Route(boolean viaOrder, double postPrice, double unitCost, double unitNetProfit,
+			long units, double capital, double confidence, double fillPerHour, boolean fillMeasured,
 			long orders) {
 		double totalProfit() {
 			return unitNetProfit * units;
 		}
 
 		/**
-		 * Average coins an hour across the whole session, which is what the plan is sized over.
+		 * Average coins an hour across the resting window, which is what the plan is sized over.
 		 *
-		 * <p>Not the rate while you are actively trading. An item that exhausts the daily NPC
-		 * budget in fifteen minutes of a two-hour session reports a quarter of its peak rate, and
-		 * that is the point: the ranking is comparing what the session is worth.
+		 * <p>Not the rate while an order is filling. A plan the daily budget truncates to a fraction
+		 * of the window reports a fraction of its peak rate, and that is the point: the ranking is
+		 * comparing what the window is worth.
 		 */
-		double profitPerHour(double sessionHours) {
-			return sessionHours <= 0.0d ? 0.0d : totalProfit() / sessionHours;
+		double profitPerHour(double restingHours) {
+			return restingHours <= 0.0d ? 0.0d : totalProfit() / restingHours;
 		}
 
-		List<String> steps(String name, double npcPrice, long trips) {
-			List<String> steps = new ArrayList<>(4);
+		List<String> steps(String name, double npcPrice, NpcContext npc) {
+			List<String> steps = new ArrayList<>(5);
 
 			if (viaOrder) {
 				steps.add("Bazaar -> search " + name + " -> Create Buy Order");
 				steps.add(orders > 1L
 						? String.format("Set price %.1f and quantity %d, split across %d orders "
-								+ "because one order cannot hold more", unitCost, units, orders)
-						: String.format("Set price %.1f and quantity %d, then wait for the fill",
-								unitCost, units));
+								+ "because one order cannot hold more", postPrice, units, orders)
+						: String.format("Set price %.1f and quantity %d", postPrice, units));
+				steps.add(String.format("Check back every %d minutes and move the order back to the "
+								+ "top of the book if you have been outbid",
+						npc.checkIn().toMinutes()));
+				steps.add(String.format("Never reprice above %.1f: past there the margin is under "
+								+ "%.0f%% and the slot is worth more elsewhere",
+						npc.maxChasePrice(npcPrice), npc.minMarginRatio() * 100.0d));
 			} else {
 				steps.add(orders > 1L
 						? String.format("Bazaar -> search %s -> Instant Buy %d, over %d purchases",
@@ -437,20 +482,18 @@ public final class NpcFlipStrategy implements FlipStrategy {
 						: "Bazaar -> search " + name + " -> Instant Buy " + units);
 			}
 
-			steps.add(trips > 1L
-					? "Take the stock to an NPC that buys it, across roughly " + trips + " trips"
-					: "Take the stock to any NPC that buys it");
-			steps.add(String.format("Sell to the NPC at %.2f coins each", npcPrice));
-			steps.add(viaOrder
-					? "Re-check the bid before repeating; if it has risen past the NPC price, stop"
-					: "Re-check the bazaar price before repeating; this closes quickly");
+			steps.add(String.format("/trades -> any NPC shop -> sell at %.2f coins each", npcPrice));
+
+			if (!viaOrder) {
+				steps.add("Re-check the bazaar price before repeating; the ask-side edge closes fast");
+			}
 
 			return steps;
 		}
 	}
 
-	private static List<String> risks(Route route, BazaarProduct product, long trips,
-			Limits limits) {
+	private static List<String> risks(Route route, BazaarProduct product, NpcEdge edge, Limits limits,
+			StrategyContext context) {
 		List<String> risks = new ArrayList<>();
 
 		if (route.viaOrder()) {
@@ -461,28 +504,33 @@ public final class NpcFlipStrategy implements FlipStrategy {
 					? String.format("Fill is not immediate: your order collects about %.0f units an "
 							+ "hour of what gets dumped here", route.fillPerHour())
 					: String.format("Fill is not immediate: about %.0f units an hour get dumped "
-							+ "into this book", product.instantSellsPerHour()));
-			risks.add("Anyone can outbid you; reprice or cancel rather than sitting behind the queue");
+							+ "into this book, and no displacement has been recorded for it yet, so "
+							+ "the size above assumes a flat share of that",
+							product.instantSellsPerHour()));
+			risks.add("Coins in a resting order are stuck until it fills or you cancel it. Nothing "
+					+ "is at risk of loss - the NPC price cannot move - but the slot and the capital "
+					+ "are committed for the window");
+
+			if (edge == null) {
+				risks.add("No tape history for this item yet, so nothing has checked whether the gap "
+						+ "is a standing feature or a flicker. That takes about 17 hours of samples");
+			}
 		} else {
 			risks.add("Edge closes fast once others notice; verify prices before committing");
 		}
 
-		risks.add("Requires walking to an NPC that buys this item");
-
-		if (trips > 1L) {
-			risks.add("Needs " + trips + " inventory trips: assumes 36 slots at a "
-					+ (limits.unitsPerTrip() / 36L) + " stack");
+		if (limits.capSized(route.units())) {
+			risks.add(String.format("NPCs stop buying once the day's shared coin budget runs out, "
+							+ "and it is what holds this plan to %d units: %s left, spent by the sale "
+							+ "price rather than by profit",
+					route.units(), Coins.format(context.npc().capRemaining())));
 		}
-
-		limits.hoursUntilCapped().ifPresent(hours -> risks.add(String.format(
-				"NPCs stop buying after about %.1f hours of this: the daily coin cap is shared "
-						+ "across every item, so spending it here spends it everywhere", hours)));
 
 		return risks;
 	}
 
 	private static List<String> notes(Route chosen, Route other, BazaarProduct product,
-			double npcPrice, Limits limits, StrategyContext context) {
+			double npcPrice, NpcEdge edge, Limits limits, StrategyContext context) {
 		List<String> notes = new ArrayList<>(context.catalog().identityNotes(product.productId()));
 
 		notes.add(chosen.viaOrder()
@@ -490,33 +538,49 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				: "Route: instant buy. Crossing the spread is worth it here");
 
 		if (other != null) {
-			notes.add(String.format("%s route instead: %.1f a unit, %s over the session",
+			notes.add(String.format("%s route instead: %.1f a unit, %s over the window",
 					other.viaOrder() ? "Buy order" : "Instant buy",
 					other.unitNetProfit(),
 					Coins.format(other.totalProfit())));
 		}
 
-		// Coins of profit per coin of the shared daily budget. The whole reason an expensive item
-		// with a fat per-unit margin can still be the wrong thing to spend the day's cap on.
-		notes.add(String.format("Cap efficiency: %.3f coins earned per coin of NPC budget spent",
-				chosen.unitNetProfit() / npcPrice));
+		if (edge != null) {
+			notes.add(String.format("Edge held in %.1f%% of the last %d taped samples, at a %.1f%% "
+							+ "median margin", edge.persistence() * 100.0d, edge.samples(),
+					edge.medianMarginRatio() * 100.0d));
+
+			double chaseCost = chosen.unitCost() - chosen.postPrice();
+
+			if (chosen.viaOrder() && chaseCost > 0.0d) {
+				notes.add(String.format("Chase cost: %.1f a unit over %.1fh of repricing, %.2f%% of "
+								+ "the NPC price, already taken out of the margin above", chaseCost,
+						limits.restingHours(), chaseCost / npcPrice * 100.0d));
+			}
+		}
 
 		// Deliberately does not claim which limit bound the plan unless the cap demonstrably did.
-		// Capital, book flow and carrying capacity all size plans too, and a note that names the
-		// wrong one is worse than a note that only states the budget.
-		if (limits.known()) {
+		// Capital, book flow and order slots all size plans too, and a note that names the wrong
+		// one is worse than a note that only states the budget.
+		if (limits.capKnown()) {
 			notes.add(limits.capSized(chosen.units())
 					? String.format("Sized by the daily NPC cap: %s of budget left, enough for "
-							+ "exactly the %d units above",
-							Coins.format(context.npcCapRemaining()), limits.capUnits())
+									+ "exactly the %d units above",
+							Coins.format(context.npc().capRemaining()), limits.capUnits())
 					: String.format("Daily NPC cap: %s of budget left, enough for %d units of this",
-							Coins.format(context.npcCapRemaining()), limits.capUnits()));
+							Coins.format(context.npc().capRemaining()), limits.capUnits()));
 		}
 
 		if (chosen.orders() > 1L) {
 			notes.add(String.format("Needs %d of your %d bazaar order slots: one order holds %d "
-							+ "units of this item", chosen.orders(),
-					context.fees().bazaarOrderSlots(), limits.maxUnitsPerOrder()));
+							+ "units of this item", chosen.orders(), limits.orderSlots(),
+					limits.maxUnitsPerOrder()));
+		}
+
+		long loads = limits.loads(chosen.units());
+
+		if (loads > 1L) {
+			notes.add(String.format("Hauling: %d inventory loads at %d units a load, all through "
+					+ "/trades", loads, limits.unitsPerLoad()));
 		}
 
 		notes.add(String.format("Weekly volume: %s units instant-bought, %s instant-sold",
