@@ -28,9 +28,84 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(COLUMNS, STRATEGIES, ROUTES, NPC_CAP, LIQUIDITY, LEDGER, SETTINGS, SYNC,
-				LIMITS);
+		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, LIQUIDITY, LEDGER,
+				SETTINGS, SYNC, LIMITS);
 	}
+
+	/**
+	 * The walkthrough, first because everything else assumes you have already done it.
+	 *
+	 * <p>Numbered, and in the order a first session actually happens: money in, list, one flip,
+	 * proof it worked. The other sections define words; this one is the only place that says what to
+	 * do, and a player who reads nothing else should still be able to run a flip from it.
+	 */
+	private static final Section START = new Section("start", "Walkthrough: your first flip",
+			List.of(
+					new Term("1. Tell it your bankroll", "Open the flip screen (the keybind, or "
+							+ "/flip gui) and press Settings, or type /flip config edit. Set Bankroll "
+							+ "to the coins you are willing to have tied up at once. Everything is "
+							+ "sized to fit inside it, so this is the one setting you cannot skip"),
+					new Term("2. Wait for the first poll", "The bazaar is fetched every 20 seconds "
+							+ "and the first fetch lands a few seconds after you join. /flip status "
+							+ "says how old the data is. Until it arrives the list is empty"),
+					new Term("3. Ask for a list", "/flip, with nothing after it, is the ranking "
+							+ "across every strategy. /flip bazaar, /flip npc and /flip snipe ask for "
+							+ "one kind. The list is sorted by profit per hour after fees, and rank 1 "
+							+ "is the best plan the mod can see right now"),
+					new Term("4. Read one row before trusting it", "Click the row in the flip screen "
+							+ "and the panel on the right says what the plan is: what to buy, at what "
+							+ "price, how many, and what has to happen for it to pay. Anything the "
+							+ "mod is unsure about is listed there as a risk"),
+					new Term("5. Take it", "/flip take 1, or the Take button, writes the plan into "
+							+ "your ledger with the numbers you are looking at frozen into it. This "
+							+ "does not trade for you - you still place the order yourself, in the "
+							+ "game. The mod never touches your account"),
+					new Term("6. Do the trade in game", "Copy the item name with the Copy name button, "
+							+ "paste it into the bazaar search, and place the order the plan "
+							+ "describes. The mod is a calculator, not a bot"),
+					new Term("7. Record what happened", "When the coins come back, /flip close <id> "
+							+ "<units sold> <price each>. The id is the four characters /flip take "
+							+ "printed. If the order never filled, /flip abandon <id> instead"),
+					new Term("8. Check whether it works", "/flip ledger prints your open positions and "
+							+ "two numbers: how much of the quoted profit you actually got, and how "
+							+ "much of what you planned actually filled. Those two are the only "
+							+ "evidence that any of this is worth doing"),
+					new Term("Optional: let it record for you", "/flip track fills the ledger from "
+							+ "the trades Hypixel announces, so steps 5 and 7 happen on their own for "
+							+ "plans you took. Read the Ledger section first - it only records trades "
+							+ "against plans you took unless you tell it otherwise")));
+
+	/** Every command, in one place, because a command you cannot remember does not exist. */
+	private static final Section COMMANDS = new Section("commands", "Commands", List.of(
+			new Term("/flip", "The ranked list. /flip bazaar, /flip npc and /flip snipe restrict it "
+					+ "to one strategy"),
+			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, "
+					+ "your ledger and this guide. The keybind opens the same thing"),
+			new Term("/flip take <rank>", "Records the flip on that line of the last list you were "
+					+ "shown, at the numbers you were shown"),
+			new Term("/flip close <id> <units> <price>", "Closes a position with what actually "
+					+ "happened. Price is per unit, as displayed - fees are applied for you"),
+			new Term("/flip abandon <id>", "Ends a position that never filled. Its units count "
+					+ "against the fill rate and nothing reaches the capture rate"),
+			new Term("/flip ledger", "Open positions, committed capital, capture rate and fill rate"),
+			new Term("/flip ledger forget <id>", "Deletes an entry as though it had never been "
+					+ "recorded. For entries that are not flips at all"),
+			new Term("/flip ledger clear unquoted", "Counts the entries that came from trades the mod "
+					+ "never quoted, then deletes them all if you repeat the command with confirm on "
+					+ "the end. /flip ledger clear confirm empties the whole ledger"),
+			new Term("/flip status", "Whether polling is alive, how old the data is, what the tape "
+					+ "holds, and what the last sync did"),
+			new Term("/flip config", "Prints the settings that change the list, and where the file "
+					+ "is. /flip config edit opens them as a screen"),
+			new Term("/flip reload", "Re-reads the config file after you edited it by hand"),
+			new Term("/flip sync", "Pulls the collector's tape now instead of waiting for the next "
+					+ "launch"),
+			new Term("/flip hud", "Toggles the on-screen list of top flips"),
+			new Term("/flip track", "Toggles filling the ledger from your real trades"),
+			new Term("/flip capture", "Toggles recording Hypixel's raw trade messages to a file. A "
+					+ "development tool - the parser it was collected for is written, so leave it "
+					+ "off unless something stops being read correctly"),
+			new Term("/flip guide <section>", "This guide, one section at a time")));
 
 	private static final Section COLUMNS = new Section("columns", "Columns", List.of(
 			new Term("#", "Rank in the list as currently sorted. /flip take <#> records the flip on "
@@ -176,21 +251,31 @@ public final class Guide {
 					+ "rate, which is the honest answer: an order you gave up on is not a flip that "
 					+ "went badly, it is one that never happened. Select it on the Ledger tab and "
 					+ "press Abandon, or use /flip abandon <id>"),
-			new Term("Capture", "/flip capture records the chat lines and menu contents your trades "
-					+ "produce, to a file in the config folder. It is groundwork for tracking your "
-					+ "buys and sells automatically: the parser that will read them has to be "
-					+ "written against Hypixel's real wording, and this is how that wording gets "
-					+ "collected. Nothing in the mod uses the file yet, so leave it off unless "
-					+ "you are collecting"),
 			new Term("Automatic tracking", "/flip track fills the ledger from the trades Hypixel "
-					+ "reports, instead of you typing them in. A buy opens a position, a sale "
-					+ "closes it, and a position can close in pieces because one order often fills "
-					+ "in pieces. Off by default, because a wrong entry is worse than an empty "
-					+ "ledger"),
-			new Term("Tracked without a quote", "A trade the mod never suggested. It is recorded, "
-					+ "and it counts toward the fill rate, but it stays out of the capture rate: "
-					+ "there was no quote to fall short of, and counting zero as the promise would "
-					+ "report every ordinary trade as a total failure"),
+					+ "reports, instead of you typing them in. A buy claims the plan you took for "
+					+ "that item, a sale closes it, and a position can close in pieces because one "
+					+ "order often fills in pieces. Off by default, because a wrong entry is worse "
+					+ "than an empty ledger"),
+			new Term("It ignores your shopping", "Tracking only records trades against plans you "
+					+ "took. Buying materials to use, selling what you farmed - none of that reaches "
+					+ "the ledger, because a buy with nothing to sell against it would sit open for "
+					+ "good and drag the fill rate down with it. Turn on \"Also track trades the mod "
+					+ "never quoted\" in settings if you flip by hand and want that measured too"),
+			new Term("Tracked without a quote", "What that setting produces: a trade the mod never "
+					+ "suggested. It counts toward the fill rate but stays out of the capture rate, "
+					+ "because there was no quote to fall short of and counting zero as the promise "
+					+ "would report every ordinary trade as a total failure"),
+			new Term("Forget", "Deletes an entry outright - /flip ledger forget <id>, or select it "
+					+ "on the Ledger tab and press Forget twice. Abandon says a plan did not work "
+					+ "out and keeps its units in the fill rate; Forget says the entry was never a "
+					+ "flip and takes it out of every number. If tracking recorded a pile of ordinary "
+					+ "trading before you noticed, /flip ledger clear unquoted removes all of it at "
+					+ "once and leaves the flips you took"),
+			new Term("Capture", "/flip capture writes Hypixel's raw trade messages to a file, and is "
+					+ "a development tool rather than something you need. It exists so the parser "
+					+ "that reads chat could be written against real wording. Nothing reads the file "
+					+ "at runtime; leave it off unless a Skyblock update stops trades being read "
+					+ "correctly and fresh wording has to be collected"),
 			new Term("Open your orders menu", "Tracking reads chat, and Hypixel announces a partial "
 					+ "fill nowhere in it. The bazaar orders menu is the only place an order that "
 					+ "stopped half way shows up, so opening it now and then is what keeps a "
@@ -226,10 +311,11 @@ public final class Guide {
 					+ "while this game was closed. Sales history is the one thing the mod cannot "
 					+ "backfill: Hypixel only reports the last minute of completed auctions, so an "
 					+ "hour nobody was recording is an hour nobody can price against"),
-			new Term("When it runs", "About five seconds after the poller starts, on its own "
-					+ "thread, so nothing waits for it. /flip sync runs one on demand. Re-sync "
-					+ "every is normally 0, meaning startup only - while this client is running it "
-					+ "already tapes what the collector taped"),
+			new Term("When it runs", "By itself, about five seconds after the poller starts, on its "
+					+ "own thread, so nothing waits for it and there is nothing to run by hand. "
+					+ "/flip sync forces one mid-session; /flip status says what the last one did. "
+					+ "Re-sync every is normally 0, meaning startup only - while this client is "
+					+ "running it already tapes what the collector taped"),
 			new Term("Merged, not copied", "Both machines record the same endpoints, so each holds "
 					+ "sales the other missed. The two are folded together by sale id, and nothing "
 					+ "on either side is overwritten or counted twice"),
