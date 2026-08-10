@@ -145,10 +145,10 @@ public final class ConfigSchema {
 					c -> c.fillHorizonMinutes, (c, v) -> c.fillHorizonMinutes = v)));
 
 	/**
-	 * Both of these size NPC plans and neither means anything to the other strategies, which is why
+	 * These size NPC plans and none of them means anything to the other strategies, which is why
 	 * they are their own group rather than more coins and more patience under Money.
 	 *
-	 * <p>{@code npcSessionHours} is an {@link Entry.Ratio} despite being hours. That record is a
+	 * <p>{@code npcRestingHours} is an {@link Entry.Ratio} despite being hours. That record is a
 	 * double range with bounds and a step; only its name says otherwise.
 	 */
 	private static final Group NPC = new Group("NPC flipping", List.of(
@@ -159,13 +159,34 @@ public final class ConfigSchema {
 							+ "value; it is a setting because the API does not carry it.",
 					1_000_000L, 100_000_000_000L, 10_000_000L,
 					c -> c.npcDailyCapCoins, (c, v) -> c.npcDailyCapCoins = v),
-			new Entry.Ratio("npcSessionHours", "NPC session length (hours)",
-					"How long you intend to keep running NPC trips. NPC flips are limited both by "
-							+ "carrying capacity per hour and by the daily coin cap, and which one "
-							+ "binds depends on this. Raising it promotes items you can grind for a "
-							+ "long time over ones that hit the cap in minutes.",
-					0.25d, 24.0d, 0.25d,
-					c -> c.npcSessionHours, (c, v) -> c.npcSessionHours = v)));
+			new Entry.Ratio("npcMinMarginRatio", "Minimum NPC margin",
+					"How far under the NPC's price your buy order has to sit before the trade is "
+							+ "worth an order slot, as a fraction of that price. The same number "
+							+ "stops the chase: an order is never repriced above it. 0.15 is the "
+							+ "peak of a measured sweep - lower is eaten by repricing, higher "
+							+ "leaves slots empty.",
+					0.02d, 0.50d, 0.01d,
+					c -> c.npcMinMarginRatio, (c, v) -> c.npcMinMarginRatio = v),
+			new Entry.IntRange("npcCheckInMinutes", "Check in every (minutes)",
+					"How often you come back to reprice resting NPC buy orders. Plans are sized on "
+							+ "what fills between check-ins and charged for the outbidding that "
+							+ "takes, so coming back more often buys fills with repricing.",
+					5, 480, 5,
+					c -> c.npcCheckInMinutes, (c, v) -> c.npcCheckInMinutes = v),
+			new Entry.Ratio("npcRestingHours", "Order resting window (hours)",
+					"How long NPC buy orders are left resting before the coins would rather be "
+							+ "elsewhere. There is no price risk in waiting - the exit price is "
+							+ "fixed, so an order fills at your price or is cancelled - so this is "
+							+ "about how long capital may be tied up, not about danger.",
+					0.5d, 24.0d, 0.5d,
+					c -> c.npcRestingHours, (c, v) -> c.npcRestingHours = v),
+			new Entry.IntRange("npcMaxOrderSlots", "NPC order slots",
+					"How many bazaar order slots the NPC basket may fill, or 0 for all of them. "
+							+ "Slots are what limits this trade rather than coins, so lowering it "
+							+ "is how you leave room for spread flipping. Asking for more than your "
+							+ "Bazaar Flipper level allows changes nothing.",
+					0, 56, 1,
+					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Scan auctions",

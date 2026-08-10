@@ -59,7 +59,7 @@ public final class CandidateFeed {
 				Duration.ofMinutes(config.fillHorizonMinutes),
 				config.maxCapitalShare,
 				npcCapRemaining(config),
-				config.npcSessionHours);
+				config.npcRestingHours);
 	}
 
 	/**
