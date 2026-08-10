@@ -6,6 +6,8 @@ import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.valuation.FillStats;
+import jeff.skyblockflipper.core.valuation.NpcEdge;
+import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -179,8 +181,8 @@ class StrategyTest {
 
 	@Test
 	void findsAnNpcFlipWhenTheBazaarPriceFallsBelowTheNpcPrice() {
-		// The bid sits just under the NPC price so the buy-order route has almost no margin, which
-		// is what makes this a test of the ask walk rather than of route selection.
+		// The bid sits 1.25% under the NPC price, so the buy-order route never clears the margin
+		// floor and this is a test of the ask walk rather than of route selection.
 		BazaarProduct cheap = product(79.0d, 50.0d, 40, 2_000_000L);
 		ItemCatalog catalog = new ItemCatalog(Map.of(
 				"TEST_ITEM", new ItemCatalog.Entry("TEST_ITEM", "Test Item", 80.0d)));
@@ -188,7 +190,7 @@ class StrategyTest {
 		// Two hours rather than the default window, so what the book turns over is the binding
 		// limit and the resting depth is not.
 		List<FlipCandidate> found = new NpcFlipStrategy().findCandidates(
-				npcContext(cheap, catalog, StrategyContext.NPC_CAP_UNLIMITED, 2.0d, new Fees(0, false)));
+				npcContext(cheap, catalog, NpcContext.CAP_UNLIMITED, 2.0d, new Fees(0, false)));
 
 		assertEquals(1, found.size());
 
@@ -220,10 +222,15 @@ class StrategyTest {
 		ItemCatalog catalog = new ItemCatalog(Map.of(
 				"TEST_ITEM", new ItemCatalog.Entry("TEST_ITEM", "Test Item", 51_200.0d)));
 
+		// A 2% floor, because this book's own margin is 3.0%: the real melon measures how much
+		// better the order route is, and does not itself clear the shipped 15% floor.
+		NpcContext lenient = new NpcContext(NpcEdgeSnapshot.empty(), 0.02d,
+				NpcContext.DEFAULT_CHECK_IN, NpcContext.DEFAULT_RESTING_HOURS,
+				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+
 		FlipCandidate candidate = new NpcFlipStrategy()
-				.findCandidates(new StrategyContext(
-						new BazaarSnapshot(Instant.now(), Map.of("TEST_ITEM", wide)),
-						catalog, new Fees(0, false), 10_000_000_000L, 0L))
+				.findCandidates(npcContext(wide, catalog, lenient, new Fees(0, false),
+						TrendSnapshot.empty(), 10_000_000_000L))
 				.getFirst();
 
 		// Outbidding the best bid costs 49654.2, against 50933.5 to cross the spread: 1545.8 a unit
@@ -301,8 +308,9 @@ class StrategyTest {
 	}
 
 	@Test
-	void npcFlipIsCappedByHowMuchCanActuallyBeSoldByHand() {
-		// A huge cheap book: buying is instant and unbounded, but selling is manual.
+	void npcPlanIsSizedByFlowOverTheWindowRatherThanByTheBook() {
+		// A huge cheap book: ten million units rest under the NPC price, and what matters is how
+		// many of them actually change hands while the plan is open.
 		BazaarProduct huge = new BazaarProduct(
 				"TEST_ITEM",
 				List.of(new OrderLevel(2.0d, 10_000_000L, 50)),
@@ -316,18 +324,19 @@ class StrategyTest {
 				.findCandidates(contextFor(huge, catalog, 0L))
 				.getFirst();
 
-		// 36 slots x 64 x 12 trips = 27648 units an hour, over the default resting window. Without
-		// the ceiling this would claim the full 10M-unit book and a profit no player could
-		// physically realize. Both routes hit it, since it is the manual sell leg that binds.
-		long expected = (long) (27_648L * StrategyContext.DEFAULT_NPC_RESTING_HOURS);
+		// Half of what gets instant-bought in an hour, over the default eight-hour window. Sizing
+		// off resting depth would claim the whole 10M-unit book.
+		long expected = (long) (huge.instantBuysPerHour() * 0.5d * NpcContext.DEFAULT_RESTING_HOURS);
 		assertEquals(expected, candidate.units());
 
-		// No NPC cap is stated by this context, so the whole window is carried and the hourly rate
-		// is the plain average over it.
-		assertEquals(expected * candidate.unitNetProfit() / StrategyContext.DEFAULT_NPC_RESTING_HOURS,
+		// No NPC cap is stated by this context, so the hourly rate is the plain average over it.
+		assertEquals(expected * candidate.unitNetProfit() / NpcContext.DEFAULT_RESTING_HOURS,
 				candidate.profitPerHour(), 1e-6);
-		assertTrue(candidate.risks().stream().anyMatch(r -> r.contains("trips")),
-				"a multi-trip plan should say so: " + candidate.risks());
+
+		// /trades reaches an NPC shop from anywhere, so nothing in a plan is priced in walking.
+		assertTrue(candidate.risks().stream()
+						.noneMatch(r -> r.contains("trip") || r.contains("walk")),
+				"there is no walking in this trade: " + candidate.risks());
 	}
 
 	@Test
@@ -568,11 +577,12 @@ class StrategyTest {
 						+ unmeasured.notes());
 	}
 
-	// --- The daily NPC coin cap ------------------------------------------------------------------
+	// --- NPC planning ----------------------------------------------------------------------------
 	//
-	// The cap is shared across every item and spent by the NPC's sale price rather than by profit,
-	// which means it binds hardest on exactly the expensive items that rank highest without it.
-	// These cover it truncating a plan, exhausting one, and the order slots a plan has to fit in.
+	// Every parameter these cover is measured in docs/npc-flipping.md. The three filters on the
+	// resting route - persistence, the margin floor and the chase cost charged before it - all
+	// protect order slots rather than coins, because the exit price cannot move. The daily cap is
+	// real but limits a day rather than a plan.
 
 	/** An NPC-flippable item at a fixed price, with the stacking behaviour under test. */
 	private static ItemCatalog npcCatalog(double npcPrice, boolean unstackable) {
@@ -580,53 +590,83 @@ class StrategyTest {
 				"TEST_ITEM", "Test Item", npcPrice, unstackable, List.of())));
 	}
 
+	/** Shipped NPC settings with the cap and the window under test and no measured history. */
+	private static NpcContext npcSettings(long capRemaining, double restingHours) {
+		return new NpcContext(NpcEdgeSnapshot.empty(), NpcContext.DEFAULT_MIN_MARGIN_RATIO,
+				NpcContext.DEFAULT_CHECK_IN, restingHours, NpcContext.ALL_ORDER_SLOTS, capRemaining);
+	}
+
+	/** Three days of tape saying how durably this product's bid has sat under the NPC price. */
+	private static NpcEdgeSnapshot npcEdges(double npcPrice, double persistence,
+			double driftPerHour) {
+		NpcEdge edge = new NpcEdge("TEST_ITEM", npcPrice, persistence, 0.20d, driftPerHour,
+				72.0d, 800, 800);
+
+		return new NpcEdgeSnapshot(Map.of("TEST_ITEM", edge), Duration.ofDays(3), 800, Instant.now());
+	}
+
 	private static StrategyContext npcContext(BazaarProduct product, ItemCatalog catalog,
 			long capRemaining, double restingHours, Fees fees) {
+		return npcContext(product, catalog, npcSettings(capRemaining, restingHours), fees);
+	}
+
+	private static StrategyContext npcContext(BazaarProduct product, ItemCatalog catalog,
+			NpcContext npc, Fees fees) {
+		return npcContext(product, catalog, npc, fees, TrendSnapshot.empty(), BANKROLL);
+	}
+
+	private static StrategyContext npcContext(BazaarProduct product, ItemCatalog catalog,
+			NpcContext npc, Fees fees, TrendSnapshot trends, long bankroll) {
 		return new StrategyContext(
 				new BazaarSnapshot(Instant.now(), Map.of(product.productId(), product)),
 				catalog,
 				List.of(),
-				TrendSnapshot.empty(),
+				trends,
 				fees,
-				BANKROLL,
+				bankroll,
 				0L,
 				0.0d,
 				0.0d,
 				StrategyContext.DEFAULT_FILL_HORIZON,
 				StrategyContext.UNCAPPED,
-				capRemaining,
-				restingHours);
+				npc);
 	}
 
 	@Test
 	void npcPlanIsTruncatedByWhatTheDailyCoinCapCanStillPayFor() {
-		// Expensive enough that the budget, not the day, is what runs out.
-		BazaarProduct product = product(900.0d, 980.0d, 40, 50_000_000L);
+		// Expensive enough that the budget, not the book, is what runs out. The bid is 20% under
+		// the NPC price, which is what it takes to clear the shipped margin floor.
+		BazaarProduct product = product(800.0d, 980.0d, 40, 50_000_000L);
 		StrategyContext context = npcContext(
 				product, npcCatalog(1000.0d, false), 10_000_000L, 2.0d, new Fees(0, false));
 
 		FlipCandidate candidate = new NpcFlipStrategy().findCandidates(context).getFirst();
 
-		// 10M of budget at 1000 a unit buys 10000 units. Carrying capacity would have allowed
-		// 55296 and the book would have filled them, so the cap is the only thing stopping it.
+		// 10M of budget at 1000 a unit buys 10000 units. The book would have dumped 148809 into a
+		// resting order over the two hours and the bankroll would have covered 124984 of them, so
+		// the cap is the only thing stopping it.
 		assertEquals(10_000L, candidate.units());
 
-		// Ranked over the session, not over the hour it would have taken to grind the cap out.
+		// Ranked over the resting window, not over the time it would have taken to spend the cap.
 		assertEquals(candidate.unitNetProfit() * 10_000L / 2.0d, candidate.profitPerHour(), 1e-6);
 
 		assertTrue(candidate.notes().stream().anyMatch(n -> n.contains("daily NPC cap")),
 				"a cap-limited plan should say the cap limited it, got " + candidate.notes());
 		assertTrue(candidate.risks().stream().anyMatch(n -> n.contains("NPCs stop buying")),
 				"a cap-limited plan should warn the budget runs out, got " + candidate.risks());
-		assertTrue(candidate.notes().stream().anyMatch(n -> n.contains("Cap efficiency")),
-				"cap efficiency is how two capped items compare, got " + candidate.notes());
+
+		// Cap efficiency is deliberately not quoted. Ranked on, it makes 4.8M a day against 76.4M
+		// for profit per slot-load, because it buys 9-coin items by the hundred thousand.
+		assertTrue(candidate.notes().stream().noneMatch(n -> n.toLowerCase().contains("efficiency")),
+				"cap efficiency is a 16x-worse ranking key and must not be advertised, got "
+						+ candidate.notes());
 	}
 
 	@Test
 	void npcFlipDisappearsOnceTheDayCoinCapIsSpent() {
 		// The same book that ranks first with budget left is not an opportunity without it: the
 		// NPC will not buy, at any margin.
-		BazaarProduct product = product(900.0d, 980.0d, 40, 50_000_000L);
+		BazaarProduct product = product(800.0d, 980.0d, 40, 50_000_000L);
 
 		assertFalse(new NpcFlipStrategy()
 				.findCandidates(npcContext(product, npcCatalog(1000.0d, false), 10_000_000L, 2.0d,
@@ -640,41 +680,177 @@ class StrategyTest {
 	}
 
 	@Test
-	void unstackableNpcPlanCarriesOneSlotEachAndNeedsSeveralOrders() {
-		BazaarProduct product = product(900.0d, 1100.0d, 40, 50_000_000L);
-		StrategyContext context = npcContext(product, npcCatalog(1000.0d, true),
-				StrategyContext.NPC_CAP_UNLIMITED, 2.0d, new Fees(0, false));
+	void npcPlanIsTrimmedToTheOrderSlotsItCanActuallyBePlacedIn() {
+		// The ask sits above the NPC price, so instant buying is not an option and the plan has to
+		// rest on the book, where slots are finite. Unstackable, so one order holds only 256.
+		BazaarProduct product = product(800.0d, 1100.0d, 40, 50_000_000L);
+		ItemCatalog catalog = npcCatalog(1000.0d, true);
 
-		FlipCandidate candidate = new NpcFlipStrategy().findCandidates(context).getFirst();
+		FlipCandidate perkless = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, NpcContext.CAP_UNLIMITED, 2.0d,
+						new Fees(0, false)))
+				.getFirst();
 
-		// 36 slots holding one each, twelve trips an hour, over two hours. The stackable version of
-		// the same book would have carried 55296.
-		assertEquals(864L, candidate.units());
+		// The book would have filled 148809 units over the window and the bankroll would have paid
+		// for 124984 of them. Fourteen orders of 256 is what can be placed, so that is the plan.
+		assertEquals(256L * 14L, perkless.units());
+		assertTrue(perkless.notes().stream().anyMatch(n -> n.contains("14 of your 14")),
+				"the plan should say how many order slots it needs, got " + perkless.notes());
 
-		// And one order holds 256 of them, so the plan spans four of the fourteen slots.
-		assertTrue(candidate.notes().stream().anyMatch(n -> n.contains("4 of your 14")),
-				"an unstackable plan should say how many order slots it needs, got "
-						+ candidate.notes());
+		// Refusing it instead - which is what this used to do - hid every large unstackable item
+		// behind a limit the player would simply have placed around.
+		FlipCandidate withPerk = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, NpcContext.CAP_UNLIMITED, 2.0d,
+						new Fees(2, false)))
+				.getFirst();
+
+		assertEquals(256L * 28L, withPerk.units(), "14 + 7 per Bazaar Flipper level");
+
+		// And a coop member who has told the mod to leave slots for everyone else gets those.
+		NpcContext five = new NpcContext(NpcEdgeSnapshot.empty(),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 2.0d, 5,
+				NpcContext.CAP_UNLIMITED);
+
+		assertEquals(256L * 5L, new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, five, new Fees(2, false)))
+				.getFirst()
+				.units());
 	}
 
 	@Test
-	void npcPlanIsRefusedWhenItWouldNeedMoreOrderSlotsThanTheAccountHas() {
-		// The ask sits above the NPC price, so instant buying is not an option and the plan has to
-		// rest on the book, where slots are finite.
+	void npcBuyOrderNeedsTheMeasuredMarginFloor() {
+		// A 10% gap: real, but measured over a day of baskets a 15% floor makes 172.5M against
+		// 136.3M at 10%, because a slot spent here is a slot not spent on a wider one.
 		BazaarProduct product = product(900.0d, 1100.0d, 40, 50_000_000L);
-		ItemCatalog catalog = npcCatalog(1000.0d, true);
+		ItemCatalog catalog = npcCatalog(1000.0d, false);
 
-		// Ten hours of trips is 4320 unstackable units, which is 17 orders of 256.
 		assertTrue(new NpcFlipStrategy()
-				.findCandidates(npcContext(product, catalog, StrategyContext.NPC_CAP_UNLIMITED,
-						10.0d, new Fees(0, false)))
-				.isEmpty(), "17 orders should not fit in the 14 slots a perkless account has");
+				.findCandidates(npcContext(product, catalog, NpcContext.CAP_UNLIMITED, 2.0d,
+						new Fees(0, false)))
+				.isEmpty(), "a 10% margin should not clear the shipped 15% floor");
 
-		// The same plan is fine for an account that bought the perk: 14 + 7 + 7 = 28 slots.
-		assertFalse(new NpcFlipStrategy()
-				.findCandidates(npcContext(product, catalog, StrategyContext.NPC_CAP_UNLIMITED,
-						10.0d, new Fees(2, false)))
-				.isEmpty(), "28 slots is enough for the same 17 orders");
+		NpcContext lenient = new NpcContext(NpcEdgeSnapshot.empty(), 0.05d,
+				NpcContext.DEFAULT_CHECK_IN, 2.0d, NpcContext.ALL_ORDER_SLOTS,
+				NpcContext.CAP_UNLIMITED);
+
+		FlipCandidate candidate = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, lenient, new Fees(0, false)))
+				.getFirst();
+
+		assertTrue(candidate.steps().stream().anyMatch(s -> s.contains("Create Buy Order")),
+				"the floor is a setting, and below it the same plan is a buy order: "
+						+ candidate.steps());
+
+		// The stop is the floor read the other way, and the plan has to name the price.
+		assertTrue(candidate.steps().stream().anyMatch(s -> s.contains("950.0")),
+				"a chased order needs a stop price, got " + candidate.steps());
+	}
+
+	@Test
+	void npcBuyOrderIsSkippedWhenTheTapeSaysTheGapFlickers() {
+		BazaarProduct product = product(800.0d, 1100.0d, 40, 50_000_000L);
+		ItemCatalog catalog = npcCatalog(1000.0d, false);
+
+		// Measured on a holdout: of 161 products holding their gap in 95%+ of samples none
+		// realized a loss, against 2 of 22 in the 50-95% band. NECROMANCER_BROOCH quoted an 80%
+		// margin at 30.5% persistence and came back -10%.
+		NpcContext flickering = new NpcContext(npcEdges(1000.0d, 0.30d, 0.0d),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 2.0d,
+				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+
+		assertTrue(new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, flickering, new Fees(0, false)))
+				.isEmpty(), "a gap present in 30% of samples is not worth an order slot");
+
+		NpcContext standing = new NpcContext(npcEdges(1000.0d, 0.99d, 0.0d),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 2.0d,
+				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+
+		FlipCandidate candidate = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, standing, new Fees(0, false)))
+				.getFirst();
+
+		assertTrue(candidate.notes().stream().anyMatch(n -> n.contains("Edge held in 99.0%")),
+				"a measured edge should be quoted, got " + candidate.notes());
+
+		// An unmeasured product is allowed through rather than filtered on uptime, and says so.
+		FlipCandidate unmeasured = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, NpcContext.CAP_UNLIMITED, 2.0d,
+						new Fees(0, false)))
+				.getFirst();
+
+		assertTrue(unmeasured.risks().stream().anyMatch(r -> r.contains("No tape history")),
+				"an unmeasured gap must not be presented as a durable one, got "
+						+ unmeasured.risks());
+		assertTrue(unmeasured.confidence() < candidate.confidence(),
+				"a measured edge should be trusted more than an unmeasured one");
+	}
+
+	@Test
+	void chaseCostIsChargedAgainstTheMarginBeforeTheFloorIsApplied() {
+		// 20% gross margin, and a bid that drifts up 5 coins an hour. Over an eight-hour window
+		// that is 40 coins of repricing on a 1000-coin exit: 4% of the margin's 20%.
+		BazaarProduct product = product(800.0d, 1100.0d, 40, 50_000_000L);
+		ItemCatalog catalog = npcCatalog(1000.0d, false);
+
+		NpcContext drifting = new NpcContext(npcEdges(1000.0d, 0.99d, 5.0d),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 8.0d,
+				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+
+		FlipCandidate candidate = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, drifting, new Fees(0, false)))
+				.getFirst();
+
+		// Posted at 800.1, but 840.1 is what the units actually cost once the order has been moved
+		// up all window. Quoting the post price as the cost is how a 16% trade reads as 20%.
+		assertEquals(840.1d, candidate.unitBuyPrice(), 1e-6);
+		assertEquals(159.9d, candidate.unitNetProfit(), 1e-6);
+		assertTrue(candidate.notes().stream().anyMatch(n -> n.startsWith("Chase cost")),
+				"a charged chase should be stated, got " + candidate.notes());
+
+		// Twice the drift is 80 coins of chasing, leaving 11.99% - under the floor, so there is no
+		// plan at all rather than a plan quoting a margin the repricing eats.
+		NpcContext steep = new NpcContext(npcEdges(1000.0d, 0.99d, 10.0d),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 8.0d,
+				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+
+		assertTrue(new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, steep, new Fees(0, false)))
+				.isEmpty(), "a margin the chase eats down to 12% is not a 20% margin");
+	}
+
+	@Test
+	void npcOrderFillIsMeasuredOverTheCheckInIntervalNotTheRestingWindow() {
+		// Simulated over a cycle: 59.7M repricing every 30 minutes against 11.1M posting once and
+		// walking away. Same order, same book - the difference is how long it sits behind someone.
+		BazaarProduct product = product(8.0d, 20.0d, 40, 5_000_000L);
+		ItemCatalog catalog = npcCatalog(10.0d, false);
+		TrendSnapshot trends = new TrendSnapshot(Map.of(), Map.of("TEST_ITEM", fills(4.0d)),
+				Map.of(), Duration.ofHours(24), 288, Instant.now());
+
+		FlipCandidate attentive = npcFillPlan(product, catalog, trends, Duration.ofMinutes(30));
+		FlipCandidate absent = npcFillPlan(product, catalog, trends, Duration.ofHours(8));
+
+		// Outbid four times an hour, a 30-minute order spends 43% of its life at the front of the
+		// book against 3% for one left all cycle. Sizing the second like the first is the 3.5x
+		// optimism the flat share used to bake in.
+		assertTrue(attentive.units() > absent.units() * 10L,
+				"checking in should size a much larger plan: " + attentive.units() + " vs "
+						+ absent.units());
+		assertTrue(attentive.risks().stream().anyMatch(r -> r.contains("your order collects")),
+				"a measured fill should be quoted as measured, got " + attentive.risks());
+	}
+
+	private static FlipCandidate npcFillPlan(BazaarProduct product, ItemCatalog catalog,
+			TrendSnapshot trends, Duration checkIn) {
+		NpcContext npc = new NpcContext(NpcEdgeSnapshot.empty(),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, checkIn, 8.0d, NpcContext.ALL_ORDER_SLOTS,
+				NpcContext.CAP_UNLIMITED);
+
+		return new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, npc, new Fees(0, false), trends,
+						BANKROLL))
+				.getFirst();
 	}
 
 	@Test
@@ -714,7 +890,6 @@ class StrategyTest {
 				0.05d,
 				StrategyContext.DEFAULT_FILL_HORIZON,
 				StrategyContext.UNCAPPED,
-				StrategyContext.NPC_CAP_UNLIMITED,
-				2.0d);
+				npcSettings(NpcContext.CAP_UNLIMITED, 2.0d));
 	}
 }

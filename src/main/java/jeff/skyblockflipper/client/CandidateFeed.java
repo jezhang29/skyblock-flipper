@@ -4,6 +4,7 @@ import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.NpcContext;
 import jeff.skyblockflipper.core.strategy.NpcFlipStrategy;
 import jeff.skyblockflipper.core.strategy.StrategyContext;
 import jeff.skyblockflipper.core.strategy.StrategyEngine;
@@ -58,8 +59,13 @@ public final class CandidateFeed {
 				config.maxAdverseDrift,
 				Duration.ofMinutes(config.fillHorizonMinutes),
 				config.maxCapitalShare,
-				npcCapRemaining(config),
-				config.npcRestingHours);
+				new NpcContext(
+						data.npcEdges(),
+						config.npcMinMarginRatio,
+						Duration.ofMinutes(config.npcCheckInMinutes),
+						config.npcRestingHours,
+						config.npcMaxOrderSlots,
+						npcCapRemaining(config)));
 	}
 
 	/**
