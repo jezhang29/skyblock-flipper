@@ -73,7 +73,7 @@ class LedgerAutoTrackTest {
 				List.of("buy"), List.of()), 1L);
 
 		for (Settlement settlement : settlements) {
-			ledger.record(settlement, FEES);
+			ledger.record(settlement, FEES, true);
 		}
 
 		LedgerEntry entry = ledger.get(taken.id()).orElseThrow();
@@ -90,11 +90,28 @@ class LedgerAutoTrackTest {
 		assertEquals(10, ledger.all().size());
 	}
 
+	@Test
+	void withUnquotedTrackingOffOnlyThePlanYouTookIsBooked(@TempDir Path dir) throws Exception {
+		// The default. Nine of these ten buys are someone playing the game - materials bought to be
+		// used, not flipped - and each one would otherwise sit open in the ledger for good.
+		Ledger ledger = new Ledger(dir.resolve("ledger.jsonl"));
+		LedgerEntry taken = ledger.open(new FlipCandidate("ENCHANTED_ENDSTONE", "Enchanted End Stone",
+				StrategyKind.BAZAAR_SPREAD, 200.0d, 260.0d, 55.0d, 8L, 1_600L, 440.0d, 0.9d,
+				List.of("buy"), List.of()), 1L);
+
+		for (Settlement settlement : settlements) {
+			ledger.record(settlement, FEES, false);
+		}
+
+		assertEquals(1, ledger.all().size());
+		assertEquals(LedgerEntry.Origin.AUTO_QUOTED, ledger.get(taken.id()).orElseThrow().origin());
+	}
+
 	private static Ledger record(Path dir) throws IOException {
 		Ledger ledger = new Ledger(dir.resolve("ledger.jsonl"));
 
 		for (Settlement settlement : settlements) {
-			ledger.record(settlement, FEES);
+			ledger.record(settlement, FEES, true);
 		}
 
 		return ledger;

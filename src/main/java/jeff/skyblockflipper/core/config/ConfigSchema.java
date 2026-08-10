@@ -298,7 +298,14 @@ public final class ConfigSchema {
 							+ "them, and a trade the mod never quoted is recorded but kept out of "
 							+ "the capture rate. Open your bazaar orders menu now and then: a "
 							+ "partial fill is announced nowhere else.",
-					c -> c.autoTrackEnabled, (c, v) -> c.autoTrackEnabled = v)));
+					c -> c.autoTrackEnabled, (c, v) -> c.autoTrackEnabled = v),
+			new Entry.Flag("trackUnquotedTrades", "Also track trades the mod never quoted",
+					"With this off, tracking records only trades against plans you took, and the "
+							+ "materials you buy to play the game with are ignored. On, every bazaar "
+							+ "buy opens a position - which is what you want only if you flip by "
+							+ "hand and want that measured, since those positions stay open until "
+							+ "you sell the same item again.",
+					c -> c.trackUnquotedTrades, (c, v) -> c.trackUnquotedTrades = v)));
 
 	private static List<String> zoomOptions() {
 		return List.of(ZOOM_AUTO, "0.5", "0.6", "0.7", "0.8", "0.9", "1.0");

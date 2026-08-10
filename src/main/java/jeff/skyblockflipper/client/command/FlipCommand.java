@@ -43,6 +43,7 @@ import net.minecraft.network.chat.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 
 /**
  * The {@code /flip} command tree. Client-side only: the command never reaches the server, so it
@@ -124,7 +125,21 @@ public final class FlipCommand {
 						.executes(ctx -> {
 							showLedger(ctx.getSource());
 							return 1;
-						}))
+						})
+						.then(ClientCommands.literal("forget")
+								.then(ClientCommands.argument("id", StringArgumentType.word())
+										.executes(ctx -> forget(ctx.getSource(),
+												StringArgumentType.getString(ctx, "id")))))
+						// Deleting history cannot be undone, so the first call only counts what it
+						// would delete and the word "confirm" is what actually does it.
+						.then(ClientCommands.literal("clear")
+								.executes(ctx -> offerClear(ctx.getSource(), false))
+								.then(ClientCommands.literal("confirm")
+										.executes(ctx -> clear(ctx.getSource(), false)))
+								.then(ClientCommands.literal("unquoted")
+										.executes(ctx -> offerClear(ctx.getSource(), true))
+										.then(ClientCommands.literal("confirm")
+												.executes(ctx -> clear(ctx.getSource(), true))))))
 				.then(ClientCommands.literal("hud")
 						.executes(ctx -> {
 							toggleHud(ctx.getSource());
@@ -307,6 +322,76 @@ public final class FlipCommand {
 		} catch (IOException e) {
 			return ledgerWriteFailed(source, e);
 		}
+	}
+
+	/**
+	 * Deletes one entry outright.
+	 *
+	 * <p>Separate from {@code abandon}, which is about a plan that did not work out and keeps its
+	 * units in the fill rate. This is for an entry that should never have been recorded - the stack
+	 * of materials you bought to play the game with, not to flip.
+	 */
+	private static int forget(FabricClientCommandSource source, String id) {
+		try {
+			return LedgerService.ledger().forget(id)
+					.map(entry -> {
+						source.sendFeedback(Chat.prefixed(Component.literal(
+								"Forgot " + entry.displayName() + " - it is out of the ledger and out "
+										+ "of every rate.").withStyle(ChatFormatting.GRAY)));
+						return 1;
+					})
+					.orElseGet(() -> {
+						source.sendError(Component.literal("No ledger entry with id " + id + ".")
+								.withStyle(ChatFormatting.RED));
+						return 0;
+					});
+		} catch (IOException e) {
+			return ledgerWriteFailed(source, e);
+		}
+	}
+
+	/** Says what a clear would delete and how to ask for it, without deleting anything. */
+	private static int offerClear(FabricClientCommandSource source, boolean unquotedOnly) {
+		long count = LedgerService.ledger().count(filter(unquotedOnly));
+
+		if (count == 0L) {
+			source.sendFeedback(Chat.prefixed(Component.literal(unquotedOnly
+					? "No untracked-trade entries to clear."
+					: "The ledger is already empty.").withStyle(ChatFormatting.GRAY)));
+			return 1;
+		}
+
+		String command = unquotedOnly ? "/flip ledger clear unquoted confirm" : "/flip ledger clear confirm";
+
+		source.sendFeedback(Chat.prefixed(Component.literal(unquotedOnly
+				? count + " entries came from trades the mod never quoted."
+				: count + " entries in the ledger, quoted flips included.")
+				.withStyle(ChatFormatting.YELLOW)));
+		source.sendFeedback(Component.literal("  This cannot be undone. Run " + command + " to delete them.")
+				.withStyle(ChatFormatting.DARK_GRAY));
+		return 1;
+	}
+
+	private static int clear(FabricClientCommandSource source, boolean unquotedOnly) {
+		try {
+			int removed = LedgerService.ledger().forgetAll(filter(unquotedOnly));
+
+			source.sendFeedback(Chat.prefixed(Component.literal("Deleted " + removed + " ledger "
+					+ (removed == 1 ? "entry." : "entries.")).withStyle(ChatFormatting.GREEN)));
+			return 1;
+		} catch (IOException e) {
+			return ledgerWriteFailed(source, e);
+		}
+	}
+
+	/**
+	 * Which entries a clear touches.
+	 *
+	 * <p>The unquoted filter is the useful one: it deletes what automatic tracking recorded off your
+	 * ordinary buying and selling, and keeps every flip you took from the mod's own list.
+	 */
+	private static Predicate<LedgerEntry> filter(boolean unquotedOnly) {
+		return unquotedOnly ? entry -> !entry.isQuoted() : entry -> true;
 	}
 
 	private static void showLedger(FabricClientCommandSource source) {

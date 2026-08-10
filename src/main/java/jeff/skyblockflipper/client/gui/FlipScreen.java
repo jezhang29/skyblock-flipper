@@ -131,6 +131,9 @@ public final class FlipScreen extends Screen {
 	/** Shares the Take button's slot: the tab showing one never shows the other. */
 	private final TextButton abandonButton = new TextButton("Abandon", this::abandonSelected);
 
+	/** Beside Abandon, and only on the Ledger tab. */
+	private final TextButton forgetButton = new TextButton("Forget", this::forgetSelected);
+
 	/** Only laid out and drawn when Cloth Config is installed - see {@link Settings}. */
 	private final TextButton settingsButton = new TextButton("Settings", this::openSettings);
 
@@ -141,9 +144,16 @@ public final class FlipScreen extends Screen {
 	/** Whatever the detail panel was last drawn for, so its scroll can reset when that changes. */
 	private FlipCandidate detailShown;
 
-	/** Ledger tab: the selected open position, and the one Abandon is waiting on a second click for. */
+	/** Ledger tab: the selected open position. */
 	private String selectedPosition = "";
-	private String pendingAbandon = "";
+
+	/**
+	 * The destructive action waiting on a second click, as {@code <button>:<position id>}.
+	 *
+	 * <p>One field rather than one per button, so arming either one disarms the other: two live
+	 * confirmations would let a second click land on a button the player did not arm.
+	 */
+	private String pendingAction = "";
 
 	/** Where the open positions were last drawn, so a click can be turned back into one of them. */
 	private final List<String> positionRows = new ArrayList<>();
@@ -172,7 +182,10 @@ public final class FlipScreen extends Screen {
 
 		takeButton.setBounds(MARGIN, buttonY, takeWidth, BUTTON_HEIGHT);
 		copyButton.setBounds(MARGIN + takeWidth + 4, buttonY, copyWidth, BUTTON_HEIGHT);
-		abandonButton.setBounds(MARGIN, buttonY, abandonButton.preferredWidth(font), BUTTON_HEIGHT);
+		int abandonWidth = abandonButton.preferredWidth(font);
+		abandonButton.setBounds(MARGIN, buttonY, abandonWidth, BUTTON_HEIGHT);
+		forgetButton.setBounds(MARGIN + abandonWidth + 4, buttonY,
+				forgetButton.preferredWidth(font), BUTTON_HEIGHT);
 
 		int closeWidth = closeButton.preferredWidth(font);
 		closeButton.setBounds(viewWidth - MARGIN - closeWidth, buttonY, closeWidth, BUTTON_HEIGHT);
@@ -633,6 +646,7 @@ public final class FlipScreen extends Screen {
 			copyButton.render(graphics, font, mouseX, mouseY, hasSelection);
 		} else if (tab == Tab.LEDGER) {
 			abandonButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
+			forgetButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
 		}
 
 		closeButton.render(graphics, font, mouseX, mouseY, true);
@@ -663,7 +677,7 @@ public final class FlipScreen extends Screen {
 		return List.of(
 				FlipKeybinds.boundKeyName() + " or Esc closes.",
 				tab == Tab.LEDGER
-						? "Click a position, then Abandon to drop it."
+						? "Abandon keeps a position in the numbers, Forget deletes it."
 						: "Click a column to sort, a row to select.",
 				"Guide tab defines every column.");
 	}
@@ -704,22 +718,11 @@ public final class FlipScreen extends Screen {
 	}
 
 	/**
-	 * Drops a position that was never going to fill, on a second click.
-	 *
-	 * <p>Confirmed rather than immediate because it is the one action on this screen that cannot be
-	 * undone and that changes a number the mod is judged by: abandoning counts against the fill
-	 * rate. The confirmation is the Abandon button itself rather than a dialog, which would have to
-	 * live outside the zoomed coordinate space everything else is drawn in.
+	 * Drops a position that was never going to fill, on a second click. Its units stay in the fill
+	 * rate, because an order you gave up on is evidence about how much of a plan is reachable.
 	 */
 	private void abandonSelected() {
-		if (selectedPosition.isEmpty()) {
-			notice = "Select an open position first.";
-			return;
-		}
-
-		if (!selectedPosition.equals(pendingAbandon)) {
-			pendingAbandon = selectedPosition;
-			notice = "Abandon " + nameOf(selectedPosition) + "? Press Abandon again to confirm.";
+		if (!armed("Abandon")) {
 			return;
 		}
 
@@ -734,7 +737,57 @@ public final class FlipScreen extends Screen {
 		}
 
 		selectedPosition = "";
-		pendingAbandon = "";
+		pendingAction = "";
+	}
+
+	/**
+	 * Deletes a position outright, on a second click.
+	 *
+	 * <p>Abandon is for a plan that did not work out and keeps its units in the fill rate. This is
+	 * for an entry that should not be in the ledger at all, which is what automatic tracking writes
+	 * when you buy something to use rather than to flip. Nothing it touched is counted afterwards.
+	 */
+	private void forgetSelected() {
+		if (!armed("Forget")) {
+			return;
+		}
+
+		try {
+			notice = LedgerService.ledger().forget(selectedPosition)
+					.map(entry -> "Forgot " + entry.displayName() + " - out of the ledger entirely.")
+					.orElse("That position is already gone.");
+		} catch (IOException e) {
+			SkyblockFlipper.LOGGER.error("Ledger write failed", e);
+			notice = "Could not write the ledger - see the log.";
+		}
+
+		selectedPosition = "";
+		pendingAction = "";
+	}
+
+	/**
+	 * Whether this click is the confirming one for {@code button}, arming it if it is not.
+	 *
+	 * <p>Confirmed rather than immediate because these are the only actions on this screen that
+	 * cannot be undone and that change a number the mod is judged by. The confirmation is the button
+	 * itself rather than a dialog, which would have to live outside the zoomed coordinate space
+	 * everything else is drawn in.
+	 */
+	private boolean armed(String button) {
+		if (selectedPosition.isEmpty()) {
+			notice = "Select an open position first.";
+			return false;
+		}
+
+		String wanted = button + ":" + selectedPosition;
+
+		if (!wanted.equals(pendingAction)) {
+			pendingAction = wanted;
+			notice = button + " " + nameOf(selectedPosition) + "? Press " + button + " again to confirm.";
+			return false;
+		}
+
+		return true;
 	}
 
 	private String nameOf(String positionId) {
@@ -777,7 +830,8 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
-		if (tab == Tab.LEDGER && abandonButton.clicked(mouseX, mouseY)) {
+		if (tab == Tab.LEDGER
+				&& (abandonButton.clicked(mouseX, mouseY) || forgetButton.clicked(mouseX, mouseY))) {
 			return true;
 		}
 
@@ -806,7 +860,7 @@ public final class FlipScreen extends Screen {
 		if (row >= 0 && row < positionRows.size()) {
 			selectedPosition = positionRows.get(row);
 			// A confirmation follows the thing it was asked about, so moving off it withdraws it.
-			pendingAbandon = "";
+			pendingAction = "";
 			notice = "";
 		}
 
@@ -827,7 +881,7 @@ public final class FlipScreen extends Screen {
 				tab = candidate;
 				notice = "";
 				// The confirmation was for a position on a panel that is no longer on screen.
-				pendingAbandon = "";
+				pendingAction = "";
 				sideScroll.reset();
 				// Forced: the book has not moved, but the question being asked of it has.
 				refresh(true);

@@ -88,7 +88,10 @@ public final class TrackerService {
 
 	private static void book(Settlement settlement) {
 		try {
-			LedgerService.ledger().record(settlement, fees()).ifPresent(entry -> report(settlement, entry));
+			// Read through config() at use time, so /flip reload changes this without a restart.
+			LedgerService.ledger()
+					.record(settlement, fees(), SkyblockFlipperClient.config().trackUnquotedTrades)
+					.ifPresent(entry -> report(settlement, entry));
 		} catch (IOException e) {
 			broken = true;
 			SkyblockFlipper.LOGGER.error("Auto-tracking stopped: could not write {}",

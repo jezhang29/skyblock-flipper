@@ -277,6 +277,20 @@ public final class FlipperConfig {
 	 */
 	public boolean autoTrackEnabled = false;
 
+	/**
+	 * Whether tracking also records buys the mod never suggested.
+	 *
+	 * <p>Off by default, because most bazaar buying is not flipping. Playing normally means buying
+	 * materials and selling drops, and with this on every one of those opens a position that no
+	 * later sale ever closes: measured on a real ledger on 2026-08-09, 55 of 60 entries were
+	 * unquoted positions still sitting open. Those units are in the fill rate, so the one number
+	 * that is supposed to judge the strategies ends up judging your shopping.
+	 *
+	 * <p>Turn it on if you flip by hand without taking the mod's plans and want that measured
+	 * anyway. Sales still only ever settle against a position that exists, either way.
+	 */
+	public boolean trackUnquotedTrades = false;
+
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	public static FlipperConfig load(Path file) throws IOException {

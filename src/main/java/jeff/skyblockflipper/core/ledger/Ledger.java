@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Predicate;
 
 /**
  * A record of flips actually taken, and the only feedback loop the mod has.
@@ -120,6 +121,13 @@ public final class Ledger {
 	 * ignored and returns empty: it is stock bought before tracking started or somewhere else
 	 * entirely, and booking it against nothing would report its whole price as profit.
 	 *
+	 * <p>{@code trackUnquoted} decides whether a buy the mod never suggested opens a position at
+	 * all. Off, this books only trades against plans you took, and everything else - the materials
+	 * you buy to play the game with - passes through unrecorded. On, those trades are recorded as
+	 * {@link LedgerEntry.Origin#AUTO_UNQUOTED} and count toward the fill rate only. Measured on a
+	 * real ledger on 2026-08-09: 58 of 60 entries were unquoted and 55 of those were still open,
+	 * because ordinary bazaar buying opens a position that no later sale ever closes.
+	 *
 	 * <p>Fees are re-derived from the displayed price through {@code fees} rather than taken from
 	 * the settlement's measured net coins, even though the measured figure is right there and is
 	 * exact. The capture rate compares realized against quoted, the quote was computed on this fee
@@ -128,11 +136,12 @@ public final class Ledger {
 	 *
 	 * @return the entry this settled against, or empty if it settled against nothing
 	 */
-	public Optional<LedgerEntry> record(Settlement settlement, Fees fees) throws IOException {
+	public Optional<LedgerEntry> record(Settlement settlement, Fees fees, boolean trackUnquoted)
+			throws IOException {
 		StrategyKind kind = kindOf(settlement.venue());
 
 		if (settlement.side() == TradeEvent.Side.BUY) {
-			return Optional.of(recordBuy(settlement, kind));
+			return recordBuy(settlement, kind, trackUnquoted);
 		}
 
 		Optional<LedgerEntry> position = entries.values().stream()
@@ -167,6 +176,52 @@ public final class Ledger {
 		entries.put(id, updated);
 		save();
 		return Optional.of(updated);
+	}
+
+	/**
+	 * Deletes one entry outright, as though it had never been recorded.
+	 *
+	 * <p>Different from {@link #abandon}: abandoning says a plan did not work out and keeps its
+	 * units in the fill rate, while forgetting says the entry should never have been in the ledger.
+	 * That is what automatic tracking produces when you buy materials to play the game with rather
+	 * than to flip, and leaving those in makes the fill rate a measure of your shopping.
+	 *
+	 * @return the entry that was removed, or empty if no entry had that id
+	 */
+	public Optional<LedgerEntry> forget(String id) throws IOException {
+		LedgerEntry removed = entries.remove(id);
+
+		if (removed == null) {
+			return Optional.empty();
+		}
+
+		save();
+		return Optional.of(removed);
+	}
+
+	/**
+	 * Deletes every entry the filter accepts, in one write.
+	 *
+	 * @return how many entries were removed
+	 */
+	public int forgetAll(Predicate<LedgerEntry> filter) throws IOException {
+		List<String> doomed = entries.values().stream()
+				.filter(filter)
+				.map(LedgerEntry::id)
+				.toList();
+
+		if (doomed.isEmpty()) {
+			return 0;
+		}
+
+		doomed.forEach(entries::remove);
+		save();
+		return doomed.size();
+	}
+
+	/** How many entries the filter accepts, for a command that wants to say so before deleting. */
+	public long count(Predicate<LedgerEntry> filter) {
+		return entries.values().stream().filter(filter).count();
 	}
 
 	public List<LedgerEntry> all() {
@@ -271,13 +326,18 @@ public final class Ledger {
 		};
 	}
 
-	private LedgerEntry recordBuy(Settlement settlement, StrategyKind kind) throws IOException {
+	private Optional<LedgerEntry> recordBuy(Settlement settlement, StrategyKind kind,
+			boolean trackUnquoted) throws IOException {
 		LedgerEntry quoted = entries.values().stream()
 				.filter(entry -> entry.isOpen() && entry.isUntouched())
 				.filter(entry -> entry.origin() == LedgerEntry.Origin.MANUAL)
 				.filter(entry -> isSameItem(entry, settlement))
 				.findFirst()
 				.orElse(null);
+
+		if (quoted == null && !trackUnquoted) {
+			return Optional.empty();
+		}
 
 		LedgerEntry entry = quoted == null
 				? LedgerEntry.bought(nextId(), settlement.itemId(), settlement.displayName(), kind,
@@ -286,7 +346,7 @@ public final class Ledger {
 
 		entries.put(entry.id(), entry);
 		save();
-		return entry;
+		return Optional.of(entry);
 	}
 
 	/**

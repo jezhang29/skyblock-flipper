@@ -119,7 +119,12 @@ Key invariants:
   with the client closed is announced in none either. It emits `Settlement`s — coins that actually
   moved — and `Ledger.record` books those. **A sale with no open position is dropped, never booked
   against nothing**, and `LedgerEntry.Origin` keeps trades the mod never quoted out of the capture
-  rate while leaving them in the fill rate. `CaptureService` owns the one pair of hooks and feeds
+  rate while leaving them in the fill rate. **A buy with no plan behind it opens nothing unless
+  `trackUnquotedTrades`** (off): most bazaar buying is playing the game, not flipping, and every such
+  buy used to open a position no later sale ever closed — 55 of 60 entries on the real ledger,
+  measured 2026-08-09. `Ledger.forget`/`forgetAll` delete an entry outright, which is not `abandon`:
+  abandoning keeps the units in the fill rate, forgetting says the entry was never a flip.
+  `CaptureService` owns the one pair of hooks and feeds
   both consumers; a second set of listeners would settle menus on its own schedule and disagree
   about what a menu said.
 - Mixins: `skyblock-flipper.mixins.json` is wired but empty (no mixin package yet); a first mixin
