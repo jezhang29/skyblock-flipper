@@ -41,6 +41,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Predicate;
@@ -607,6 +608,17 @@ public final class FlipCommand {
 			line(source, "trade tracking", tracker.resting().size() + " resting order(s), "
 					+ tracker.settlements().size() + " trade(s) seen this session"
 					+ (waiting > 0 ? ", " + waiting + " with coins to collect" : ""));
+		}
+
+		// The sync runs on its own thread five seconds after login and says nothing in chat, so
+		// without this line the only report that it happened at all is the log file.
+		TapeSyncService sync = MarketDataService.sync();
+
+		if (sync != null && SkyblockFlipperClient.config().tapeSyncEnabled) {
+			line(source, "collector sync", sync.lastRun() == null
+					? "not run yet"
+					: sync.lastOutcome() + " (" + describeAge(
+							Duration.between(sync.lastRun(), Instant.now())) + " ago)");
 		}
 
 		line(source, "poll failures", String.valueOf(data.pollFailures()));
