@@ -38,6 +38,15 @@ public final class ItemsDto {
 		public Double npcSellPrice;
 
 		/**
+		 * Present and true for items that do not stack. Absent for everything else, which is the
+		 * overwhelming majority, so a plain boolean reading false is the correct default here.
+		 *
+		 * <p>Worth 64x the carrying capacity of a trip: an inventory holds 2,304 of a stackable item
+		 * and 36 of one of these. 19 of the 816 bazaar products with an NPC price carry the flag.
+		 */
+		public boolean unstackable;
+
+		/**
 		 * Cost of each star level, cheapest first. Absent for the ~90% of items that cannot be
 		 * starred.
 		 *
@@ -120,8 +129,8 @@ public final class ItemsDto {
 		if (items != null) {
 			for (ItemDto item : items) {
 				if (item != null && item.id != null) {
-					entries.put(item.id, new ItemCatalog.Entry(
-							item.id, item.name, item.npcSellPrice, item.toUpgradeCosts()));
+					entries.put(item.id, new ItemCatalog.Entry(item.id, item.name,
+							item.npcSellPrice, item.unstackable, item.toUpgradeCosts()));
 				}
 			}
 		}

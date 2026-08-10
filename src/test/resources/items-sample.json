@@ -245,6 +245,12 @@
    "id": "ENCHANTED_MELON",
    "name": "Enchanted Melon Slice",
    "npc_sell_price": 320
+  },
+  {
+   "id": "TRANSMISSION_TUNER",
+   "name": "Transmission Tuner",
+   "npc_sell_price": 45000,
+   "unstackable": true
   }
  ]
 }

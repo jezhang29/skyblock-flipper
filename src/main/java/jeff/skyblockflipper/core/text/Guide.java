@@ -28,7 +28,8 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(COLUMNS, STRATEGIES, ROUTES, LIQUIDITY, LEDGER, SETTINGS, LIMITS);
+		return List.of(COLUMNS, STRATEGIES, ROUTES, NPC_CAP, LIQUIDITY, LEDGER, SETTINGS, SYNC,
+				LIMITS);
 	}
 
 	private static final Section COLUMNS = new Section("columns", "Columns", List.of(
@@ -114,6 +115,29 @@ public final class Guide {
 					+ "a bazaar price it can, which is why bazaar spreads are quoted with a cancel "
 					+ "rule instead")));
 
+	private static final Section NPC_CAP = new Section("npccap", "The daily NPC coin cap", List.of(
+			new Term("What it is", "NPCs stop paying out after a fixed number of coins each day, "
+					+ "shared across every item and refilling at UTC midnight. It counts what the "
+					+ "NPC hands you, not your profit, so it is spent by the sale price"),
+			new Term("Why it changes the ranking", "An expensive item burns the budget far faster "
+					+ "than a cheap one at the same profit per hour. Enchanted Diamond Blocks at "
+					+ "204,800 each exhaust a 500M budget in about fifteen minutes; Fig Logs at 8 "
+					+ "each could not spend it in a week. Plans are therefore ranked over a session "
+					+ "rather than an hour, because a daily limit cannot be expressed hourly"),
+			new Term("Cap efficiency", "Coins of profit per coin of budget spent, which is just the "
+					+ "margin divided by the NPC price. When the cap is what limits you rather than "
+					+ "your time, this is the number that decides what to spend the day on"),
+			new Term("Session length", "How long you intend to keep making trips, in settings. It "
+					+ "is what decides whether your time or the budget runs out first, so raising it "
+					+ "promotes items you can grind all day over ones that cap out in minutes"),
+			new Term("How much is left", "Counted from your ledger: closed NPC flips, units sold "
+					+ "times the NPC price. Flips you never recorded are invisible to it, so the "
+					+ "budget will read fuller than it is if you trade outside the mod"),
+			new Term("Order slots", "You can rest 14 bazaar orders at once, plus 7 per Bazaar "
+					+ "Flipper level. One order holds 71,680 units of a stackable item or 256 of an "
+					+ "unstackable one, so a large plan in unstackable items needs several slots and "
+					+ "is rejected if it needs more than you have")));
+
 	private static final Section LIQUIDITY = new Section("liquidity", "Liquidity", List.of(
 			new Term("Weekly volume", "Units that changed hands over seven days, counted separately "
 					+ "for each side. Instant-bought is how fast sell offers get lifted; "
@@ -123,7 +147,8 @@ public final class Guide {
 					+ "weekly turnover is not a 4000-unit opportunity, it is a week of holding "
 					+ "something nobody wants. Every plan is sized from the flow, not the depth"),
 			new Term("Trips", "NPC flips are also capped by hand: 36 inventory slots at a 64 stack, "
-					+ "twelve round trips an hour. Buying is instant, selling is not"),
+					+ "twelve round trips an hour. Buying is instant, selling is not. Unstackable "
+					+ "items are the same 36 slots holding one each, so a trip carries 36 of them"),
 			new Term("Time to fill", "How long your order is expected to take at the size the plan "
 					+ "quotes. Two things set it: how fast people trade with that side of the book, "
 					+ "and how long you stay at the front of it"),
@@ -195,6 +220,25 @@ public final class Guide {
 							+ "horizon promotes slow items you would have to be patient with and a "
 							+ "short one keeps only what fills while you are watching. It changes "
 							+ "the order of the list without hiding anything from it")));
+
+	private static final Section SYNC = new Section("sync", "Collector sync", List.of(
+			new Term("What it is", "A pull of the tape a collector on another machine recorded "
+					+ "while this game was closed. Sales history is the one thing the mod cannot "
+					+ "backfill: Hypixel only reports the last minute of completed auctions, so an "
+					+ "hour nobody was recording is an hour nobody can price against"),
+			new Term("When it runs", "About five seconds after the poller starts, on its own "
+					+ "thread, so nothing waits for it. /flip sync runs one on demand. Re-sync "
+					+ "every is normally 0, meaning startup only - while this client is running it "
+					+ "already tapes what the collector taped"),
+			new Term("Merged, not copied", "Both machines record the same endpoints, so each holds "
+					+ "sales the other missed. The two are folded together by sale id, and nothing "
+					+ "on either side is overwritten or counted twice"),
+			new Term("What it costs", "Only bytes the collector added since last time. The first "
+					+ "sync is the whole retention window, which is hundreds of megabytes; after "
+					+ "that it is minutes of data"),
+			new Term("If it fails", "A log line and nothing else. The local tape is still the tape "
+					+ "and the mod keeps working from it; the next sync picks up where this one "
+					+ "stopped")));
 
 	private static final Section LIMITS = new Section("limits", "What this does not do", List.of(
 			new Term("Prices go stale", "Everything here is from the last poll. Re-check the book "

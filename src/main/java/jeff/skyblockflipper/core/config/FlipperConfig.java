@@ -3,6 +3,7 @@ package jeff.skyblockflipper.core.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
+import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 
 import java.io.IOException;
@@ -34,9 +35,14 @@ public final class FlipperConfig {
 	public long bankroll = 10_000_000L;
 
 	/**
-	 * Bazaar Flipper perk level (0-6). Each level cuts the 1.25% bazaar sales tax by
-	 * 0.125%, to a floor of 1%. Wrong value here silently biases every bazaar margin,
-	 * so it is worth setting accurately.
+	 * Bazaar Flipper perk level (0-2). Each level cuts the 1.25% bazaar sales tax by
+	 * 0.125%, to a floor of 1%, and raises the bazaar order limit by 7 from a base of 14.
+	 * Wrong value here silently biases every bazaar margin, so it is worth setting accurately.
+	 *
+	 * <p>The perk has two levels in the Community Shop. This used to accept 0-6, which the tax
+	 * math survived only because the 1% floor caught levels 3 and up; the order limit derived in
+	 * {@link Fees#bazaarOrderSlots()} has no such floor and would have reported 56 slots where
+	 * the game allows 28.
 	 */
 	public int bazaarFlipperLevel = 0;
 
@@ -113,6 +119,38 @@ public final class FlipperConfig {
 	public int bazaarTapeRetentionDays = 14;
 
 	/**
+	 * Pull the collector's tape from the server on startup and merge it into the local one.
+	 *
+	 * <p>The collector records the hours this client is closed for, and {@code auctions_ended}
+	 * will not answer for them twice. Off by default because it needs a server to point at.
+	 */
+	public boolean tapeSyncEnabled = false;
+
+	/**
+	 * Where the collector serves its tape, e.g. {@code http://198.51.100.7:8080}. The two tape
+	 * directories are expected under it by the names this client uses for its own.
+	 */
+	public String tapeSyncUrl = "";
+
+	/**
+	 * Shared secret sent as a header with every sync request.
+	 *
+	 * <p>The tape is public Hypixel data and not worth hiding, but an open directory of gigabyte
+	 * files is worth not advertising to whatever finds the port. Blank sends no header.
+	 */
+	public String tapeSyncToken = "";
+
+	/**
+	 * How often to sync again while the game runs. Zero means only at startup.
+	 *
+	 * <p>Zero is the default because a running client tapes the same endpoints the server does, so
+	 * a mid-session sync usually downloads an hour of data to discover it already holds all of it.
+	 * Raise it if this client's polls are being lost to rate limits or a flaky connection, which is
+	 * the one case where the server saw something the client did not while both were up.
+	 */
+	public int tapeSyncIntervalMinutes = 0;
+
+	/**
 	 * How far back the trend indicators look. The recent sub-window they compare against is an
 	 * eighth of this, so the default 24 hours is measured against the last 3.
 	 */
@@ -147,6 +185,33 @@ public final class FlipperConfig {
 	 * the ranking without changing the book, so edits to it must invalidate the candidate cache.
 	 */
 	public int fillHorizonMinutes = 60;
+
+	/**
+	 * Gross coins an NPC will pay you across all items before it stops buying, per day.
+	 *
+	 * <p>This counts what the NPC hands over, not profit. An item bought at 4.1 and sold to the NPC
+	 * at 8.0 spends 8.0 of this budget per unit and returns 3.9, so the cap is worth
+	 * {@code 500M * 3.9/8} = 243.75M of profit on that item and far less on an expensive one. It is
+	 * the binding constraint on every high-value NPC flip: {@code ENCHANTED_DIAMOND_BLOCK} at
+	 * 204,800 a unit exhausts it in about fifteen minutes of inventory trips.
+	 *
+	 * <p>500M per day, from the Skyblock wiki. Nothing in the API carries it, so it is a setting
+	 * rather than a constant, and it will need editing if Hypixel changes the number.
+	 */
+	public long npcDailyCapCoins = 500_000_000L;
+
+	/**
+	 * How long an NPC flipping session runs, in hours. Sizes and ranks every NPC candidate.
+	 *
+	 * <p>NPC flips are limited by two different things and the ranking has to see both: carrying
+	 * capacity per hour, and {@link #npcDailyCapCoins} per day. Which one binds depends entirely on
+	 * how long you intend to sit there. At one hour only 7 items on a live book are cap-bound; at
+	 * eight hours it is 40, and the ordering between them changes with it.
+	 *
+	 * <p>Deliberately not {@link #fillHorizonMinutes}, which says how long an order may rest rather
+	 * than how long you will keep walking to an NPC.
+	 */
+	public double npcSessionHours = 2.0d;
 
 	/**
 	 * Which strategy the unqualified views show: {@code ALL}, or one {@code StrategyKind} name.
@@ -280,12 +345,16 @@ public final class FlipperConfig {
 	/** Clamps hand-edited values into ranges the rest of the mod can rely on. */
 	public FlipperConfig validated() {
 		bankroll = Math.max(0L, bankroll);
-		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, 6);
+		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, Fees.MAX_BAZAAR_FLIPPER_LEVEL);
 		minProfitPerFlip = Math.max(0L, minProfitPerFlip);
 		// A zero share would size every plan at one unit and rank nothing; above one it is not a
 		// share of anything.
 		maxCapitalShare = Math.clamp(maxCapitalShare, 0.01d, 1.0d);
 		minConfidence = Math.clamp(minConfidence, 0.0d, 1.0d);
+		// Zero would make every NPC plan empty rather than uncapped, which is not what someone
+		// clearing the field means; the upper bound is loose because the real value is unverified.
+		npcDailyCapCoins = Math.clamp(npcDailyCapCoins, 1_000_000L, 100_000_000_000L);
+		npcSessionHours = Math.clamp(npcSessionHours, 0.25d, 24.0d);
 		hudLines = Math.clamp(hudLines, 1, 10);
 		// A zero or negative discount would call every listing at fair value a bargain and hand
 		// the sweep tens of thousands of blobs to decode.
@@ -293,6 +362,12 @@ public final class FlipperConfig {
 		valuationWindowDays = Math.clamp(valuationWindowDays, 1, 30);
 		tapeRetentionDays = Math.clamp(tapeRetentionDays, 1, 60);
 		bazaarTapeRetentionDays = Math.clamp(bazaarTapeRetentionDays, 1, 60);
+		// A key present in the file but null parses to null rather than to the default, and every
+		// reader of these treats them as strings.
+		tapeSyncUrl = tapeSyncUrl == null ? "" : tapeSyncUrl.trim();
+		tapeSyncToken = tapeSyncToken == null ? "" : tapeSyncToken.trim();
+		// Zero means startup only. A day is the loosest upper bound that is still a schedule.
+		tapeSyncIntervalMinutes = Math.clamp(tapeSyncIntervalMinutes, 0, 1440);
 		// Under a few hours the two averages overlap enough that drift is always near zero; past
 		// three days the ring would hold more than the memory budget this was sized for.
 		trendWindowHours = Math.clamp(trendWindowHours, 3, 72);

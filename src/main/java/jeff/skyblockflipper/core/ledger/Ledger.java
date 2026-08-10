@@ -186,6 +186,30 @@ public final class Ledger {
 		return openEntries().stream().mapToLong(LedgerEntry::capital).sum();
 	}
 
+	/**
+	 * Gross coins NPCs have paid out since {@code from}, which is what the daily NPC cap counts.
+	 *
+	 * <p>Gross, not profit: the cap is spent by what the NPC hands over, so it is
+	 * {@code unitsSold * unitSellPrice} and the purchase price never enters it.
+	 *
+	 * <p>Only settled units count. An open NPC position has bought stock but not yet sold it to
+	 * anyone, and stock sitting in your inventory has spent none of the budget.
+	 *
+	 * <p>Reads zero for a player who flips outside the mod, which overstates what is left. That is
+	 * the known cost of deriving this instead of asking the game, which exposes no such counter.
+	 */
+	public long npcCoinsReceivedSince(long from) {
+		double coins = 0.0d;
+
+		for (LedgerEntry entry : entries.values()) {
+			if (entry.kind() == StrategyKind.NPC_FLIP && !entry.isOpen() && entry.closedAt() >= from) {
+				coins += entry.unitsSold() * entry.unitSellPrice();
+			}
+		}
+
+		return Math.round(coins);
+	}
+
 	/** @param kind null for every strategy together */
 	public LedgerStats stats(StrategyKind kind) {
 		int closed = 0;

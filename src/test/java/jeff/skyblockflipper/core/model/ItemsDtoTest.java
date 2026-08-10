@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,6 +45,21 @@ class ItemsDtoTest {
 
 		assertEquals("Enchanted Melon", melon.name());
 		assertEquals(51_200.0d, melon.npcPrice().orElseThrow(), 1e-9);
+	}
+
+	@Test
+	void readsStackingSoATripCanBeSizedFromIt() {
+		// Absent for almost everything, which has to read as stackable rather than as unknown.
+		assertFalse(catalog.get("ENCHANTED_MELON_BLOCK").orElseThrow().unstackable());
+		assertEquals(64, catalog.get("ENCHANTED_MELON_BLOCK").orElseThrow().stackSize());
+
+		// Present and true for the 19 bazaar products with an NPC price that do not stack. An NPC
+		// trip carries 36 of these against 2304 of the melons, which is the whole plan size.
+		ItemCatalog.Entry tuner = catalog.get("TRANSMISSION_TUNER").orElseThrow();
+
+		assertTrue(tuner.unstackable());
+		assertEquals(1, tuner.stackSize());
+		assertEquals(45_000.0d, tuner.npcPrice().orElseThrow(), 1e-9);
 	}
 
 	@Test

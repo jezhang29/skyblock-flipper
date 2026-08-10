@@ -10,6 +10,7 @@ import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
+import jeff.skyblockflipper.client.TapeSyncService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.client.gui.Settings;
@@ -137,6 +138,11 @@ public final class FlipCommand {
 				.then(ClientCommands.literal("track")
 						.executes(ctx -> {
 							toggleAutoTrack(ctx.getSource());
+							return 1;
+						}))
+				.then(ClientCommands.literal("sync")
+						.executes(ctx -> {
+							syncTape(ctx.getSource());
 							return 1;
 						}))
 				.then(ClientCommands.literal("gui")
@@ -337,6 +343,39 @@ public final class FlipCommand {
 	 * <p>Reports the record count on the way out, because the failure mode of a capture session is
 	 * finding out afterwards that nothing was written and having to play it again.
 	 */
+	/**
+	 * Pulls the collector's tape now, rather than waiting for the next launch.
+	 *
+	 * <p>Run on a thread of its own and reported back when it lands. A first sync moves hundreds of
+	 * megabytes and the merge rescans the local tape; doing that on the client thread would stop the
+	 * game for as long as it took, which is exactly the freeze a player would report as a crash.
+	 */
+	private static void syncTape(FabricClientCommandSource source) {
+		TapeSyncService sync = MarketDataService.sync();
+
+		if (sync == null) {
+			source.sendError(Component.literal(
+					SkyblockFlipperClient.config().tapeSyncEnabled
+							? "Polling is off, so there is no tape to sync into."
+							: "Collector sync is off. Set tapeSyncEnabled and tapeSyncUrl, then "
+									+ "/flip reload.")
+					.withStyle(ChatFormatting.RED));
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal("Syncing from the collector...")
+				.withStyle(ChatFormatting.GRAY)));
+
+		Thread worker = new Thread(() -> {
+			String outcome = sync.runNow();
+			Minecraft.getInstance().execute(() -> source.sendFeedback(Chat.prefixed(
+					Component.literal(outcome).withStyle(ChatFormatting.GREEN))));
+		}, "skyblock-flipper-manual-sync");
+
+		worker.setDaemon(true);
+		worker.start();
+	}
+
 	private static void toggleCapture(FabricClientCommandSource source) {
 		FlipperConfig config = SkyblockFlipperClient.config();
 		config.tradeCaptureEnabled = !config.tradeCaptureEnabled;
@@ -520,7 +559,11 @@ public final class FlipCommand {
 		source.sendFeedback(Chat.prefixed(Component.literal(SkyblockFlipperClient.configFile().toString())
 				.withStyle(ChatFormatting.GRAY)));
 		line(source, "bankroll", Chat.coins(config.bankroll));
-		line(source, "bazaar flipper level", String.valueOf(config.bazaarFlipperLevel));
+		line(source, "bazaar flipper level", config.bazaarFlipperLevel + " ("
+				+ new Fees(config.bazaarFlipperLevel, false).bazaarOrderSlots() + " order slots)");
+		line(source, "npc daily cap", Chat.coins(CandidateFeed.npcCapRemaining(config)) + " left of "
+				+ Chat.coins(config.npcDailyCapCoins) + ", "
+				+ String.format("%.2gh", config.npcSessionHours) + " session");
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
 		line(source, "min confidence", String.format("%.2f", config.minConfidence));
 		line(source, "max adverse drift", config.maxAdverseDrift <= 0.0d

@@ -95,6 +95,35 @@ class LedgerTest {
 	}
 
 	@Test
+	void countsGrossNpcPayoutsSoTheDailyCapCanBeSpentDown(@TempDir Path dir) throws Exception {
+		Ledger ledger = ledgerIn(dir);
+
+		FlipCandidate npc = new FlipCandidate("ITEM", "ITEM", StrategyKind.NPC_FLIP, 100.0d, 120.0d,
+				20.0d, 10L, 1000L, 200.0d, 0.9d, List.of("buy"), List.of());
+
+		// Sold 6 of the 10 units to the NPC at 120. The cap is spent by what the NPC handed over,
+		// so this is 720 - not the 120 of profit, and not the 1200 the plan hoped for.
+		ledger.close(ledger.open(npc, 5_000L).id(), 6L, 120.0d, FEES);
+
+		assertEquals(720L, ledger.npcCoinsReceivedSince(0L));
+
+		// Bazaar flips spend none of it, however large.
+		ledger.close(ledger.open(candidate("OTHER", 100.0d, 110.0d, 500L, 8.6d), 5_000L).id(),
+				500L, 110.0d, FEES);
+
+		assertEquals(720L, ledger.npcCoinsReceivedSince(0L));
+
+		// And a position still open has bought stock without selling any of it to anyone.
+		ledger.open(npc, 6_000L);
+
+		assertEquals(720L, ledger.npcCoinsReceivedSince(0L));
+
+		// Yesterday's payouts are not this day's budget: the counter refills at the boundary.
+		// Positions are closed against the real clock, so a boundary after now excludes them all.
+		assertEquals(0L, ledger.npcCoinsReceivedSince(System.currentTimeMillis() + 60_000L));
+	}
+
+	@Test
 	void abandonedPositionsCountAgainstFillRateButNotCaptureRate(@TempDir Path dir) throws Exception {
 		Ledger ledger = ledgerIn(dir);
 		LedgerEntry filled = ledger.open(candidate("A", 100.0d, 110.0d, 10L, 8.625d), 1L);

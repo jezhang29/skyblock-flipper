@@ -1,5 +1,7 @@
 package jeff.skyblockflipper.core.config;
 
+import jeff.skyblockflipper.core.pricing.Fees;
+
 import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -92,7 +94,7 @@ public final class ConfigSchema {
 	}
 
 	public static List<Group> groups() {
-		return List.of(MONEY, SCANNING, DISPLAY, CONNECTION, TRACKING);
+		return List.of(MONEY, NPC, SCANNING, DISPLAY, CONNECTION, COLLECTOR, TRACKING);
 	}
 
 	/** Every entry, in group order. Useful for lookups and for the test that nothing is missing. */
@@ -106,9 +108,10 @@ public final class ConfigSchema {
 					0L, 1_000_000_000_000L, 1_000_000L,
 					c -> c.bankroll, (c, v) -> c.bankroll = v),
 			new Entry.IntRange("bazaarFlipperLevel", "Bazaar Flipper level",
-					"Your Bazaar Flipper perk level. Each level cuts the 1.25% bazaar sales tax by "
-							+ "0.125%, down to 1%. A wrong value silently biases every bazaar margin.",
-					0, 6, 1,
+					"Your Bazaar Flipper perk level, 0-2. Each level cuts the 1.25% bazaar sales tax "
+							+ "by 0.125%, down to 1%, and raises your bazaar order limit by 7 from a "
+							+ "base of 14. A wrong value silently biases every bazaar margin.",
+					0, Fees.MAX_BAZAAR_FLIPPER_LEVEL, 1,
 					c -> c.bazaarFlipperLevel, (c, v) -> c.bazaarFlipperLevel = v),
 			new Entry.Ratio("maxCapitalShare", "Maximum capital per flip",
 					"The largest share of your bankroll any one plan may ask for. Profit per hour "
@@ -140,6 +143,29 @@ public final class ConfigSchema {
 							+ "fills while you watch.",
 					5, 720, 5,
 					c -> c.fillHorizonMinutes, (c, v) -> c.fillHorizonMinutes = v)));
+
+	/**
+	 * Both of these size NPC plans and neither means anything to the other strategies, which is why
+	 * they are their own group rather than more coins and more patience under Money.
+	 *
+	 * <p>{@code npcSessionHours} is an {@link Entry.Ratio} despite being hours. That record is a
+	 * double range with bounds and a step; only its name says otherwise.
+	 */
+	private static final Group NPC = new Group("NPC flipping", List.of(
+			new Entry.LongRange("npcDailyCapCoins", "Daily NPC coin cap",
+					"Gross coins NPCs will pay you per day across all items, before they stop buying. "
+							+ "Counts what the NPC hands over, not your profit, so an expensive item "
+							+ "burns through it far faster than a cheap one. 500M is the current "
+							+ "value; it is a setting because the API does not carry it.",
+					1_000_000L, 100_000_000_000L, 10_000_000L,
+					c -> c.npcDailyCapCoins, (c, v) -> c.npcDailyCapCoins = v),
+			new Entry.Ratio("npcSessionHours", "NPC session length (hours)",
+					"How long you intend to keep running NPC trips. NPC flips are limited both by "
+							+ "carrying capacity per hour and by the daily coin cap, and which one "
+							+ "binds depends on this. Raising it promotes items you can grind for a "
+							+ "long time over ones that hit the cap in minutes.",
+					0.25d, 24.0d, 0.25d,
+					c -> c.npcSessionHours, (c, v) -> c.npcSessionHours = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Scan auctions",
@@ -233,6 +259,31 @@ public final class ConfigSchema {
 					"Unused. Every endpoint this mod reads is public and unauthenticated; the field "
 							+ "exists for profile-aware features that do not exist yet.",
 					c -> c.apiKey, (c, v) -> c.apiKey = v)));
+
+	private static final Group COLLECTOR = new Group("Collector sync", List.of(
+			new Entry.Flag("tapeSyncEnabled", "Sync from the collector",
+					"On startup, download whatever the collector taped while this client was closed "
+							+ "and merge it into the local tape. Only new bytes are fetched, and "
+							+ "nothing is overwritten - sales taped here and sales taped there are "
+							+ "kept as one set.",
+					c -> c.tapeSyncEnabled, (c, v) -> c.tapeSyncEnabled = v),
+			new Entry.Text("tapeSyncUrl", "Collector URL",
+					"Where the collector serves its tape, e.g. http://198.51.100.7:8080. The sales "
+							+ "and bazaar directories are expected under it by the same names this "
+							+ "client uses.",
+					c -> c.tapeSyncUrl, (c, v) -> c.tapeSyncUrl = v),
+			new Entry.Text("tapeSyncToken", "Collector token",
+					"Shared secret sent with every sync request. It has to match the one the server "
+							+ "checks. Blank sends none, which only works if the server asks for "
+							+ "none.",
+					c -> c.tapeSyncToken, (c, v) -> c.tapeSyncToken = v),
+			new Entry.IntRange("tapeSyncIntervalMinutes", "Re-sync every (minutes)",
+					"How often to sync again during a session. Zero means startup only, which is "
+							+ "the useful setting: while this client is running it tapes the same "
+							+ "endpoints the collector does, so a mid-session sync mostly downloads "
+							+ "data it already holds.",
+					0, 1440, 15,
+					c -> c.tapeSyncIntervalMinutes, (c, v) -> c.tapeSyncIntervalMinutes = v)));
 
 	private static final Group TRACKING = new Group("Tracking", List.of(
 			new Entry.Flag("tradeCaptureEnabled", "Capture trade messages",
