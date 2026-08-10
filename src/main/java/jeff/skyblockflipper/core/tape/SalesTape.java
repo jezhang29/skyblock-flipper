@@ -78,7 +78,7 @@ public final class SalesTape {
 	 *
 	 * @return how many were new
 	 */
-	public int record(List<EndedAuction> sales) throws IOException {
+	public synchronized int record(List<EndedAuction> sales) throws IOException {
 		if (sales.isEmpty()) {
 			return 0;
 		}
@@ -119,6 +119,51 @@ public final class SalesTape {
 
 		totalRecorded += fresh.size();
 		return fresh.size();
+	}
+
+	/**
+	 * Folds lines from another copy of this tape into ours, skipping sales we already hold.
+	 *
+	 * <p>Keyed on {@code auction_id}, the same field {@link #record} deduplicates polls on, so a day
+	 * both this client and the collector taped merges to the union rather than to double.
+	 *
+	 * <p>Synchronized with {@code record}: the sync thread and the poller append to the same day
+	 * file, and two buffered writers flushing into one file interleave mid-line.
+	 *
+	 * @param fileName one of our own file names - a {@code yyyy-MM-dd.jsonl} day or the rollup
+	 * @return how many lines were new
+	 * @throws IllegalArgumentException if the name is not one this tape would have written, which
+	 *                                  is the check that keeps a remote index from naming a path
+	 */
+	public synchronized int merge(String fileName, List<String> lines) throws IOException {
+		return TapeMerge.merge(resolve(fileName), lines, keyOf(fileName));
+	}
+
+	/** True for names this tape writes, and false for everything else, path separators included. */
+	public static boolean isTapeFile(String fileName) {
+		if (fileName == null || fileName.contains("/") || fileName.contains("\\")) {
+			return false;
+		}
+
+		return DAILY_FILE.equals(fileName) || dayNamed(fileName) != null;
+	}
+
+	private Path resolve(String fileName) {
+		if (!isTapeFile(fileName)) {
+			throw new IllegalArgumentException("not a sales tape file: " + fileName);
+		}
+
+		return directory.resolve(fileName);
+	}
+
+	/**
+	 * The rollup is one line per signature per day and the day files are one line per sale, so the
+	 * two are deduplicated on different keys even though they live side by side.
+	 */
+	private static java.util.function.Function<String, String> keyOf(String fileName) {
+		return DAILY_FILE.equals(fileName)
+				? line -> JsonLines.pair(line, "s", "d")
+				: line -> JsonLines.field(line, "auction_id");
 	}
 
 	/**
@@ -398,8 +443,10 @@ public final class SalesTape {
 
 	/** The day a file is named for, or null for {@value #DAILY_FILE} and anything we did not write. */
 	private static LocalDate dayOf(Path file) {
-		String name = file.getFileName().toString();
+		return dayNamed(file.getFileName().toString());
+	}
 
+	private static LocalDate dayNamed(String name) {
 		if (!name.endsWith(SUFFIX)) {
 			return null;
 		}

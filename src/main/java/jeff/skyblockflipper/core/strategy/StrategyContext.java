@@ -33,6 +33,12 @@ import java.util.List;
  *                         allowed through
  * @param maxCapitalShare  the largest fraction of {@link #bankroll()} one plan may ask for. 1.0
  *                         means no cap, which is what every caller with no opinion gets
+ * @param npcCapRemaining  gross coins NPCs will still pay out today, across every item. Unlike
+ *                         every other limit here this one is shared and consumed: it is the day's
+ *                         budget minus what has already been spent, so it shrinks as you trade
+ * @param npcSessionHours  how long the player intends to keep making NPC trips. NPC plans are
+ *                         bounded by carrying capacity per hour and by {@link #npcCapRemaining()}
+ *                         per day, and this is what decides which of the two binds first
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -45,13 +51,24 @@ public record StrategyContext(
 		double minConfidence,
 		double maxAdverseDrift,
 		Duration fillHorizon,
-		double maxCapitalShare
+		double maxCapitalShare,
+		long npcCapRemaining,
+		double npcSessionHours
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
 
 	/** No cap, which is the behaviour every caller had before the cap existed. */
 	public static final double UNCAPPED = 1.0d;
+
+	/**
+	 * What an unstated NPC budget means: effectively infinite, so a caller that knows nothing about
+	 * the cap gets the sizing the strategy had before the cap existed.
+	 */
+	public static final long NPC_CAP_UNLIMITED = Long.MAX_VALUE;
+
+	/** What an unstated session means, matching {@code FlipperConfig.npcSessionHours}. */
+	public static final double DEFAULT_NPC_SESSION_HOURS = 2.0d;
 
 	public StrategyContext {
 		underpriced = List.copyOf(underpriced);
@@ -61,6 +78,10 @@ public record StrategyContext(
 		}
 
 		maxCapitalShare = maxCapitalShare <= 0.0d ? UNCAPPED : Math.min(maxCapitalShare, UNCAPPED);
+		// A spent budget is zero, not negative, and a negative one would flip the sizing arithmetic
+		// into producing plans rather than suppressing them.
+		npcCapRemaining = Math.max(0L, npcCapRemaining);
+		npcSessionHours = npcSessionHours <= 0.0d ? DEFAULT_NPC_SESSION_HOURS : npcSessionHours;
 	}
 
 	/**
@@ -85,6 +106,16 @@ public record StrategyContext(
 			double minConfidence, double maxAdverseDrift) {
 		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
 				maxAdverseDrift, DEFAULT_FILL_HORIZON, UNCAPPED);
+	}
+
+	/** The shape before the NPC daily cap existed, for callers that do not track one. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, NPC_CAP_UNLIMITED,
+				DEFAULT_NPC_SESSION_HOURS);
 	}
 
 	/** The shape before a per-flip capital cap existed, for callers that do not want one. */

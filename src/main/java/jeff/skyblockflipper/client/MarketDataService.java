@@ -24,6 +24,7 @@ public final class MarketDataService {
 	private static MarketPoller poller;
 	private static SalesTape tape;
 	private static BazaarTape bazaarTape;
+	private static TapeSyncService sync;
 
 	private MarketDataService() {
 	}
@@ -42,6 +43,11 @@ public final class MarketDataService {
 
 	public static BazaarTape bazaarTape() {
 		return bazaarTape;
+	}
+
+	/** Null until polling has started, since the sync has nothing to merge into before then. */
+	public static TapeSyncService sync() {
+		return sync;
 	}
 
 	public static Path tapeDirectory() {
@@ -81,11 +87,21 @@ public final class MarketDataService {
 				() -> SkyblockFlipperClient.config().scanSettings(), SkyblockFlipper.LOGGER::info);
 		poller.start();
 
+		// Started after the poller and never waited on: the first sync can be hundreds of
+		// megabytes, and the mod is useful from the local tape while it runs.
+		sync = new TapeSyncService(tape, bazaarTape, poller);
+		sync.start();
+
 		SkyblockFlipper.LOGGER.info("Market poller started; sales tape at {}, bazaar tape at {}",
 				tapeDirectory(), bazaarTapeDirectory());
 	}
 
 	public static synchronized void stop() {
+		if (sync != null) {
+			sync.close();
+			sync = null;
+		}
+
 		if (poller != null) {
 			poller.close();
 			poller = null;

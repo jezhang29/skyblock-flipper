@@ -20,17 +20,30 @@ public final class ItemCatalog {
 	/**
 	 * @param id            Skyblock item id, e.g. {@code ENCHANTED_DIAMOND}
 	 * @param npcSellPrice  fixed price an NPC pays, or null if no NPC buys it
+	 * @param unstackable   true for items that occupy one inventory slot each. Decides how much of
+	 *                      it a trip to an NPC can carry, which is 64x apart between the two cases
 	 * @param upgradeCosts  what each star level costs, cheapest first; empty for the great majority
 	 *                      of items, which cannot be starred at all
 	 */
-	public record Entry(String id, String name, Double npcSellPrice, List<UpgradeCost> upgradeCosts) {
+	public record Entry(String id, String name, Double npcSellPrice, boolean unstackable,
+			List<UpgradeCost> upgradeCosts) {
 		public Entry {
 			upgradeCosts = List.copyOf(upgradeCosts);
 		}
 
 		/** For the items and tests that have no star costs to state. */
 		public Entry(String id, String name, Double npcSellPrice) {
-			this(id, name, npcSellPrice, List.of());
+			this(id, name, npcSellPrice, false, List.of());
+		}
+
+		/** The shape before stacking was carried, kept so star-cost callers need not restate it. */
+		public Entry(String id, String name, Double npcSellPrice, List<UpgradeCost> upgradeCosts) {
+			this(id, name, npcSellPrice, false, upgradeCosts);
+		}
+
+		/** How many of this item one inventory slot holds. */
+		public int stackSize() {
+			return unstackable ? 1 : 64;
 		}
 
 		/** Fractional for cheap items, so this stays a double all the way through the math. */

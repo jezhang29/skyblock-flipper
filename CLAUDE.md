@@ -11,10 +11,12 @@
 ```
 
 Run `build` before each checkpoint commit. After editing `gradle.properties`, `clean build`.
-The dev client is `./gradlew runClient` (the user's job — it's interactive); it writes game
-files, logs, and `config.json` under `run/`.
+**There is no dev client.** `./gradlew runClient` is not used — don't suggest it, and don't
+describe live testing in terms of it. The mod is tested by dropping the built jar into the real
+mods folder and playing Hypixel Skyblock, which is the user's job. So live state lives under
+`~/Library/Application Support/minecraft/`, not under `run/`.
 
-Requires JDK 25 (pinned by the Gradle toolchain, but `runClient` needs one findable).
+Requires JDK 25, pinned by the Gradle toolchain.
 
 Tests cover `core` only. **`LiveApiTest` is opt-in and must stay that way** — it asserts
 Hypixel's behaviour, so an outage would fail an ordinary build. Run it after a Skyblock update
@@ -61,6 +63,9 @@ filling while Minecraft is closed — `auctions_ended` is a ~60s non-recoverable
 costs history permanently. It is packed by `collectorJar` with Gson and nothing else, which only
 works while `core` stays Minecraft-free: if that jar stops running, the layering broke.
 
+`core/sync/TapeSync` is the other half of that: the client pulls what the collector taped while the
+game was closed, over HTTP, and merges it in (`docs/headless-collector.md` has the nginx side).
+
 Key invariants:
 
 - `SkyblockFlipperClient.config()` holds the single mutable `FlipperConfig`. `/flip reload`
@@ -93,6 +98,15 @@ Key invariants:
 - `Ledger` is the only feedback loop: capture rate (realized/quoted on filled units) and fill
   rate. **Quotes freeze at open time** — never re-derive from the current book. Closing applies
   fees on the same basis the quote used, dispatched by strategy.
+- Collector sync (`/flip sync`, `tapeSyncEnabled`, off by default) is a **merge, never a mirror**:
+  both machines tape the same endpoints, so each holds records the other missed. Keyed on
+  `auction_id` for sales, snapshot instant plus product for bazaar samples, signature plus day for a
+  rollup line. It is incremental by byte offset (`sync-state.json` beside each tape), which only
+  works because tape files are append-only and the server does not gzip — **a gzipped response
+  renumbers the bytes and every resumed fetch lands in the wrong place**. A remote index entry is
+  only ever written if the tape's own `isTapeFile` accepts the name, which is what keeps a name off
+  the network from being a path. Runs on its own daemon thread and calls `MarketPoller.rewarm()`
+  when it merged something; `PriceHistory` deduplicates nothing, so a replay clears the ring first.
 - Trade capture (`/flip capture`, `docs/trade-capture.md`) records the chat lines and menu contents
   a trade produces, so the fill parser can be written against measured text. It splits on the same
   layering rule as everything else: `core/track` holds the filter, the JSONL log and the records

@@ -50,8 +50,9 @@ class FlipperConfigTest {
 
 		FlipperConfig config = FlipperConfig.load(file);
 
-		// Level 99 would drive the bazaar tax negative and invent profit out of nothing.
-		assertEquals(6, config.bazaarFlipperLevel);
+		// Level 99 would drive the bazaar tax negative and invent profit out of nothing. The perk
+		// stops at 2, which is also what the derived bazaar order limit reads.
+		assertEquals(2, config.bazaarFlipperLevel);
 		assertEquals(0L, config.bankroll);
 		assertEquals(1.0d, config.minConfidence, 1e-9);
 		assertEquals(0L, config.minProfitPerFlip);
@@ -91,13 +92,13 @@ class FlipperConfigTest {
 		Path file = dir.resolve("config.json");
 
 		FlipperConfig original = new FlipperConfig();
-		original.bazaarFlipperLevel = 4;
+		original.bazaarFlipperLevel = 2;
 		original.bankroll = 1_234_567L;
 		original.save(file);
 
 		FlipperConfig reloaded = FlipperConfig.load(file);
 
-		assertEquals(4, reloaded.bazaarFlipperLevel);
+		assertEquals(2, reloaded.bazaarFlipperLevel);
 		assertEquals(1_234_567L, reloaded.bankroll);
 	}
 }

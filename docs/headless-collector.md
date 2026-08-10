@@ -121,15 +121,109 @@ It logs a heartbeat every 10 minutes with sales taped, data age, and any poll fa
 
 ## Getting the tape back
 
+The mod pulls it itself. Serve the two tape directories over HTTP and point the client at them;
+`TapeSync` fetches whatever the collector appended since last time and merges it into the local
+tape. Nothing has to be run by hand and nothing has to be remembered before launching the game.
+
+### Serve the tape
+
+Read-only, one token, and nothing but the two tape directories. `/etc/nginx/sites-available/tape`:
+
+```nginx
+server {
+    listen 8080 default_server;
+    listen [::]:8080 default_server;
+
+    root /var/lib/skyblock-flipper;
+
+    # config.json holds settings and ledger.jsonl holds trades; neither is tape. Everything
+    # outside the two directories below is not served at all.
+    location / {
+        return 404;
+    }
+
+    # A regex location wins over the prefix one above, so only these two are reachable.
+    location ~ ^/(tape|bazaar-tape)/ {
+        if ($http_x_tape_token != "REPLACE-WITH-A-LONG-RANDOM-STRING") {
+            return 403;
+        }
+
+        limit_except GET HEAD {
+            deny all;
+        }
+
+        # The client discovers what to fetch from the directory listing, and parses it as JSON.
+        autoindex on;
+        autoindex_format json;
+
+        # Must stay off. The sync resumes at a byte offset into the file, and a gzipped response
+        # would number its bytes differently - every resumed fetch would start in the wrong place.
+        gzip off;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/tape /etc/nginx/sites-enabled/tape
+sudo nginx -t && sudo systemctl reload nginx
+sudo ufw allow 8080/tcp
+```
+
+On Oracle Cloud the instance firewall is not the only one: add an ingress rule for TCP 8080 to the
+subnet's security list too, or the port answers locally and nowhere else.
+
+Check it from the Mac before touching the mod:
+
+```bash
+curl -s -H 'X-Tape-Token: REPLACE-WITH-A-LONG-RANDOM-STRING' http://<server>:8080/tape/
+curl -s http://<server>:8080/tape/            # expect 403
+curl -s http://<server>:8080/config.json      # expect 404
+```
+
+The first should return a JSON array of `{"name","type","size"}`. If it returns HTML instead, the
+`autoindex_format json` line is not in effect and the sync will report exactly that.
+
+The tape is public Hypixel data, so the token is not protecting a secret — it keeps an open
+directory of gigabyte files from being crawled by whatever finds the port.
+
+### Point the mod at it
+
+In `config.json`, or the Collector sync group in the settings screen:
+
+```json
+{
+  "tapeSyncEnabled": true,
+  "tapeSyncUrl": "http://<server>:8080",
+  "tapeSyncToken": "REPLACE-WITH-A-LONG-RANDOM-STRING",
+  "tapeSyncIntervalMinutes": 0
+}
+```
+
+The sync starts about five seconds after the poller, on its own daemon thread, and the game does
+not wait for it. When it finishes it asks the poller to re-read the tape, so the recovered hours
+reach the price history in the same session. `/flip sync` runs one on demand.
+
+What crosses the wire is only what the server appended: the offsets already merged are kept in
+`sync-state.json` beside each tape and every request after the first is a `Range` fetch. The first
+sync is the whole retention window, so keep `tapeRetentionDays` on the client at what the client
+actually needs — the default 2-day valuation window means 2 or 3 days is enough, and the server can
+keep 21 for backtesting without the client ever downloading them.
+
+Both machines record the same endpoints, so the merge is keyed rather than a copy: sales are folded
+on `auction_id`, bazaar samples on the snapshot instant plus the product, rollup lines on their
+signature and day. Nothing is overwritten, and a day both machines taped comes out as the union.
+
+### The manual fallback
+
 ```bash
 rsync -az --delete collector:/var/lib/skyblock-flipper/tape/ \
   ~/Library/Application\ Support/minecraft/config/skyblock-flipper/tape/
 ```
 
-Same for `bazaar-tape/`. Do it with the game closed — the client prunes and rolls up these
-directories on its own schedule, and two writers on one tape is not something either side checks
-for. Leave `config.json` out of the sync: the collector's is tuned for collection, and copying it
-over your client's would turn off auction scanning in game.
+Same for `bazaar-tape/`. This is a mirror and not a merge, so it discards anything the client taped
+that the server did not — use it only to seed an empty client, and only with the game closed. Leave
+`config.json` out of it either way: the collector's is tuned for collection, and copying it over
+your client's would turn off auction scanning in game.
 
 ## Where to run it
 

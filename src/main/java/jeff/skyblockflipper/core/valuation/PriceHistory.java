@@ -108,6 +108,20 @@ public final class PriceHistory {
 	}
 
 	/**
+	 * Forgets every sample, so a replay of the tape starts from nothing.
+	 *
+	 * <p>The ring deduplicates nothing - it cannot, since two genuine samples of a still book are
+	 * identical - so replaying a tape that has already been replayed would count every sample
+	 * twice and halve the apparent volatility. Anything that re-reads the tape clears first.
+	 */
+	public void clear() {
+		series.clear();
+		// Back to the value the constructor leaves it at, not a sentinel: eviction subtracts the
+		// window from it, and a minimum long would underflow before the first sample raised it.
+		newestTimestamp = 0L;
+	}
+
+	/**
 	 * Replaces the multi-day reference prices, from the tape's daily rollup.
 	 *
 	 * <p>Median of the daily medians rather than a mean of everything: the point of a longer

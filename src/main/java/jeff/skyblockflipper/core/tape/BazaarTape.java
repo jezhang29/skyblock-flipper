@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -93,7 +94,7 @@ public final class BazaarTape {
 	 *
 	 * @return what was written, oldest first; empty when the book has not moved
 	 */
-	public List<BazaarSample> record(BazaarSnapshot snapshot) throws IOException {
+	public synchronized List<BazaarSample> record(BazaarSnapshot snapshot) throws IOException {
 		if (snapshot == null || snapshot.isEmpty()) {
 			return List.of();
 		}
@@ -139,6 +140,41 @@ public final class BazaarTape {
 		lastRecordedUpdate = updated;
 		totalRecorded += samples.size();
 		return samples;
+	}
+
+	/**
+	 * Folds lines from another copy of this tape into ours, skipping samples we already hold.
+	 *
+	 * <p>Keyed on the snapshot instant plus the product, which is one row of one sample - the same
+	 * grain {@link #record} writes at. Keying on the instant alone would drop a whole book to one
+	 * product, and both machines sample the same Hypixel snapshots, so a day taped on both sides
+	 * would otherwise merge to double.
+	 *
+	 * <p>Synchronized with {@code record} for the same reason the sales tape's merge is: the sync
+	 * thread and the poller append to one file.
+	 *
+	 * @param fileName one of our own file names - a {@code yyyy-MM-dd.jsonl} day or the rollup
+	 * @return how many lines were new
+	 */
+	public synchronized int merge(String fileName, List<String> lines) throws IOException {
+		if (!isTapeFile(fileName)) {
+			throw new IllegalArgumentException("not a bazaar tape file: " + fileName);
+		}
+
+		Function<String, String> key = DAILY_FILE.equals(fileName)
+				? line -> JsonLines.pair(line, "p", "d")
+				: line -> JsonLines.pair(line, "t", "p");
+
+		return TapeMerge.merge(directory.resolve(fileName), lines, key);
+	}
+
+	/** True for names this tape writes, and false for everything else, path separators included. */
+	public static boolean isTapeFile(String fileName) {
+		if (fileName == null || fileName.contains("/") || fileName.contains("\\")) {
+			return false;
+		}
+
+		return DAILY_FILE.equals(fileName) || dayNamed(fileName) != null;
 	}
 
 	/**
@@ -387,8 +423,10 @@ public final class BazaarTape {
 
 	/** The day a raw tape file covers, or null if it is not one of ours. */
 	private static LocalDate dayOf(Path file) {
-		String name = file.getFileName().toString();
+		return dayNamed(file.getFileName().toString());
+	}
 
+	private static LocalDate dayNamed(String name) {
 		if (!name.endsWith(SUFFIX)) {
 			return null;
 		}

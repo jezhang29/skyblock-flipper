@@ -4,6 +4,7 @@ import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.NpcFlipStrategy;
 import jeff.skyblockflipper.core.strategy.StrategyContext;
 import jeff.skyblockflipper.core.strategy.StrategyEngine;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
@@ -56,7 +57,23 @@ public final class CandidateFeed {
 				config.minConfidence,
 				config.maxAdverseDrift,
 				Duration.ofMinutes(config.fillHorizonMinutes),
-				config.maxCapitalShare);
+				config.maxCapitalShare,
+				npcCapRemaining(config),
+				config.npcSessionHours);
+	}
+
+	/**
+	 * The day's NPC coin budget, less what the ledger says has already been collected from NPCs.
+	 *
+	 * <p>Derived rather than stored: the game exposes no counter for this, and a saved number would
+	 * go stale the moment a trade was closed outside the mod. What the ledger cannot see is a flip
+	 * you never recorded, which reads as budget still available.
+	 */
+	public static long npcCapRemaining(FlipperConfig config) {
+		long spent = LedgerService.ledger()
+				.npcCoinsReceivedSince(NpcFlipStrategy.npcDayStart(System.currentTimeMillis()));
+
+		return Math.max(0L, config.npcDailyCapCoins - spent);
 	}
 
 	/** Fresh ranking across every strategy, or a single one when {@code kind} is non-null. */

@@ -222,7 +222,26 @@ public final class MarketPoller implements AutoCloseable {
 	}
 
 	/**
-	 * Replays the recent tape into the price ring, once, at startup.
+	 * Re-reads the tape into the price ring and re-prices against it.
+	 *
+	 * <p>For the one thing that changes the tape underneath a running poller: a sync that just
+	 * merged the hours this client was closed for. Without it those hours sit on disk unread until
+	 * the next launch, which is most of what a sync was for.
+	 *
+	 * <p>Queued on the poll thread rather than run on the caller's, because the ring belongs to
+	 * that thread and the valuation model is rebuilt from the same place.
+	 */
+	public synchronized void rewarm() {
+		if (executor == null) {
+			return;
+		}
+
+		scheduleOnce(this::warmPriceHistory, Duration.ZERO);
+		scheduleOnce(this::rebuildValuations, Duration.ZERO);
+	}
+
+	/**
+	 * Replays the recent tape into the price ring.
 	 *
 	 * <p>Only the window's worth is read back. The tape holds far more so that longer-horizon
 	 * questions stay answerable later, but the ring would evict anything older on the way in, so
@@ -237,6 +256,9 @@ public final class MarketPoller implements AutoCloseable {
 
 		try {
 			int days = (int) Math.max(1L, Math.ceilDiv(config.trendWindowHours(), 24));
+			// Cleared first so this is safe to run more than once: the ring cannot tell a replayed
+			// sample from a second real one, and a doubled series reads as half the volatility.
+			history.clear();
 			int read = bazaarTape.forEachRecent(days, history::append);
 			history.setDailyStats(bazaarTape.readDailyIndex());
 			data.setTrends(history.snapshot());
