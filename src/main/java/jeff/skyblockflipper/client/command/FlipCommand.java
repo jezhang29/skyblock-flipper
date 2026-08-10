@@ -659,8 +659,14 @@ public final class FlipCommand {
 		line(source, "bazaar flipper level", config.bazaarFlipperLevel + " ("
 				+ new Fees(config.bazaarFlipperLevel, false).bazaarOrderSlots() + " order slots)");
 		line(source, "npc daily cap", Chat.coins(CandidateFeed.npcCapRemaining(config)) + " left of "
-				+ Chat.coins(config.npcDailyCapCoins) + ", "
-				+ String.format("%.2gh", config.npcSessionHours) + " session");
+				+ Chat.coins(config.npcDailyCapCoins));
+		line(source, "npc orders", (config.npcMaxOrderSlots > 0
+						? config.npcMaxOrderSlots + " of "
+						: "all ")
+				+ new Fees(config.bazaarFlipperLevel, false).bazaarOrderSlots() + " slots, "
+				+ String.format("%.0f%%", config.npcMinMarginRatio * 100.0d) + " min margin, "
+				+ String.format("%.2gh", config.npcRestingHours) + " resting, checked every "
+				+ config.npcCheckInMinutes + "m");
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
 		line(source, "min confidence", String.format("%.2f", config.minConfidence));
 		line(source, "max adverse drift", config.maxAdverseDrift <= 0.0d

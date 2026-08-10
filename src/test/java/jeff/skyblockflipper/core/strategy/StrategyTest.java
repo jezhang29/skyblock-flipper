@@ -185,7 +185,10 @@ class StrategyTest {
 		ItemCatalog catalog = new ItemCatalog(Map.of(
 				"TEST_ITEM", new ItemCatalog.Entry("TEST_ITEM", "Test Item", 80.0d)));
 
-		List<FlipCandidate> found = new NpcFlipStrategy().findCandidates(contextFor(cheap, catalog, 0L));
+		// Two hours rather than the default window, so what the book turns over is the binding
+		// limit and the resting depth is not.
+		List<FlipCandidate> found = new NpcFlipStrategy().findCandidates(
+				npcContext(cheap, catalog, StrategyContext.NPC_CAP_UNLIMITED, 2.0d, new Fees(0, false)));
 
 		assertEquals(1, found.size());
 
@@ -199,8 +202,8 @@ class StrategyTest {
 		assertEquals(29.5d, candidate.unitNetProfit(), 1e-9);
 
 		// 20000 units rest below the NPC price, but the book only turns over 2M a week, which is
-		// 11904 an hour; taking half of that over a 2h session is 11904. Sizing off resting depth
-		// would claim the full 20000 and a session that does not exist.
+		// 11904 an hour; taking half of that over two hours is 11904. Sizing off resting depth
+		// would claim the full 20000 and a window in which it never turns over.
 		assertEquals(11_904L, candidate.units());
 	}
 
@@ -313,14 +316,16 @@ class StrategyTest {
 				.findCandidates(contextFor(huge, catalog, 0L))
 				.getFirst();
 
-		// 36 slots x 64 x 12 trips = 27648 units an hour, over a default 2h session. Without the
-		// ceiling this would claim the full 10M-unit book and a profit no player could physically
-		// realize. Both routes hit it, since it is the manual sell leg that binds.
-		assertEquals(55_296L, candidate.units());
+		// 36 slots x 64 x 12 trips = 27648 units an hour, over the default resting window. Without
+		// the ceiling this would claim the full 10M-unit book and a profit no player could
+		// physically realize. Both routes hit it, since it is the manual sell leg that binds.
+		long expected = (long) (27_648L * StrategyContext.DEFAULT_NPC_RESTING_HOURS);
+		assertEquals(expected, candidate.units());
 
-		// No NPC cap is stated by this context, so the whole session is carried and the hourly rate
+		// No NPC cap is stated by this context, so the whole window is carried and the hourly rate
 		// is the plain average over it.
-		assertEquals(55_296L * candidate.unitNetProfit() / 2.0d, candidate.profitPerHour(), 1e-6);
+		assertEquals(expected * candidate.unitNetProfit() / StrategyContext.DEFAULT_NPC_RESTING_HOURS,
+				candidate.profitPerHour(), 1e-6);
 		assertTrue(candidate.risks().stream().anyMatch(r -> r.contains("trips")),
 				"a multi-trip plan should say so: " + candidate.risks());
 	}
@@ -576,7 +581,7 @@ class StrategyTest {
 	}
 
 	private static StrategyContext npcContext(BazaarProduct product, ItemCatalog catalog,
-			long capRemaining, double sessionHours, Fees fees) {
+			long capRemaining, double restingHours, Fees fees) {
 		return new StrategyContext(
 				new BazaarSnapshot(Instant.now(), Map.of(product.productId(), product)),
 				catalog,
@@ -590,7 +595,7 @@ class StrategyTest {
 				StrategyContext.DEFAULT_FILL_HORIZON,
 				StrategyContext.UNCAPPED,
 				capRemaining,
-				sessionHours);
+				restingHours);
 	}
 
 	@Test

@@ -191,9 +191,11 @@ public final class FlipperConfig {
 	 *
 	 * <p>This counts what the NPC hands over, not profit. An item bought at 4.1 and sold to the NPC
 	 * at 8.0 spends 8.0 of this budget per unit and returns 3.9, so the cap is worth
-	 * {@code 500M * 3.9/8} = 243.75M of profit on that item and far less on an expensive one. It is
-	 * the binding constraint on every high-value NPC flip: {@code ENCHANTED_DIAMOND_BLOCK} at
-	 * 204,800 a unit exhausts it in about fifteen minutes of inventory trips.
+	 * {@code 500M * 3.9/8} = 243.75M of profit on that item and far less on an expensive one.
+	 *
+	 * <p>It binds across a day, not inside one cycle: a basket sized to the order slots an account
+	 * has turns over roughly 86M per eight-hour cycle, so the cap allows about two cycles. What
+	 * actually limits a single plan is {@link #npcMaxOrderSlots} and the bankroll.
 	 *
 	 * <p>500M per day, from the Skyblock wiki. Nothing in the API carries it, so it is a setting
 	 * rather than a constant, and it will need editing if Hypixel changes the number.
@@ -201,17 +203,52 @@ public final class FlipperConfig {
 	public long npcDailyCapCoins = 500_000_000L;
 
 	/**
-	 * How long an NPC flipping session runs, in hours. Sizes and ranks every NPC candidate.
+	 * Smallest gap between the bazaar buy order and the NPC price worth an order slot, as a fraction
+	 * of the NPC price.
 	 *
-	 * <p>NPC flips are limited by two different things and the ranking has to see both: carrying
-	 * capacity per hour, and {@link #npcDailyCapCoins} per day. Which one binds depends entirely on
-	 * how long you intend to sit there. At one hour only 7 items on a live book are cap-bound; at
-	 * eight hours it is 40, and the ordering between them changes with it.
+	 * <p>Both a filter and a chase stop: a product below this is never planned, and a resting order
+	 * is never repriced above {@code npcPrice * (1 - this)}. One threshold with one meaning, because
+	 * two would eventually disagree about whether a trade that has drifted is still on.
 	 *
-	 * <p>Deliberately not {@link #fillHorizonMinutes}, which says how long an order may rest rather
-	 * than how long you will keep walking to an NPC.
+	 * <p>0.15 is the peak of a sweep measured over three days of tape on 2026-08-09
+	 * ({@code docs/npc-flipping.md}). Lower admits products whose margin the chase eats; higher
+	 * empties the basket faster than it raises the profit per slot.
 	 */
-	public double npcSessionHours = 2.0d;
+	public double npcMinMarginRatio = 0.15d;
+
+	/**
+	 * How often you come back to reprice resting NPC buy orders, in minutes.
+	 *
+	 * <p>The horizon a plan's fill is measured over, and the interval the chase cost is charged
+	 * over: coming back twice as often fills more but pays to outbid more often. 30 minutes is what
+	 * the measured plan assumed.
+	 */
+	public int npcCheckInMinutes = 30;
+
+	/**
+	 * How long NPC buy orders are left resting before the coins would rather be somewhere else, in
+	 * hours. One cycle.
+	 *
+	 * <p>Unlike a bazaar spread flip there is no price risk in waiting - the exit price cannot move,
+	 * so an order either fills at your price or is cancelled. This is a statement about capital, not
+	 * about risk: it is how long the basket is allowed to tie coins up before its profit is judged.
+	 *
+	 * <p>Replaced {@code npcSessionHours}, which meant how long the player would keep walking to an
+	 * NPC. There is no walking - {@code /trades} with a booster cookie reaches a shop from anywhere,
+	 * confirmed in play on 2026-08-09 - so what is being sized is the order, not the trip.
+	 */
+	public double npcRestingHours = 8.0d;
+
+	/**
+	 * How many bazaar order slots the NPC basket may occupy, or 0 for all of them.
+	 *
+	 * <p>Order slots are the binding resource on this trade, not coins and not the daily cap, so
+	 * this is the setting that decides how big the basket gets. Zero means
+	 * {@code Fees.bazaarOrderSlots()}, which is what {@link #bazaarFlipperLevel} allows; a smaller
+	 * number leaves room for spread flipping or for a coop member. A larger one is not obeyed - the
+	 * account's real limit still wins.
+	 */
+	public int npcMaxOrderSlots = 0;
 
 	/**
 	 * Which strategy the unqualified views show: {@code ALL}, or one {@code StrategyKind} name.
@@ -368,7 +405,16 @@ public final class FlipperConfig {
 		// Zero would make every NPC plan empty rather than uncapped, which is not what someone
 		// clearing the field means; the upper bound is loose because the real value is unverified.
 		npcDailyCapCoins = Math.clamp(npcDailyCapCoins, 1_000_000L, 100_000_000_000L);
-		npcSessionHours = Math.clamp(npcSessionHours, 0.25d, 24.0d);
+		// Below 2% the chase cost alone can exceed the margin on a book that moves at all; above
+		// 50% almost nothing on the tape qualifies and the basket sits empty.
+		npcMinMarginRatio = Math.clamp(npcMinMarginRatio, 0.02d, 0.50d);
+		// Under five minutes is faster than the bazaar tape samples, so the fill it would be
+		// measured against is not observable.
+		npcCheckInMinutes = Math.clamp(npcCheckInMinutes, 5, 480);
+		npcRestingHours = Math.clamp(npcRestingHours, 0.5d, 24.0d);
+		// Zero means "all of them", so it stays; the ceiling is the most any Bazaar Flipper level
+		// could give. What the account actually has still wins at plan time.
+		npcMaxOrderSlots = Math.clamp(npcMaxOrderSlots, 0, 56);
 		hudLines = Math.clamp(hudLines, 1, 10);
 		// A zero or negative discount would call every listing at fair value a bargain and hand
 		// the sweep tens of thousands of blobs to decode.

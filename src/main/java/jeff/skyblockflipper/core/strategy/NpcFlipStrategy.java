@@ -50,7 +50,7 @@ import java.util.Optional;
  * makes an expensive item look like a business: {@code ENCHANTED_DIAMOND_BLOCK} at 204,800 a unit
  * quotes 23M an hour and exhausts a 500M daily budget in about fifteen minutes, while
  * {@code FIG_LOG} at 8 a unit could never spend that budget in a week of grinding. Plans are
- * therefore sized over {@link StrategyContext#npcSessionHours()} rather than over an hour, because
+ * therefore sized over {@link StrategyContext#npcRestingHours()} rather than over an hour, because
  * an hourly figure cannot express a limit that is measured per day.
  */
 public final class NpcFlipStrategy implements FlipStrategy {
@@ -348,7 +348,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 			long maxUnitsPerOrder) {
 		static Limits of(ItemCatalog.Entry entry, double npcPrice, StrategyContext context) {
 			long unitsPerTrip = SLOTS_PER_TRIP * entry.stackSize();
-			double sessionHours = context.npcSessionHours();
+			double sessionHours = context.npcRestingHours();
 			long carryUnits = (long) (unitsPerTrip * TRIPS_PER_HOUR * sessionHours);
 
 			// Unlimited stays unlimited rather than becoming an enormous but finite unit count, so

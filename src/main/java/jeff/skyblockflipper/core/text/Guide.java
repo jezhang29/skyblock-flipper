@@ -202,9 +202,11 @@ public final class Guide {
 			new Term("Cap efficiency", "Coins of profit per coin of budget spent, which is just the "
 					+ "margin divided by the NPC price. When the cap is what limits you rather than "
 					+ "your time, this is the number that decides what to spend the day on"),
-			new Term("Session length", "How long you intend to keep making trips, in settings. It "
-					+ "is what decides whether your time or the budget runs out first, so raising it "
-					+ "promotes items you can grind all day over ones that cap out in minutes"),
+			new Term("Resting window", "How long an NPC buy order is left sitting before you would "
+					+ "rather have the coins back, in settings. Nothing is at risk while it rests - "
+					+ "the NPC's price cannot move, so an order fills at your price or is "
+					+ "cancelled - so this says how long capital may be tied up, and raising it "
+					+ "promotes slow books over ones that fill while you watch"),
 			new Term("How much is left", "Counted from your ledger: closed NPC flips, units sold "
 					+ "times the NPC price. Flips you never recorded are invisible to it, so the "
 					+ "budget will read fuller than it is if you trade outside the mod"),

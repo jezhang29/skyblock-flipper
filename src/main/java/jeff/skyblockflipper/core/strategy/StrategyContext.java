@@ -36,9 +36,11 @@ import java.util.List;
  * @param npcCapRemaining  gross coins NPCs will still pay out today, across every item. Unlike
  *                         every other limit here this one is shared and consumed: it is the day's
  *                         budget minus what has already been spent, so it shrinks as you trade
- * @param npcSessionHours  how long the player intends to keep making NPC trips. NPC plans are
- *                         bounded by carrying capacity per hour and by {@link #npcCapRemaining()}
- *                         per day, and this is what decides which of the two binds first
+ * @param npcRestingHours  how long an NPC buy order may sit before the coins would rather be
+ *                         somewhere else. There is no price risk in waiting - the NPC's price
+ *                         cannot move - so this bounds how long capital is tied up, and together
+ *                         with {@link #npcCapRemaining()} it decides how large a plan is worth
+ *                         placing
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -53,7 +55,7 @@ public record StrategyContext(
 		Duration fillHorizon,
 		double maxCapitalShare,
 		long npcCapRemaining,
-		double npcSessionHours
+		double npcRestingHours
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
@@ -67,8 +69,8 @@ public record StrategyContext(
 	 */
 	public static final long NPC_CAP_UNLIMITED = Long.MAX_VALUE;
 
-	/** What an unstated session means, matching {@code FlipperConfig.npcSessionHours}. */
-	public static final double DEFAULT_NPC_SESSION_HOURS = 2.0d;
+	/** What an unstated resting window means, matching {@code FlipperConfig.npcRestingHours}. */
+	public static final double DEFAULT_NPC_RESTING_HOURS = 8.0d;
 
 	public StrategyContext {
 		underpriced = List.copyOf(underpriced);
@@ -81,7 +83,7 @@ public record StrategyContext(
 		// A spent budget is zero, not negative, and a negative one would flip the sizing arithmetic
 		// into producing plans rather than suppressing them.
 		npcCapRemaining = Math.max(0L, npcCapRemaining);
-		npcSessionHours = npcSessionHours <= 0.0d ? DEFAULT_NPC_SESSION_HOURS : npcSessionHours;
+		npcRestingHours = npcRestingHours <= 0.0d ? DEFAULT_NPC_RESTING_HOURS : npcRestingHours;
 	}
 
 	/**
@@ -115,7 +117,7 @@ public record StrategyContext(
 			double maxCapitalShare) {
 		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
 				maxAdverseDrift, fillHorizon, maxCapitalShare, NPC_CAP_UNLIMITED,
-				DEFAULT_NPC_SESSION_HOURS);
+				DEFAULT_NPC_RESTING_HOURS);
 	}
 
 	/** The shape before a per-flip capital cap existed, for callers that do not want one. */
