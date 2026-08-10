@@ -215,6 +215,13 @@ signature and day. Nothing is overwritten, and a day both machines taped comes o
 
 ### The manual fallback
 
+With the above configured there is nothing to run by hand: `collector/Fetch From Server.command`
+does over ssh what the mod now does over HTTP, and only earns its keep when nginx is unreachable but
+ssh is not, or when seeding a machine that has never run the mod. It merges on the same keys, so
+running it after a sync finds nothing new rather than duplicating anything.
+
+The one-liner underneath it:
+
 ```bash
 rsync -az --delete collector:/var/lib/skyblock-flipper/tape/ \
   ~/Library/Application\ Support/minecraft/config/skyblock-flipper/tape/

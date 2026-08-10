@@ -7,6 +7,11 @@ against measured text.
 
 Nothing reads the file at runtime. It is off by default.
 
+**That parser exists now** (`core/track`, driven by `/flip track`), so an ordinary session needs
+nothing here. Run a capture when Hypixel's wording changes under it — a Skyblock update, a trade
+that the ledger does not book, an order the tracker does not see — and the recorded session becomes
+the fixture the parser is fixed against. `LedgerAutoTrackTest` replays exactly such a file.
+
 ## Running a session
 
 1. `/flip capture` in game. It says where it is writing.
