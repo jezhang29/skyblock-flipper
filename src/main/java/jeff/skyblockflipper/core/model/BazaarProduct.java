@@ -125,6 +125,33 @@ public record BazaarProduct(
 	}
 
 	/**
+	 * A lower bound on the largest single order resting anywhere on this book.
+	 *
+	 * <p>A price level reports units and the number of orders holding them, so the largest order at
+	 * that level is at least the mean, and integer division rounds that down. Taking the biggest
+	 * such figure across both sides therefore proves an order of at least this size exists, and can
+	 * only ever understate one.
+	 *
+	 * <p>Only interesting because of what it proves about the item rather than about the book - see
+	 * {@link Stacking}, which is the one thing that reads it.
+	 */
+	public long largestRestingOrder() {
+		return Math.max(largestRestingOrder(sellOffers), largestRestingOrder(buyOrders));
+	}
+
+	private static long largestRestingOrder(List<OrderLevel> side) {
+		long largest = 0L;
+
+		for (OrderLevel level : side) {
+			if (level.orders() > 0) {
+				largest = Math.max(largest, level.amount() / level.orders());
+			}
+		}
+
+		return largest;
+	}
+
+	/**
 	 * Total resting orders across the returned depth of one side.
 	 *
 	 * <p>Use this rather than the {@code orders} count on the top level to judge how manipulable a

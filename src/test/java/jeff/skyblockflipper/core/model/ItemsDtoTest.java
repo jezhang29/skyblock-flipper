@@ -48,17 +48,14 @@ class ItemsDtoTest {
 	}
 
 	@Test
-	void readsStackingSoATripCanBeSizedFromIt() {
-		// Absent for almost everything, which has to read as stackable rather than as unknown.
+	void readsTheStackingFlagWhereTheResourceSetsIt() {
+		// Absent for almost everything, including items that really do not stack, which is why
+		// Stacking asks the order book instead. See StackingTest.
 		assertFalse(catalog.get("ENCHANTED_MELON_BLOCK").orElseThrow().unstackable());
-		assertEquals(64, catalog.get("ENCHANTED_MELON_BLOCK").orElseThrow().stackSize());
 
-		// Present and true for the 19 bazaar products with an NPC price that do not stack. An NPC
-		// trip carries 36 of these against 2304 of the melons, which is the whole plan size.
 		ItemCatalog.Entry tuner = catalog.get("TRANSMISSION_TUNER").orElseThrow();
 
 		assertTrue(tuner.unstackable());
-		assertEquals(1, tuner.stackSize());
 		assertEquals(45_000.0d, tuner.npcPrice().orElseThrow(), 1e-9);
 	}
 

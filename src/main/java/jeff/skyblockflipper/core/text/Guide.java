@@ -247,10 +247,16 @@ public final class Guide {
 					+ "would mean waiting forever. Flips you never recorded are invisible to it, so "
 					+ "the budget will read fuller than it is if you trade outside the mod"),
 			new Term("Order slots", "You can rest 14 bazaar orders at once, plus 7 per Bazaar "
-					+ "Flipper level, and settings can hold NPC plans to fewer if you share a coop "
-					+ "bazaar. One order holds 71,680 units of a stackable item or 256 of an "
-					+ "unstackable one, so a plan is trimmed to what your slots hold rather than "
-					+ "quoting a size you cannot place")));
+					+ "Flipper level, to a maximum of 28, and settings can hold NPC plans to fewer "
+					+ "if you share a coop bazaar. One order holds 71,680 units of a stackable item "
+					+ "or 256 of an unstackable one, so a plan is trimmed to what your slots hold "
+					+ "rather than quoting a size you cannot place"),
+			new Term("Orders per line", "A basket line larger than one order says how it divides - "
+					+ "3 x 256 + 112 means three full orders and one part-filled one, four slots in "
+					+ "all. The mod works out which items stack by looking for an order bigger than "
+					+ "256 resting on their book, because Hypixel's item list does not mark reforge "
+					+ "stones or Jungle Hearts as unstackable and believing it once produced lines "
+					+ "you could not place")));
 
 	/**
 	 * The basket, which is a different job from reading a ranked list.
@@ -332,7 +338,8 @@ public final class Guide {
 					+ "weekly turnover is not a 4000-unit opportunity, it is a week of holding "
 					+ "something nobody wants. Every plan is sized from the flow, not the depth"),
 			new Term("Hauling", "How many inventory loads an NPC plan moves: 36 slots at a 64 "
-					+ "stack, or 36 unstackable items. There is no walking involved - /trades "
+					+ "stack, or 36 unstackable items - the same stacking the order split is "
+					+ "worked out from. There is no walking involved - /trades "
 					+ "reaches a shop from anywhere with a booster cookie - so this is a count of "
 					+ "how much clicking the plan is, not a limit on it"),
 			new Term("Time to fill", "How long your order is expected to take at the size the plan "

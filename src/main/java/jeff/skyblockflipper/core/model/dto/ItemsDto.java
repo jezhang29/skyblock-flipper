@@ -38,11 +38,14 @@ public final class ItemsDto {
 		public Double npcSellPrice;
 
 		/**
-		 * Present and true for items that do not stack. Absent for everything else, which is the
-		 * overwhelming majority, so a plain boolean reading false is the correct default here.
+		 * Present and true for some items that do not stack. Absent for everything else, so a plain
+		 * boolean reading false is the correct default here.
 		 *
-		 * <p>Worth 64x the carrying capacity of a trip: an inventory holds 2,304 of a stackable item
-		 * and 36 of one of these. 19 of the 816 bazaar products with an NPC price carry the flag.
+		 * <p><b>Absent is not evidence that an item stacks.</b> Measured 2026-08-11: 515 of 5,646
+		 * items carry the flag, and none of the 107 reforge stones does, nor does
+		 * {@code JUNGLE_HEART} - all of which the bazaar caps at 256 units an order. Where the flag
+		 * is set it has never been contradicted by the book, so it is worth keeping, but the answer
+		 * comes from {@link jeff.skyblockflipper.core.model.Stacking} rather than from here.
 		 */
 		public boolean unstackable;
 

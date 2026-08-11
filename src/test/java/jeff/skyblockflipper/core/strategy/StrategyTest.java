@@ -35,11 +35,19 @@ class StrategyTest {
 		return product(100.0d, 104.0d, 40, 5_000_000L);
 	}
 
+	/**
+	 * A two-level book on each side, the deeper level held by one order.
+	 *
+	 * <p>The single deep order is what makes this a book on a stackable item: an order larger than
+	 * 256 units cannot exist on one that does not stack, and {@code Stacking} reads exactly that.
+	 * Without it every fixture here would size against a 256-unit order ceiling. See
+	 * {@link #npcPlanIsHeldToTheOrderCeilingOfAnItemThatDoesNotStack()} for the other case.
+	 */
 	private static BazaarProduct product(double bid, double ask, int orders, long weeklyVolume) {
 		return new BazaarProduct(
 				"TEST_ITEM",
-				List.of(new OrderLevel(ask, 10_000L, orders), new OrderLevel(ask + 1.0d, 10_000L, orders)),
-				List.of(new OrderLevel(bid, 10_000L, orders), new OrderLevel(bid - 1.0d, 10_000L, orders)),
+				List.of(new OrderLevel(ask, 10_000L, orders), new OrderLevel(ask + 1.0d, 10_000L, 1)),
+				List.of(new OrderLevel(bid, 10_000L, orders), new OrderLevel(bid - 1.0d, 10_000L, 1)),
 				new BazaarProduct.MovingWeek(weeklyVolume, weeklyVolume));
 	}
 
@@ -715,6 +723,30 @@ class StrategyTest {
 				.findCandidates(npcContext(product, catalog, five, new Fees(2, false)))
 				.getFirst()
 				.units());
+	}
+
+	@Test
+	void npcPlanIsHeldToTheOrderCeilingOfAnItemThatDoesNotStack() {
+		// The case the catalog cannot see. JUNGLE_HEART and every reforge stone carry no
+		// unstackable flag, so a plan built on the flag sized 500 units into a bazaar order that
+		// holds 256. What separates them is the book: no level here holds an order above 256,
+		// because on an item that does not stack no such order can exist.
+		BazaarProduct product = new BazaarProduct(
+				"TEST_ITEM",
+				List.of(new OrderLevel(1100.0d, 256L, 1)),
+				List.of(new OrderLevel(800.0d, 512L, 2), new OrderLevel(799.0d, 256L, 1)),
+				new BazaarProduct.MovingWeek(50_000_000L, 50_000_000L));
+
+		// Stackable as far as the resource is concerned, which is exactly the wrong answer.
+		ItemCatalog catalog = npcCatalog(1000.0d, false);
+
+		FlipCandidate candidate = new NpcFlipStrategy()
+				.findCandidates(npcContext(product, catalog, NpcContext.CAP_UNLIMITED, 2.0d,
+						new Fees(0, false)))
+				.getFirst();
+
+		assertEquals(256L * 14L, candidate.units(),
+				"an item no order on the book exceeds 256 of has to be planned at 256 an order");
 	}
 
 	@Test
