@@ -9,6 +9,8 @@ import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.ledger.LedgerStats;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.NpcBasket;
+import jeff.skyblockflipper.core.strategy.NpcPlan;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
@@ -83,6 +85,7 @@ public final class FlipScreen extends Screen {
 		ALL("All", null),
 		BAZAAR("Bazaar", StrategyKind.BAZAAR_SPREAD),
 		NPC("NPC", StrategyKind.NPC_FLIP),
+		BASKET("Basket", null),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
 		LEDGER("Ledger", null),
 		GUIDE("Guide", null);
@@ -96,7 +99,7 @@ public final class FlipScreen extends Screen {
 		}
 
 		boolean showsCandidates() {
-			return this != LEDGER && this != GUIDE;
+			return this != BASKET && this != LEDGER && this != GUIDE;
 		}
 
 		/**
@@ -134,6 +137,15 @@ public final class FlipScreen extends Screen {
 	/** Beside Abandon, and only on the Ledger tab. */
 	private final TextButton forgetButton = new TextButton("Forget", this::forgetSelected);
 
+	/**
+	 * The Basket tab's own copy button, in the first footer slot rather than the second.
+	 *
+	 * <p>A basket line cannot be taken into the ledger the way a candidate can - a plan the order
+	 * slots trimmed is not the plan that was quoted - so the slot the Take button occupies is free
+	 * here, and leaving a hole in the footer to reuse one button would look like a missing control.
+	 */
+	private final TextButton basketCopyButton = new TextButton("Copy name", this::copySelectedLine);
+
 	/** Only laid out and drawn when Cloth Config is installed - see {@link Settings}. */
 	private final TextButton settingsButton = new TextButton("Settings", this::openSettings);
 
@@ -160,6 +172,21 @@ public final class FlipScreen extends Screen {
 	private int positionRowsTop;
 	private int positionRowHeight = 1;
 
+	/**
+	 * The basket as it was last allocated, rebuilt on the same revision rule as the table.
+	 *
+	 * <p>Never allocated in a render pass: planning one walks every product on the book, and the
+	 * screen draws sixty times a second. Null until the Basket tab has been opened once, because a
+	 * player working the auction house should not pay for an allocation they are not looking at.
+	 */
+	private NpcBasket.Basket basket;
+
+	/** Basket tab: the selected row, as an index into {@link NpcBasket.Basket#lines()}. */
+	private int selectedLine = -1;
+	private int basketRowsTop;
+	private int basketRowHeight = 1;
+	private int basketRowCount;
+
 	private float zoom = 1.0f;
 	private int viewWidth;
 	private int viewHeight;
@@ -184,6 +211,8 @@ public final class FlipScreen extends Screen {
 		copyButton.setBounds(MARGIN + takeWidth + 4, buttonY, copyWidth, BUTTON_HEIGHT);
 		int abandonWidth = abandonButton.preferredWidth(font);
 		abandonButton.setBounds(MARGIN, buttonY, abandonWidth, BUTTON_HEIGHT);
+		basketCopyButton.setBounds(MARGIN, buttonY, basketCopyButton.preferredWidth(font),
+				BUTTON_HEIGHT);
 		forgetButton.setBounds(MARGIN + abandonWidth + 4, buttonY,
 				forgetButton.preferredWidth(font), BUTTON_HEIGHT);
 
@@ -274,6 +303,15 @@ public final class FlipScreen extends Screen {
 
 		if (tab.showsCandidates()) {
 			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH), data.trends());
+		} else if (tab == Tab.BASKET) {
+			basket = NpcBasket.plan(CandidateFeed.context());
+
+			// The line that was selected is not necessarily the same trade in the new allocation,
+			// and a row index that outlives its list is how a panel ends up describing something
+			// that is no longer on screen.
+			if (selectedLine >= basket.lines().size()) {
+				selectedLine = -1;
+			}
 		}
 	}
 
@@ -305,6 +343,12 @@ public final class FlipScreen extends Screen {
 				renderLedger(graphics, MARGIN, top, listWidth(), panelHeight);
 				renderLedgerStats(graphics, detailX() + PANEL_PAD, top + PANEL_PAD,
 						detailWidth() - 2 * PANEL_PAD);
+			}
+			case BASKET -> {
+				panel(graphics, MARGIN, top, listWidth(), panelHeight);
+				panel(graphics, detailX(), top, detailWidth(), panelHeight);
+				renderBasket(graphics, MARGIN, top, listWidth(), panelHeight);
+				renderBasketTotals(graphics, detailX(), top, detailWidth(), panelHeight);
 			}
 			default -> {
 				panel(graphics, MARGIN, top, listWidth(), panelHeight);
@@ -603,6 +647,181 @@ public final class FlipScreen extends Screen {
 		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
 	}
 
+	/**
+	 * Every order to place, in the order to place them.
+	 *
+	 * <p>Not a ranking, and the difference is the whole point of the panel: each row is sized against
+	 * what the rows above it already took, so following all of them spends the bankroll and the order
+	 * slots exactly once. The candidate tabs cannot show this, because a ranked list has no idea what
+	 * the row above it committed.
+	 */
+	private void renderBasket(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		int startY = y + PANEL_PAD - sideScroll.offset();
+		int cursor = startY;
+
+		basketRowHeight = font.lineHeight + 2;
+		basketRowCount = basket == null ? 0 : basket.lines().size();
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+
+		graphics.text(font, Component.literal("Orders to place").withStyle(ChatFormatting.GOLD),
+				x + PANEL_PAD, cursor, TEXT);
+		cursor += font.lineHeight + 4;
+
+		if (basketRowCount == 0) {
+			Component message = Component.literal(
+					"Nothing on the book clears the NPC filters right now. That is a normal answer: "
+							+ "an item needs a gap under the NPC price that has stood up on the tape, "
+							+ "and a margin left over after chasing the book.");
+			graphics.textWithWordWrap(font, message, x + PANEL_PAD, cursor,
+					panelWidth - 2 * PANEL_PAD, TEXT_DIM);
+			cursor += font.wordWrapHeight(message, panelWidth - 2 * PANEL_PAD);
+		} else {
+			int priceWidth = font.width(Component.literal("000000.0")) + 8;
+			int unitsWidth = font.width(Component.literal("000,000")) + 8;
+			int nameWidth = panelWidth - 2 * PANEL_PAD - priceWidth - unitsWidth;
+
+			Component priceHeading = Component.literal("post at");
+			graphics.text(font, priceHeading,
+					x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(priceHeading),
+					cursor, TEXT_DIM);
+
+			Component unitsHeading = Component.literal("units");
+			graphics.text(font, unitsHeading,
+					x + panelWidth - PANEL_PAD - font.width(unitsHeading), cursor, TEXT_DIM);
+			cursor += font.lineHeight + 2;
+
+			basketRowsTop = cursor;
+
+			for (int i = 0; i < basketRowCount; i++) {
+				NpcBasket.Line line = basket.lines().get(i);
+
+				if (i == selectedLine) {
+					graphics.fill(x + 1, cursor - 1, x + panelWidth - 1,
+							cursor + basketRowHeight - 1, ROW_SELECTED);
+				}
+
+				graphics.text(font, Component.literal(
+								Labels.fit(font, line.plan().displayName(), nameWidth)),
+						x + PANEL_PAD, cursor, TEXT);
+
+				Component price = Component.literal(String.format("%.1f", line.plan().postPrice()));
+				graphics.text(font, price,
+						x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(price), cursor,
+						TEXT_NOTE);
+
+				Component units = Component.literal(String.valueOf(line.units()));
+				graphics.text(font, units,
+						x + panelWidth - PANEL_PAD - font.width(units), cursor, TEXT_DIM);
+				cursor += basketRowHeight;
+			}
+		}
+
+		graphics.disableScissor();
+
+		sideScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	/**
+	 * What the basket costs and makes, and then whichever row is selected.
+	 *
+	 * <p>The totals come first because they are the answer to the question the tab exists for: what
+	 * one cycle of this is worth, and which shared resource is the reason it is not worth more.
+	 */
+	private void renderBasketTotals(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		int contentWidth = panelWidth - 2 * PANEL_PAD;
+		int startY = y + PANEL_PAD - detailScroll.offset();
+		int cursor = startY;
+		int textX = x + PANEL_PAD;
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+
+		graphics.text(font, Component.literal("This cycle").withStyle(ChatFormatting.GOLD),
+				textX, cursor, TEXT);
+		cursor += font.lineHeight + 4;
+
+		if (basket == null || basket.isEmpty()) {
+			Component message = Component.literal("Nothing to allocate.");
+			graphics.textWithWordWrap(font, message, textX, cursor, contentWidth, TEXT_DIM);
+			cursor += font.wordWrapHeight(message, contentWidth);
+		} else {
+			cursor = field(graphics, textX, cursor, contentWidth, "Slots",
+					basket.slotsUsed() + " of " + basket.slotsAvailable());
+			cursor = field(graphics, textX, cursor, contentWidth, "Capital",
+					String.format("%s of %s (%.0f%%)", Coins.format(basket.capital()),
+							Coins.format(basket.bankroll()), basket.capitalShare() * 100.0d));
+			cursor = field(graphics, textX, cursor, contentWidth, "Profit",
+					String.format("%s over %.0fh", Coins.format(basket.profit()),
+							basket.restingHours()));
+			cursor = field(graphics, textX, cursor, contentWidth, "Per hour",
+					Coins.format(basket.profitPerHour()));
+			cursor = field(graphics, textX, cursor, contentWidth, "ROC",
+					String.format("%.0f%%", basket.returnOnCapital() * 100.0d));
+			cursor = field(graphics, textX, cursor, contentWidth, "NPC coins",
+					Coins.format(basket.npcPayout()) + " of the day's budget");
+			cursor = field(graphics, textX, cursor, contentWidth, "Hauling",
+					basket.loads() + (basket.loads() == 1L ? " load" : " loads") + " via /trades");
+
+			cursor += 4;
+			Component bound = Component.literal(basket.boundExplanation());
+			graphics.textWithWordWrap(font, bound, textX, cursor, contentWidth, TEXT_WARN);
+			cursor += font.wordWrapHeight(bound, contentWidth) + 6;
+
+			cursor = renderBasketLine(graphics, textX, cursor, contentWidth);
+		}
+
+		graphics.disableScissor();
+
+		detailScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		detailScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	/** @return the y the content finished at */
+	private int renderBasketLine(GuiGraphicsExtractor graphics, int x, int y, int contentWidth) {
+		if (selectedLine < 0 || selectedLine >= basket.lines().size()) {
+			Component message = Component.literal("Select a row for what to type into the bazaar.");
+			graphics.textWithWordWrap(font, message, x, y, contentWidth, TEXT_DIM);
+			return y + font.wordWrapHeight(message, contentWidth);
+		}
+
+		NpcBasket.Line line = basket.lines().get(selectedLine);
+		NpcPlan plan = line.plan();
+
+		Component name = Component.literal(plan.displayName());
+		graphics.textWithWordWrap(font, name, x, y, contentWidth, 0xFF55FFFF);
+		int cursor = y + font.wordWrapHeight(name, contentWidth) + 3;
+
+		cursor = field(graphics, x, cursor, contentWidth, "Post",
+				String.format("%.1f as a buy order", plan.postPrice()));
+		cursor = field(graphics, x, cursor, contentWidth, "Units", line.units()
+				+ (line.orders() > 1 ? " over " + line.orders() + " orders" : " in one order"));
+		cursor = field(graphics, x, cursor, contentWidth, "NPC pays",
+				String.format("%.1f", plan.npcPrice()));
+		cursor = field(graphics, x, cursor, contentWidth, "Net/unit",
+				String.format("%.1f (%.0f%% margin)", plan.unitNetProfit(),
+						plan.marginRatio() * 100.0d));
+		cursor = field(graphics, x, cursor, contentWidth, "Capital", Coins.format(line.capital()));
+		cursor = field(graphics, x, cursor, contentWidth, "Profit", Coins.format(line.profit()));
+
+		if (plan.chaseCost() > 0.0d) {
+			cursor = field(graphics, x, cursor, contentWidth, "Chase",
+					String.format("%.1f a unit, already out of the margin", plan.chaseCost()));
+		}
+
+		cursor = field(graphics, x, cursor, contentWidth, "Fill",
+				String.format("%.0f units an hour %s", plan.fillPerHour(),
+						plan.fillMeasured() ? "(measured)" : "(assumed)"));
+		cursor = field(graphics, x, cursor, contentWidth, "Edge", plan.edgeMeasured()
+				? String.format("held in %.0f%% of samples", plan.persistence() * 100.0d)
+				: "never taped");
+
+		return field(graphics, x, cursor, contentWidth, "Confidence",
+				String.format("%.2f", plan.confidence()));
+	}
+
 	private void renderLedgerStats(GuiGraphicsExtractor graphics, int x, int y, int panelWidth) {
 		LedgerStats stats = LedgerService.ledger().stats(null);
 
@@ -647,6 +866,8 @@ public final class FlipScreen extends Screen {
 		} else if (tab == Tab.LEDGER) {
 			abandonButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
 			forgetButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
+		} else if (tab == Tab.BASKET) {
+			basketCopyButton.render(graphics, font, mouseX, mouseY, selectedLine >= 0);
 		}
 
 		closeButton.render(graphics, font, mouseX, mouseY, true);
@@ -676,9 +897,11 @@ public final class FlipScreen extends Screen {
 	private List<String> hintClauses() {
 		return List.of(
 				FlipKeybinds.boundKeyName() + " or Esc closes.",
-				tab == Tab.LEDGER
-						? "Abandon keeps a position in the numbers, Forget deletes it."
-						: "Click a column to sort, a row to select.",
+				switch (tab) {
+					case LEDGER -> "Abandon keeps a position in the numbers, Forget deletes it.";
+					case BASKET -> "Place them all, then run /flip npc reprice on the way back.";
+					default -> "Click a column to sort, a row to select.";
+				},
 				"Guide tab defines every column.");
 	}
 
@@ -808,6 +1031,19 @@ public final class FlipScreen extends Screen {
 		notice = "Copied \"" + candidate.displayName() + "\" - paste it into the bazaar search.";
 	}
 
+	private void copySelectedLine() {
+		if (basket == null || selectedLine < 0 || selectedLine >= basket.lines().size()) {
+			notice = "Select a row first.";
+			return;
+		}
+
+		NpcPlan plan = basket.lines().get(selectedLine).plan();
+
+		minecraft.keyboardHandler.setClipboard(plan.displayName());
+		notice = String.format("Copied \"%s\" - buy order at %.1f for %d units.", plan.displayName(),
+				plan.postPrice(), basket.lines().get(selectedLine).units());
+	}
+
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubled) {
 		if (super.mouseClicked(event, doubled)) {
@@ -830,6 +1066,10 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
+		if (tab == Tab.BASKET && basketCopyButton.clicked(mouseX, mouseY)) {
+			return true;
+		}
+
 		if (tab == Tab.LEDGER
 				&& (abandonButton.clicked(mouseX, mouseY) || forgetButton.clicked(mouseX, mouseY))) {
 			return true;
@@ -843,7 +1083,32 @@ public final class FlipScreen extends Screen {
 			return positionClicked(mouseX, mouseY);
 		}
 
+		if (tab == Tab.BASKET) {
+			return basketRowClicked(mouseX, mouseY);
+		}
+
 		return tab.showsCandidates() && table.mouseClicked(mouseX, mouseY);
+	}
+
+	/** @return true when the click landed in the basket panel, on a row or not */
+	private boolean basketRowClicked(double mouseX, double mouseY) {
+		int top = contentTop();
+
+		if (mouseX < MARGIN || mouseX >= MARGIN + listWidth()
+				|| mouseY < top || mouseY >= top + contentHeight()) {
+			return false;
+		}
+
+		int row = (int) ((mouseY - basketRowsTop) / basketRowHeight);
+
+		if (row >= 0 && row < basketRowCount) {
+			selectedLine = row;
+			// The right-hand panel is now describing a different item from top to bottom.
+			detailScroll.reset();
+			notice = "";
+		}
+
+		return true;
 	}
 
 	/** @return true when the click landed in the open-positions panel, selected row or not */
@@ -898,7 +1163,13 @@ public final class FlipScreen extends Screen {
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
 		double vx = mouseX / zoom;
 
-		if (!tab.showsCandidates()) {
+		if (tab == Tab.BASKET) {
+			// Two scrolling panels rather than one, because the right-hand side carries a whole
+			// item's plan under the totals and does not fit either.
+			if ((vx >= detailX() ? detailScroll : sideScroll).scroll(scrollY)) {
+				return true;
+			}
+		} else if (!tab.showsCandidates()) {
 			if (sideScroll.scroll(scrollY)) {
 				return true;
 			}

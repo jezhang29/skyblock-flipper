@@ -114,6 +114,23 @@ public final class NpcBasket {
 		public double capitalShare() {
 			return bankroll <= 0L ? 0.0d : (double) capital / bankroll;
 		}
+
+		/**
+		 * What ran out and what could be done about it, in one sentence.
+		 *
+		 * <p>Here rather than in each of the two things that display a basket, so chat and the screen
+		 * cannot end up telling a player different stories about the same allocation.
+		 */
+		public String boundExplanation() {
+			return switch (bound) {
+				case SLOTS -> "Order slots are what ran out. Each Bazaar Flipper level adds seven.";
+				case CAPITAL -> "Coins ran out with " + (slotsAvailable - slotsUsed)
+						+ " order slots still free.";
+				case DAILY_CAP -> "The day's NPC coin budget ran out. It refills at UTC midnight.";
+				case CANDIDATES -> "Nothing else on the book clears the filters, so this is the "
+						+ "market limiting the basket rather than your account.";
+			};
+		}
 	}
 
 	/**

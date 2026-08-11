@@ -23,10 +23,14 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.NpcBasket;
+import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.track.CaptureLog;
+import jeff.skyblockflipper.core.track.TradeEvent;
+import jeff.skyblockflipper.core.track.TrackedOrder;
 import jeff.skyblockflipper.core.track.TradeTracker;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -42,6 +46,7 @@ import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Predicate;
@@ -81,7 +86,20 @@ public final class FlipCommand {
 						.executes(ctx -> {
 							showTop(ctx.getSource(), StrategyKind.NPC_FLIP, "Bazaar prices below NPC buy price");
 							return 1;
-						}))
+						})
+						// The ranked list answers "which one item is worth the most"; the basket
+						// answers "what do I do with all my order slots", which is the question
+						// this strategy is actually about.
+						.then(ClientCommands.literal("plan")
+								.executes(ctx -> {
+									showBasket(ctx.getSource());
+									return 1;
+								}))
+						.then(ClientCommands.literal("reprice")
+								.executes(ctx -> {
+									showReprice(ctx.getSource());
+									return 1;
+								})))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
@@ -189,16 +207,11 @@ public final class FlipCommand {
 
 	/** @param kind null for the merged ranking across every strategy */
 	private static void showTop(FabricClientCommandSource source, StrategyKind kind, String heading) {
-		MarketData data = MarketDataService.data();
-
-		if (!data.hasBazaar()) {
-			source.sendFeedback(Chat.prefixed(Component.literal(
-					MarketDataService.isRunning()
-							? "Waiting for the first market fetch, try again in a few seconds."
-							: "Polling is disabled - run /flip config and set pollingEnabled.")
-					.withStyle(ChatFormatting.YELLOW)));
+		if (!marketReady(source)) {
 			return;
 		}
+
+		MarketData data = MarketDataService.data();
 
 		// Ranked on demand rather than read from the HUD's cache: someone who just typed the
 		// command is asking about the book as it is now.
@@ -211,6 +224,87 @@ public final class FlipCommand {
 			source.sendFeedback(Component.literal("Derpy is mayor: auction fees are 4x. Bazaar is unaffected.")
 					.withStyle(ChatFormatting.RED));
 		}
+	}
+
+	/**
+	 * The NPC basket: every order slot and the bankroll allocated once, rather than a ranked list
+	 * where each row is sized against the whole bankroll on its own.
+	 */
+	private static void showBasket(FabricClientCommandSource source) {
+		if (!marketReady(source)) {
+			return;
+		}
+
+		NpcRenderer.renderBasket(source, NpcBasket.plan(CandidateFeed.context()));
+	}
+
+	/**
+	 * Which resting buy orders have been outbid, and which have been outbid past the point of being
+	 * worth a slot.
+	 *
+	 * <p>Reads the orders as the orders menu last described them, which is the only place their real
+	 * posted price exists - a plan's quoted cost includes chasing it had not paid yet. That makes
+	 * this depend on automatic tracking being on and on the menu having been opened at least once,
+	 * and both are worth saying out loud rather than reporting an empty list.
+	 */
+	private static void showReprice(FabricClientCommandSource source) {
+		if (!marketReady(source)) {
+			return;
+		}
+
+		if (!TrackerService.enabled()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Nothing has read your orders menu: automatic tracking is off. Run /flip track, "
+							+ "then open Bazaar -> Manage Orders once.").withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		TradeTracker tracker = TrackerService.tracker();
+		List<NpcReprice.Order> orders = new ArrayList<>();
+
+		for (TrackedOrder order : tracker.resting()) {
+			// Sell offers are the other leg of a spread flip and have nothing to do with an NPC.
+			// A price of zero means the order was seen announced in chat but never in a menu, and
+			// chat never names the price.
+			if (order.side() != TradeEvent.Side.BUY || order.unitPrice() <= 0.0d
+					|| order.remaining() <= 0L) {
+				continue;
+			}
+
+			// Enchantment-book orders carry no item data at all, so the name index is the only route
+			// from what the menu said to an id the book can be looked up by.
+			String itemId = order.itemId().isEmpty()
+					? tracker.names().idFor(order.displayName())
+					: order.itemId();
+
+			if (!itemId.isEmpty()) {
+				orders.add(new NpcReprice.Order(itemId, order.displayName(), order.unitPrice(),
+						order.remaining()));
+			}
+		}
+
+		if (orders.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"No resting buy orders are known yet. Open Bazaar -> Manage Orders and run this "
+							+ "again.").withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		NpcRenderer.renderReprice(source, NpcReprice.review(orders, CandidateFeed.context()));
+	}
+
+	/** Whether there is a book to answer with, with the reason there is not if there is not. */
+	private static boolean marketReady(FabricClientCommandSource source) {
+		if (MarketDataService.data().hasBazaar()) {
+			return true;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				MarketDataService.isRunning()
+						? "Waiting for the first market fetch, try again in a few seconds."
+						: "Polling is disabled - run /flip config and set pollingEnabled.")
+				.withStyle(ChatFormatting.YELLOW)));
+		return false;
 	}
 
 	/**
