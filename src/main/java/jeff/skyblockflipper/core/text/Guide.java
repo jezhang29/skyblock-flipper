@@ -81,6 +81,14 @@ public final class Guide {
 					+ "to one strategy"),
 			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, "
 					+ "your ledger and this guide. The keybind opens the same thing"),
+			new Term("/flip npc plan", "Every NPC buy order to place right now, sized so that the "
+					+ "whole set fits your order slots and your bankroll once. The ranked list sizes "
+					+ "each row on its own, so following three of those spends the bankroll three "
+					+ "times. Same thing as the Basket tab"),
+			new Term("/flip npc reprice", "Checks the buy orders you already have resting: which "
+					+ "have been outbid and where to move them, and which have been outbid past the "
+					+ "point of being worth a slot. Needs /flip track on and the orders menu opened "
+					+ "at least once, because that is the only place your real posted price exists"),
 			new Term("/flip take <rank>", "Records the flip on that line of the last list you were "
 					+ "shown, at the numbers you were shown"),
 			new Term("/flip close <id> <units> <price>", "Closes a position with what actually "
