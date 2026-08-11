@@ -50,7 +50,9 @@ import java.util.stream.Stream;
  * seconds; taping all of that would be roughly fifteen times the disk for indicators that cannot
  * resolve it. The caller picks the interval by how often it calls {@link #record}.
  *
- * <p>Not thread-safe by itself; the poller owns it and writes from a single thread.
+ * <p>Reads are not synchronized - the poller owns them and streams from a single thread. Every
+ * write is, on a lock held per directory rather than per object, for the reasons {@link TapeLock}
+ * gives.
  */
 public final class BazaarTape {
 	private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -73,11 +75,14 @@ public final class BazaarTape {
 	 */
 	private long lastRecordedUpdate = Long.MIN_VALUE;
 
+	private final Object writeLock;
+
 	private long totalRecorded;
 
 	public BazaarTape(Path directory, int retentionDays) {
 		this.directory = directory;
 		this.retentionDays = Math.max(1, retentionDays);
+		this.writeLock = TapeLock.forDirectory(directory);
 	}
 
 	/**
@@ -94,7 +99,13 @@ public final class BazaarTape {
 	 *
 	 * @return what was written, oldest first; empty when the book has not moved
 	 */
-	public synchronized List<BazaarSample> record(BazaarSnapshot snapshot) throws IOException {
+	public List<BazaarSample> record(BazaarSnapshot snapshot) throws IOException {
+		synchronized (writeLock) {
+			return recordLocked(snapshot);
+		}
+	}
+
+	private List<BazaarSample> recordLocked(BazaarSnapshot snapshot) throws IOException {
 		if (snapshot == null || snapshot.isEmpty()) {
 			return List.of();
 		}
@@ -150,13 +161,13 @@ public final class BazaarTape {
 	 * product, and both machines sample the same Hypixel snapshots, so a day taped on both sides
 	 * would otherwise merge to double.
 	 *
-	 * <p>Synchronized with {@code record} for the same reason the sales tape's merge is: the sync
-	 * thread and the poller append to one file.
+	 * <p>Synchronized with {@code record} and the rollup for the same reason the sales tape's merge
+	 * is: three threads append to one file.
 	 *
 	 * @param fileName one of our own file names - a {@code yyyy-MM-dd.jsonl} day or the rollup
 	 * @return how many lines were new
 	 */
-	public synchronized int merge(String fileName, List<String> lines) throws IOException {
+	public int merge(String fileName, List<String> lines) throws IOException {
 		if (!isTapeFile(fileName)) {
 			throw new IllegalArgumentException("not a bazaar tape file: " + fileName);
 		}
@@ -165,7 +176,9 @@ public final class BazaarTape {
 				? line -> JsonLines.pair(line, "p", "d")
 				: line -> JsonLines.pair(line, "t", "p");
 
-		return TapeMerge.merge(directory.resolve(fileName), lines, key);
+		synchronized (writeLock) {
+			return TapeMerge.merge(directory.resolve(fileName), lines, key);
+		}
 	}
 
 	/** True for names this tape writes, and false for everything else, path separators included. */
@@ -280,9 +293,19 @@ public final class BazaarTape {
 	 * <p>The index is rewritten rather than appended to, since it is the one file here that is not
 	 * append-only in spirit: it is small enough that rewriting it is cheaper than any alternative.
 	 *
+	 * <p>Takes the write lock for both halves. Rewriting the index truncates it, so a merge landing
+	 * in the middle of that would be written and then thrown away; deleting a day file mid-merge
+	 * loses the same way.
+	 *
 	 * @return how many raw day files were removed
 	 */
 	public int prune() throws IOException {
+		synchronized (writeLock) {
+			return pruneLocked();
+		}
+	}
+
+	private int pruneLocked() throws IOException {
 		if (!Files.isDirectory(directory)) {
 			return 0;
 		}
@@ -329,19 +352,23 @@ public final class BazaarTape {
 			return;
 		}
 
-		try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
-				StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-			for (Map.Entry<String, List<Double>> entry : midsByProduct.entrySet()) {
-				double[] mids = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
+		// Locked around the write only. The read above is the slow half and touches nothing anyone
+		// else writes.
+		synchronized (writeLock) {
+			try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
+					StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+				for (Map.Entry<String, List<Double>> entry : midsByProduct.entrySet()) {
+					double[] mids = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
 
-				writer.write(gson.toJson(new BazaarDailyStat(
-						entry.getKey(),
-						DAY.format(day),
-						mids[mids.length / 2],
-						mids[0],
-						mids[mids.length - 1],
-						mids.length)));
-				writer.newLine();
+					writer.write(gson.toJson(new BazaarDailyStat(
+							entry.getKey(),
+							DAY.format(day),
+							mids[mids.length / 2],
+							mids[0],
+							mids[mids.length - 1],
+							mids.length)));
+					writer.newLine();
+				}
 			}
 		}
 	}
