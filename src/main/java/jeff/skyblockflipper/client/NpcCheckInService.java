@@ -11,9 +11,11 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.sounds.SoundEvents;
 
 import java.util.List;
 
@@ -39,6 +41,9 @@ import java.util.List;
  * a chat component and hand it straight to the player.
  */
 public final class NpcCheckInService {
+	/** High enough to carry over Skyblock's own noise without being an alarm. */
+	private static final float CHIME_PITCH = 1.5f;
+
 	/** The book this last looked at, so an unchanged snapshot costs nothing. */
 	private static long reviewedRevision = -1L;
 
@@ -121,6 +126,26 @@ public final class NpcCheckInService {
 								.withClickEvent(new ClickEvent.RunCommand("/flip npc reprice"))));
 
 		send(message);
+		chime();
+	}
+
+	/**
+	 * A single note, because a line in chat is easy to miss.
+	 *
+	 * <p>Skyblock scrolls chat fast enough that the one message the mod sends unprompted can be gone
+	 * before it is read, which defeats the point of sending it at all. Rate-limited by the same
+	 * check-in interval as the line it accompanies, so there is exactly one per reminder.
+	 *
+	 * <p>Played as a UI sound, which puts it on the master volume: a player who has muted the game
+	 * has said what they want and should not be an exception.
+	 */
+	private static void chime() {
+		if (!SkyblockFlipperClient.config().npcRepriceSound) {
+			return;
+		}
+
+		Minecraft.getInstance().getSoundManager()
+				.play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_PLING, CHIME_PITCH));
 	}
 
 	private static String summary(NpcCheckIn.Due due) {

@@ -135,7 +135,18 @@ That is already exactly what `FillModel.estimate` takes.
 | **30 min** | **16** | **59.7M** |
 | 15 min | 32 | 67.3M |
 
-Flattens below an hour.
+Flattens below an hour. Per extra reprice round: 8.35M going from 4h to 2h, 4.08M from 2h to 1h,
+then **690k from 1h to 30 min and 475k from 30 to 15**. The knee is at an hour, and the 30-minute
+default sits just past it. The whole 15-minute-to-1-hour range is within ±11% of it, so this is not
+a setting worth agonising over — but it is also the fill horizon plans are sized with, so setting it
+shorter than you will really work quotes fills you never collect.
+
+**Re-measured 2026-08-11 on the user's own tape**, four days, the 117 products the basket draws
+from: top-bid lifts run a **median 2.09 an hour** (p25 0.89, p75 3.35, max 6.08), which lands inside
+the 1.0–6.6 range measured on three days in August. So after 30 minutes away, 58% of a basket's
+orders have been outbid, against 39% after 15 minutes and 76% after an hour. The reminder therefore
+has something to say at essentially every interval whatever it is set to: shortening it buys
+proportionally more interruptions, not more warnings that would otherwise have been missed.
 
 **No automated repricing.** The mod says which orders need bumping; the player clicks. Automating
 it is a macro and against Hypixel's rules.
