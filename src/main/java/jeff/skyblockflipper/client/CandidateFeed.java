@@ -4,6 +4,7 @@ import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcContext;
 import jeff.skyblockflipper.core.strategy.NpcFlipStrategy;
 import jeff.skyblockflipper.core.strategy.StrategyContext;
@@ -32,6 +33,9 @@ public final class CandidateFeed {
 
 	private static volatile List<FlipCandidate> cached = List.of();
 	private static long cachedRevision = -1L;
+
+	private static NpcBasket.Basket basket;
+	private static long basketRevision = -1L;
 
 	private CandidateFeed() {
 	}
@@ -93,9 +97,33 @@ public final class CandidateFeed {
 		return cached;
 	}
 
+	/**
+	 * The current NPC basket, allocated at most once per book revision.
+	 *
+	 * <p>Shared by the Basket tab and the bazaar overlay because they must not be able to disagree:
+	 * a panel telling you to post 84999.9 while the screen behind it says 85000.1 is worse than
+	 * either number on its own. Rebuilt on the same rule as the ranked list, and lazily rather than
+	 * every tick, so a player who never opens a basket never pays for one.
+	 *
+	 * <p>Call from the client thread only. Both callers are render or tick paths, which is why this
+	 * needs no lock.
+	 */
+	public static NpcBasket.Basket basket() {
+		long revision = MarketDataService.data().bazaarRevision();
+
+		if (basket == null || revision != basketRevision) {
+			basketRevision = revision;
+			basket = NpcBasket.plan(context());
+		}
+
+		return basket;
+	}
+
 	/** Forces a rebuild on the next tick, for changes the book revision cannot see. */
 	public static void invalidate() {
 		cachedRevision = -1L;
+		basketRevision = -1L;
+		basket = null;
 	}
 
 	private static void refreshIfStale() {

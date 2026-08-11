@@ -282,7 +282,15 @@ public final class Guide {
 							+ "because that fills every slot with 7-coin items and thousands of "
 							+ "inventory loads. A 98% margin on something worth 7 coins is a rounding "
 							+ "error once it is holding a slot"),
-					new Term("Post at", "The price to type into Create Buy Order - one tenth above "
+					new Term("The panel at the bazaar", "With Show basket at the bazaar on, the basket "
+						+ "is drawn beside Hypixel's own menu the whole time you are in it: name, "
+						+ "price to post, and how the units divide into orders. It re-plans itself "
+						+ "every poll and highlights the row for whichever product page you have "
+						+ "open. It stays up for a few seconds after the menu closes, which is what "
+						+ "puts it on screen while you are typing an amount or a price into the "
+						+ "sign, so nothing has to be remembered from chat. It only ever draws - "
+						+ "nothing is clicked, filled in or placed for you"),
+				new Term("Post at", "The price to type into Create Buy Order - one tenth above "
 							+ "the best bid, which is what puts you at the front of the queue. It is "
 							+ "not the same as the plan's cost per unit, which also carries the chase "
 							+ "cost you have not paid yet"),

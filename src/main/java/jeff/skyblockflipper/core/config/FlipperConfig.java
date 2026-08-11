@@ -294,6 +294,16 @@ public final class FlipperConfig {
 	/** Render the top-candidates HUD overlay. */
 	public boolean hudEnabled = true;
 
+	/**
+	 * Draw the NPC basket beside Hypixel's bazaar menu.
+	 *
+	 * <p>On by default, unlike the other opt-in features, because it writes nothing and sends
+	 * nothing: it draws the same numbers {@code /flip npc plan} prints, on the screen where they get
+	 * typed in. Chat is where the plan goes to be forgotten - it has scrolled away by the time the
+	 * price box is open, and you cannot read it and a menu at once.
+	 */
+	public boolean bazaarOverlayEnabled = true;
+
 	/** How many candidates the HUD lists. Kept short; the full list is what {@code /flip} is for. */
 	public int hudLines = 3;
 

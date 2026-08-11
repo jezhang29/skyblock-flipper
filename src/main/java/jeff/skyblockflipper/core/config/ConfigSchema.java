@@ -239,6 +239,12 @@ public final class ConfigSchema {
 			new Entry.Flag("hudEnabled", "Show HUD",
 					"Render the top-candidates overlay in the corner of the screen.",
 					c -> c.hudEnabled, (c, v) -> c.hudEnabled = v),
+			new Entry.Flag("bazaarOverlayEnabled", "Show basket at the bazaar",
+					"Draw the NPC basket beside Hypixel's bazaar menu, so the price and the order "
+							+ "size are on screen where you type them instead of in chat. It "
+							+ "re-plans itself every poll and highlights the row for whichever "
+							+ "product page you have open. Nothing is clicked or filled in for you.",
+					c -> c.bazaarOverlayEnabled, (c, v) -> c.bazaarOverlayEnabled = v),
 			new Entry.Choice("strategyFilter", "Show only",
 					"Which strategy /flip, the HUD and the flip screen's opening tab list. The "
 							+ "per-strategy commands and tabs still show whatever you ask them for.",
