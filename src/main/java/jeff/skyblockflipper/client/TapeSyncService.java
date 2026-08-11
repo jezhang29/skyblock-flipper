@@ -92,6 +92,12 @@ public final class TapeSyncService implements Closeable {
 			return describe(sync());
 		} catch (SyncException e) {
 			return "Sync failed: " + e.getMessage();
+		} catch (RuntimeException e) {
+			// The caller runs this on a thread whose only job is to report the answer, so anything
+			// thrown past it is a player watching "Syncing..." forever. A malformed tapeSyncUrl
+			// arrives here, from URI parsing rather than from the fetch.
+			SkyblockFlipper.LOGGER.warn("Tape sync failed", e);
+			return "Sync failed: " + e;
 		} finally {
 			running.set(false);
 		}
@@ -127,6 +133,12 @@ public final class TapeSyncService implements Closeable {
 			// A server that is down costs the hours it holds, not the session. The local tape is
 			// still the tape and the poller has not been touched.
 			SkyblockFlipper.LOGGER.warn("Tape sync failed: {}", e.getMessage());
+		} catch (RuntimeException e) {
+			// scheduleAtFixedRate cancels the schedule for anything thrown out of the task, so an
+			// unchecked failure here would silently end syncing for the session.
+			lastOutcome = "failed: " + e;
+			lastRun = Instant.now();
+			SkyblockFlipper.LOGGER.warn("Tape sync failed", e);
 		} finally {
 			running.set(false);
 		}
