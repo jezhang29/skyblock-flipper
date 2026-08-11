@@ -58,6 +58,7 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 		FlipHud.register();
 		FlipKeybinds.register();
 		CaptureService.register();
+		NpcCheckInService.register();
 		MarketDataService.start();
 
 		// Daemon poller threads would die with the JVM anyway; this just makes shutdown orderly

@@ -6,10 +6,13 @@ import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.track.CapturedChat;
 import jeff.skyblockflipper.core.track.CapturedMenu;
 import jeff.skyblockflipper.core.track.Settlement;
+import jeff.skyblockflipper.core.track.TradeEvent;
+import jeff.skyblockflipper.core.track.TrackedOrder;
 import jeff.skyblockflipper.core.track.TradeTracker;
 
 import net.minecraft.ChatFormatting;
@@ -17,6 +20,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -74,6 +78,43 @@ public final class TrackerService {
 		}
 
 		return tracker;
+	}
+
+	/**
+	 * The resting buy orders as {@link NpcReprice} wants them, which is every one it could identify.
+	 *
+	 * <p>Lives here rather than at either caller because {@code /flip npc reprice} and the check-in
+	 * reminder have to be looking at the same orders - a reminder about an order the command then
+	 * says nothing about is worse than no reminder.
+	 *
+	 * <p>Three kinds of tracked order are dropped. Sell offers are the other leg of a spread flip.
+	 * A price of zero means the order was seen announced in chat but never in a menu, and chat never
+	 * names the price. An order whose name matches nothing in the item catalog cannot be looked up
+	 * on the book at all.
+	 */
+	public static List<NpcReprice.Order> restingBuyOrders() {
+		TradeTracker tracker = tracker();
+		List<NpcReprice.Order> orders = new ArrayList<>();
+
+		for (TrackedOrder order : tracker.resting()) {
+			if (order.side() != TradeEvent.Side.BUY || order.unitPrice() <= 0.0d
+					|| order.remaining() <= 0L) {
+				continue;
+			}
+
+			// Enchantment-book orders carry no item data at all, so the name index is the only route
+			// from what the menu said to an id the book can be looked up by.
+			String itemId = order.itemId().isEmpty()
+					? tracker.names().idFor(order.displayName())
+					: order.itemId();
+
+			if (!itemId.isEmpty()) {
+				orders.add(new NpcReprice.Order(itemId, order.displayName(), order.unitPrice(),
+						order.remaining()));
+			}
+		}
+
+		return orders;
 	}
 
 	private static void drain() {

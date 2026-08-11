@@ -73,8 +73,10 @@ public final class Guide {
 					new Term("Optional: the whole bazaar at once", "Steps 3 to 7 work one flip at a "
 							+ "time. /flip npc plan instead fills every order slot you have with buy "
 							+ "orders under NPC prices, sized so the set fits your bankroll once. It "
-							+ "is a different loop - place them all, come back every half hour, "
-							+ "reprice, sell what filled through /trades. Read the basket section "
+							+ "is a different loop: /flip track once so the mod can see your orders, "
+							+ "place the whole basket, open Bazaar -> Manage Orders, then work it "
+							+ "with /flip npc reprice whenever the reminder says something has been "
+							+ "outbid, and sell what filled through /trades. Read the basket section "
 							+ "before running one"),
 					new Term("Optional: let it record for you", "/flip track fills the ledger from "
 							+ "the trades Hypixel announces, so steps 5 and 7 happen on their own for "
@@ -297,6 +299,17 @@ public final class Guide {
 							+ "away, 59.7M returning every 30 minutes, 73.2M for staying permanently "
 							+ "on top. It flattens below an hour, so checking in more often than "
 							+ "every 15 minutes buys very little"),
+					new Term("The reminder", "You do not have to watch the clock. With Remind me to "
+							+ "reprice on, a line appears in chat when the book has actually moved "
+							+ "past your orders - never merely because the interval elapsed - and at "
+							+ "most once per check-in interval. Click the [reprice] on the end of it "
+							+ "to run the round. Asking for a basket or a reprice yourself restarts "
+							+ "the interval, so it never arrives on top of the list it points at"),
+					new Term("What it takes to be told", "The reminder speaks when the outbid orders "
+							+ "are worth more than Minimum profit per flip put together, or when any "
+							+ "one order has been chased past the stop. A cancel is always worth "
+							+ "saying however small, because it is coins parked in a trade that can "
+							+ "no longer pay plus an order slot held by it"),
 					new Term("Cancelling costs nothing", "The NPC price cannot move, so an order the "
 							+ "book has chased past the stop is coins parked, not coins lost. Cancel "
 							+ "it, take the coins back, and put the slot on something else"),
