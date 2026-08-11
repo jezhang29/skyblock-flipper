@@ -39,7 +39,9 @@ import java.util.stream.Stream;
  * <p>Stored as JSON Lines, one file per UTC day, so appends are cheap and a corrupt line costs one
  * sale rather than the whole history.
  *
- * <p>Not thread-safe by itself; the poller owns it and writes from a single thread.
+ * <p>Reads are not synchronized - the poller owns them and streams from a single thread. Every
+ * write is, on a lock held per directory rather than per object, because the poller, the rollup
+ * and a collector sync all append here from threads of their own. See {@link TapeLock}.
  */
 public final class SalesTape {
 	private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -66,11 +68,14 @@ public final class SalesTape {
 				}
 			});
 
+	private final Object writeLock;
+
 	private long totalRecorded;
 
 	public SalesTape(Path directory, int retentionDays) {
 		this.directory = directory;
 		this.retentionDays = Math.max(1, retentionDays);
+		this.writeLock = TapeLock.forDirectory(directory);
 	}
 
 	/**
@@ -78,7 +83,13 @@ public final class SalesTape {
 	 *
 	 * @return how many were new
 	 */
-	public synchronized int record(List<EndedAuction> sales) throws IOException {
+	public int record(List<EndedAuction> sales) throws IOException {
+		synchronized (writeLock) {
+			return recordLocked(sales);
+		}
+	}
+
+	private int recordLocked(List<EndedAuction> sales) throws IOException {
 		if (sales.isEmpty()) {
 			return 0;
 		}
@@ -127,16 +138,21 @@ public final class SalesTape {
 	 * <p>Keyed on {@code auction_id}, the same field {@link #record} deduplicates polls on, so a day
 	 * both this client and the collector taped merges to the union rather than to double.
 	 *
-	 * <p>Synchronized with {@code record}: the sync thread and the poller append to the same day
-	 * file, and two buffered writers flushing into one file interleave mid-line.
+	 * <p>Synchronized with {@code record} and with the rollup: the sync thread, the poller and the
+	 * maintenance thread all append here, and two buffered writers flushing into one file
+	 * interleave mid-line.
 	 *
 	 * @param fileName one of our own file names - a {@code yyyy-MM-dd.jsonl} day or the rollup
 	 * @return how many lines were new
 	 * @throws IllegalArgumentException if the name is not one this tape would have written, which
 	 *                                  is the check that keeps a remote index from naming a path
 	 */
-	public synchronized int merge(String fileName, List<String> lines) throws IOException {
-		return TapeMerge.merge(resolve(fileName), lines, keyOf(fileName));
+	public int merge(String fileName, List<String> lines) throws IOException {
+		Path file = resolve(fileName);
+
+		synchronized (writeLock) {
+			return TapeMerge.merge(file, lines, keyOf(fileName));
+		}
 	}
 
 	/** True for names this tape writes, and false for everything else, path separators included. */
@@ -328,19 +344,23 @@ public final class SalesTape {
 			return;
 		}
 
-		try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
-				StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-			for (Map.Entry<String, List<Double>> entry : pricesBySignature.entrySet()) {
-				double[] prices = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
+		// Only the write is locked, not the decode above it: a day of blobs takes minutes to parse
+		// and the poller's own writes must not wait behind that.
+		synchronized (writeLock) {
+			try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
+					StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+				for (Map.Entry<String, List<Double>> entry : pricesBySignature.entrySet()) {
+					double[] prices = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
 
-				writer.write(gson.toJson(new SaleDailyStat(
-						entry.getKey(),
-						DAY.format(day),
-						prices[prices.length / 2],
-						prices[0],
-						prices[prices.length - 1],
-						prices.length)));
-				writer.newLine();
+					writer.write(gson.toJson(new SaleDailyStat(
+							entry.getKey(),
+							DAY.format(day),
+							prices[prices.length / 2],
+							prices[0],
+							prices[prices.length - 1],
+							prices.length)));
+					writer.newLine();
+				}
 			}
 		}
 	}
@@ -351,8 +371,17 @@ public final class SalesTape {
 	 * <p>The rollup index outlives them on purpose, so it is not touched here. It is the only thing
 	 * that survives a day ageing out, and it is three orders of magnitude smaller than what it
 	 * replaces - pruning it in step with the raw tape would throw away the entire point of it.
+	 *
+	 * <p>Takes the write lock: deleting a day file a sync is part-way through merging into would
+	 * lose whatever it had already written and leave the file to be recreated behind it.
 	 */
 	public int prune() throws IOException {
+		synchronized (writeLock) {
+			return pruneLocked();
+		}
+	}
+
+	private int pruneLocked() throws IOException {
 		if (!Files.isDirectory(directory)) {
 			return 0;
 		}
