@@ -304,7 +304,7 @@ public final class FlipScreen extends Screen {
 		if (tab.showsCandidates()) {
 			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH), data.trends());
 		} else if (tab == Tab.BASKET) {
-			basket = NpcBasket.plan(CandidateFeed.context());
+			basket = CandidateFeed.basket();
 
 			// The line that was selected is not necessarily the same trade in the new allocation,
 			// and a row index that outlives its list is how a panel ends up describing something
