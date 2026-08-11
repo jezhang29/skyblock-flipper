@@ -113,10 +113,12 @@ class LedgerTest {
 
 		assertEquals(720L, ledger.npcCoinsReceivedSince(0L));
 
-		// And a position still open has bought stock without selling any of it to anyone.
+		// A position still open counts at the price it was quoted to sell at - 10 units the plan
+		// bought to hand to the NPC at 120 apiece. Nothing observes an NPC sale, so waiting for one
+		// to settle would mean waiting forever and never spending the cap down.
 		ledger.open(npc, 6_000L);
 
-		assertEquals(720L, ledger.npcCoinsReceivedSince(0L));
+		assertEquals(720L + 1_200L, ledger.npcCoinsReceivedSince(0L));
 
 		// Yesterday's payouts are not this day's budget: the counter refills at the boundary.
 		// Positions are closed against the real clock, so a boundary after now excludes them all.

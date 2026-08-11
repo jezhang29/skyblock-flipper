@@ -247,8 +247,12 @@ public final class Ledger {
 	 * <p>Gross, not profit: the cap is spent by what the NPC hands over, so it is
 	 * {@code unitsSold * unitSellPrice} and the purchase price never enters it.
 	 *
-	 * <p>Only settled units count. An open NPC position has bought stock but not yet sold it to
-	 * anyone, and stock sitting in your inventory has spent none of the budget.
+	 * <p>An open position counts too, at the price it was quoted to sell at. Settling one requires
+	 * being told the sale happened, and selling to an NPC produces no chat line and no menu row, so
+	 * nothing observes it: counting settled units alone would read near zero for a player using
+	 * automatic tracking exactly as intended, and the cap would never bind. Stock bought under an
+	 * NPC plan is stock bought to hand to the NPC, so it is counted from the moment it is bought.
+	 * An abandoned position bought nothing beyond what it sold, and counts only that.
 	 *
 	 * <p>Reads zero for a player who flips outside the mod, which overstates what is left. That is
 	 * the known cost of deriving this instead of asking the game, which exposes no such counter.
@@ -257,7 +261,17 @@ public final class Ledger {
 		double coins = 0.0d;
 
 		for (LedgerEntry entry : entries.values()) {
-			if (entry.kind() == StrategyKind.NPC_FLIP && !entry.isOpen() && entry.closedAt() >= from) {
+			if (entry.kind() != StrategyKind.NPC_FLIP) {
+				continue;
+			}
+
+			if (entry.isOpen()) {
+				// The NPC price the plan was quoted at: net profit per unit is that price less what
+				// the unit cost, and the NPC counter is untaxed, so the two add back to it.
+				if (entry.openedAt() >= from) {
+					coins += entry.units() * (entry.unitBuyPrice() + entry.quotedUnitNet());
+				}
+			} else if (entry.closedAt() >= from) {
 				coins += entry.unitsSold() * entry.unitSellPrice();
 			}
 		}

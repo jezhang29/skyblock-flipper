@@ -239,9 +239,11 @@ public final class Guide {
 					+ "the NPC hands you, not your profit, so it is spent by the sale price. It is "
 					+ "large enough for roughly two eight-hour cycles, so it limits a day rather "
 					+ "than a plan"),
-			new Term("How much is left", "Counted from your ledger: closed NPC flips, units sold "
-					+ "times the NPC price. Flips you never recorded are invisible to it, so the "
-					+ "budget will read fuller than it is if you trade outside the mod"),
+			new Term("How much is left", "Counted from your ledger, at the NPC price: units sold on "
+					+ "closed flips, plus everything an open NPC position bought to sell on. Open "
+					+ "ones count because nothing announces a sale to an NPC, so waiting to be told "
+					+ "would mean waiting forever. Flips you never recorded are invisible to it, so "
+					+ "the budget will read fuller than it is if you trade outside the mod"),
 			new Term("Order slots", "You can rest 14 bazaar orders at once, plus 7 per Bazaar "
 					+ "Flipper level, and settings can hold NPC plans to fewer if you share a coop "
 					+ "bazaar. One order holds 71,680 units of a stackable item or 256 of an "
