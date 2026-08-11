@@ -193,7 +193,12 @@ public final class ConfigSchema {
 							+ "and a basket left alone for a cycle makes about a fifth of one that is "
 							+ "worked. Needs automatic tracking on, since that is what knows which "
 							+ "orders you have resting.",
-					c -> c.npcRepriceReminder, (c, v) -> c.npcRepriceReminder = v)));
+					c -> c.npcRepriceReminder, (c, v) -> c.npcRepriceReminder = v),
+			new Entry.Flag("npcRepriceSound", "Play a note with the reminder",
+					"Sound the reminder as well as printing it, because Skyblock scrolls chat fast "
+							+ "enough to lose a line before it is read. One note per reminder, on "
+							+ "your master volume, and nothing at all with the reminder itself off.",
+					c -> c.npcRepriceSound, (c, v) -> c.npcRepriceSound = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Scan auctions",

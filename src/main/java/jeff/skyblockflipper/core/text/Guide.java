@@ -232,6 +232,14 @@ public final class Guide {
 					+ "of the book, in settings. It is what fills get measured against: an order "
 					+ "repriced every 30 minutes collects the 30-minute rate, and one posted and "
 					+ "left alone for eight hours collects about a fifth as much"),
+			new Term("What to set it to", "30 minutes, unless you know you will do better. Measured "
+					+ "per eight-hour cycle: 54.2M repricing hourly, 59.7M every 30 minutes, 67.3M "
+					+ "every 15. The sharp part of that curve is above an hour - going from 2 hours "
+					+ "to 1 is worth 4.1M a round and going from 30 minutes to 15 is worth 475k - "
+					+ "so anywhere between 15 minutes and an hour is within about a tenth of the "
+					+ "default. Set it to what you will really do, not to what you would like to: "
+					+ "it is also what plans are sized with, so a 15 that you treat as an hour "
+					+ "quotes fills you never collect"),
 			new Term("Resting window", "How long an NPC buy order is left sitting before you would "
 					+ "rather have the coins back, in settings. Nothing is at risk while it rests - "
 					+ "the NPC's price cannot move - so this says how long capital may be tied up, "
@@ -316,7 +324,9 @@ public final class Guide {
 					new Term("The reminder", "You do not have to watch the clock. With Remind me to "
 							+ "reprice on, a line appears in chat when the book has actually moved "
 							+ "past your orders - never merely because the interval elapsed - and at "
-							+ "most once per check-in interval. Click the [reprice] on the end of it "
+							+ "most once per check-in interval. It plays a note with it unless you "
+							+ "turn that off, because Skyblock scrolls chat fast enough to lose the "
+							+ "line before it is read. Click the [reprice] on the end of it "
 							+ "to run the round. Asking for a basket or a reprice yourself restarts "
 							+ "the interval, so it never arrives on top of the list it points at"),
 					new Term("What it takes to be told", "The reminder speaks when the outbid orders "

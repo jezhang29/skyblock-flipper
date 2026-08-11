@@ -251,6 +251,16 @@ public final class FlipperConfig {
 	public int npcMaxOrderSlots = 0;
 
 	/**
+	 * Whether the reprice reminder also plays a note.
+	 *
+	 * <p>Separate from {@link #npcRepriceReminder} because they fail differently: a chat line that
+	 * scrolls past unread is the reminder not working, and a sound in a game somebody is listening
+	 * to something else over is the reminder being rude. Under the reminder's own rate limit either
+	 * way, so it is one note per check-in interval at most.
+	 */
+	public boolean npcRepriceSound = true;
+
+	/**
 	 * Whether to say in chat when resting NPC buy orders have been outbid.
 	 *
 	 * <p>The measured gap between working a basket and forgetting one is 59.7M against 11.5M per
