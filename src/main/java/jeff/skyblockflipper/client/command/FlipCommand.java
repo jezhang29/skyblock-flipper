@@ -531,14 +531,21 @@ public final class FlipCommand {
 	 * game for as long as it took, which is exactly the freeze a player would report as a crash.
 	 */
 	private static void syncTape(FabricClientCommandSource source) {
+		FlipperConfig config = SkyblockFlipperClient.config();
 		TapeSyncService sync = MarketDataService.sync();
 
-		if (sync == null) {
+		// Read from the config, not from the service: the service object exists whenever polling
+		// does, whether or not sync is configured, so a null check alone would send a sync at an
+		// empty URL and get an unreported failure back.
+		if (!config.tapeSyncEnabled || config.tapeSyncUrl.isEmpty()) {
 			source.sendError(Component.literal(
-					SkyblockFlipperClient.config().tapeSyncEnabled
-							? "Polling is off, so there is no tape to sync into."
-							: "Collector sync is off. Set tapeSyncEnabled and tapeSyncUrl, then "
-									+ "/flip reload.")
+					"Collector sync is off. Set tapeSyncEnabled and tapeSyncUrl, then /flip reload.")
+					.withStyle(ChatFormatting.RED));
+			return;
+		}
+
+		if (sync == null) {
+			source.sendError(Component.literal("Polling is off, so there is no tape to sync into.")
 					.withStyle(ChatFormatting.RED));
 			return;
 		}
