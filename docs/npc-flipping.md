@@ -153,6 +153,22 @@ judge against what actually happened:
 
 `NECROMANCER_BROOCH` quoted an 80% margin, realized **−10%**, held its edge 30.5% of the holdout.
 
+**Re-measured 2026-08-10 with the holdout rolled across the tape**, which is what
+`NpcPersistenceBacktestTest` now ships (`./gradlew test -PtapeBacktest`). One eight-hour holdout is
+one evening of one market: run again on a quiet night, no cohort went negative at all and the table
+above says nothing. Stepping the cutoff every 6 hours through 13 days of tape — 39 cutoffs, 4,692
+candidate-windows, each judged on the mean margin available to a top-of-book order across the eight
+hours after its cutoff:
+
+| persistence cohort | windows | realized / quoted | gap closed inside the window |
+| --- | --- | --- | --- |
+| ≥95% | 3,868 | 1.00 | **0.2%** |
+| 50–95% | 533 | 0.97 | 3.2% |
+| <50% | 291 | 0.82 | **17.2%** |
+
+Same finding, two orders of magnitude more evidence: a gap that has stood up is 86x less likely to
+close inside the window you are committing a slot for.
+
 **Two things to keep straight.** A naive profit sweep says the filter *costs* 17%; that sweep
 books every planned unit as filled at the quoted price and is structurally blind to the risk.
 Trust the backtest, not the sweep. And with a hard chase stop the filter is **not** protecting

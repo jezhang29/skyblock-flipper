@@ -23,6 +23,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * replace. The collector now runs on a server that does not close, so this re-asks the question
  * against real data rather than asserting an offline invariant.
  *
+ * <p><b>Answered 2026-08-10: 1,769 of 1,777 products, 99.5%.</b> Uninterrupted recording was the
+ * whole problem, and moving the collector onto a machine that stays up solved it. Fills are
+ * measured rather than assumed across essentially the whole book now, which is what the NPC
+ * check-in horizon in {@code docs/npc-flipping.md} rests on.
+ *
  * <p>Points at {@code bazaar-tape} beside the sales tape by default; override with
  * {@code -PbazaarTapeDir=...}.
  */
@@ -38,7 +43,10 @@ class FillCoverageBacktestTest {
 		BazaarTape tape = new BazaarTape(tapeDir(), Integer.MAX_VALUE);
 		PriceHistory history = new PriceHistory(Duration.ofHours(WINDOW_HOURS));
 
-		int days = (int) Math.max(1L, Math.ceilDiv(WINDOW_HOURS, 24));
+		// One day more than the window needs. Day files are named in UTC, so a 24-hour window read
+		// an hour after midnight is an hour of tape unless yesterday's file comes with it - which
+		// is how this test came to report 0 usable products off 10 samples each.
+		int days = (int) Math.max(1L, Math.ceilDiv(WINDOW_HOURS, 24)) + 1;
 		int read = tape.forEachRecent(days, history::append);
 
 		assertTrue(read > 0, "no bazaar samples on the tape at " + tapeDir()
