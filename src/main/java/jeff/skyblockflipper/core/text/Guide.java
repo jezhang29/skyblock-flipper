@@ -28,8 +28,8 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, LIQUIDITY, LEDGER,
-				SETTINGS, SYNC, LIMITS);
+		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, LIQUIDITY,
+				LEDGER, SETTINGS, SYNC, LIMITS);
 	}
 
 	/**
@@ -70,6 +70,12 @@ public final class Guide {
 							+ "two numbers: how much of the quoted profit you actually got, and how "
 							+ "much of what you planned actually filled. Those two are the only "
 							+ "evidence that any of this is worth doing"),
+					new Term("Optional: the whole bazaar at once", "Steps 3 to 7 work one flip at a "
+							+ "time. /flip npc plan instead fills every order slot you have with buy "
+							+ "orders under NPC prices, sized so the set fits your bankroll once. It "
+							+ "is a different loop - place them all, come back every half hour, "
+							+ "reprice, sell what filled through /trades. Read the basket section "
+							+ "before running one"),
 					new Term("Optional: let it record for you", "/flip track fills the ledger from "
 							+ "the trades Hypixel announces, so steps 5 and 7 happen on their own for "
 							+ "plans you took. Read the Ledger section first - it only records trades "
@@ -241,6 +247,66 @@ public final class Guide {
 					+ "bazaar. One order holds 71,680 units of a stackable item or 256 of an "
 					+ "unstackable one, so a plan is trimmed to what your slots hold rather than "
 					+ "quoting a size you cannot place")));
+
+	/**
+	 * The basket, which is a different job from reading a ranked list.
+	 *
+	 * <p>Its own section rather than more terms under NPC flipping: that section says what the trade
+	 * is, and this one is the loop you run - plan, place, come back, reprice, sell. A player who has
+	 * understood every NPC term can still place a basket wrong by treating it as a top-ten list.
+	 */
+	private static final Section BASKET = new Section("basket", "The basket, and working it",
+			List.of(
+					new Term("What it is", "Every NPC buy order worth placing right now, sized so "
+							+ "the whole set fits your order slots, your bankroll and the day's NPC "
+							+ "budget exactly once. /flip npc plan prints it and the Basket tab shows "
+							+ "it. The ranked list answers a different question: each row there is "
+							+ "sized against your whole bankroll on its own, so following the top "
+							+ "three would spend it three times"),
+					new Term("Place all of it", "A ranking is a menu to choose one thing from. A "
+							+ "basket is a list of things to do, and half of one spends the bankroll "
+							+ "on half the plan while leaving the same slots idle"),
+					new Term("Why it is ordered like that", "By profit per inventory load, not by "
+							+ "margin. Measured over a full day: ranking on profit per load made "
+							+ "76.4M, ranking on margin as a percent of the NPC price made 4.8M, "
+							+ "because that fills every slot with 7-coin items and thousands of "
+							+ "inventory loads. A 98% margin on something worth 7 coins is a rounding "
+							+ "error once it is holding a slot"),
+					new Term("Post at", "The price to type into Create Buy Order - one tenth above "
+							+ "the best bid, which is what puts you at the front of the queue. It is "
+							+ "not the same as the plan's cost per unit, which also carries the chase "
+							+ "cost you have not paid yet"),
+					new Term("What ran out", "The line under the totals names the resource that "
+							+ "stopped the basket: order slots, coins, the day's NPC budget, or none "
+							+ "of them - which means the market has nothing else clearing the "
+							+ "filters. Only the first three are things you can change"),
+					new Term("NPC coins", "How much of the day's budget this basket would collect, "
+							+ "counted at the sale price rather than at the profit. A full basket "
+							+ "sits comfortably inside it, which is why the cap limits a day rather "
+							+ "than a plan"),
+					new Term("The reprice round", "/flip npc reprice, every time you come back: which "
+							+ "orders are still on top of the book, which have been outbid and what "
+							+ "to move them to, and which have been outbid past the chase stop and "
+							+ "should be cancelled. Replayed over one eight-hour cycle of 30-minute "
+							+ "check-ins on recorded tape, 78% held, 20% wanted a move and 2% were "
+							+ "past the stop"),
+					new Term("Why coming back matters", "An order collects only while it is the best "
+							+ "bid. Measured per eight-hour cycle: 11.5M posting once and walking "
+							+ "away, 59.7M returning every 30 minutes, 73.2M for staying permanently "
+							+ "on top. It flattens below an hour, so checking in more often than "
+							+ "every 15 minutes buys very little"),
+					new Term("Cancelling costs nothing", "The NPC price cannot move, so an order the "
+							+ "book has chased past the stop is coins parked, not coins lost. Cancel "
+							+ "it, take the coins back, and put the slot on something else"),
+					new Term("It has to see your orders", "Repricing compares the price your order "
+							+ "actually rests at against the book, and the bazaar orders menu is the "
+							+ "only place that price exists - the plan's own figure includes chasing "
+							+ "it had not paid for yet. So turn on /flip track and open the orders "
+							+ "menu once, or the command has nothing to work from"),
+					new Term("Nothing is placed for you", "Every order in a basket is placed by hand, "
+							+ "and so is every reprice. The mod says what to click and never clicks "
+							+ "it: automating bazaar orders is a macro, and macros are against "
+							+ "Hypixel's rules")));
 
 	private static final Section LIQUIDITY = new Section("liquidity", "Liquidity", List.of(
 			new Term("Weekly volume", "Units that changed hands over seven days, counted separately "

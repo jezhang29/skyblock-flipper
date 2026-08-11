@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,15 +21,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class GuideTest {
 	/**
-	 * Every {@code /flip} subcommand there is.
+	 * Every {@code /flip} command there is, as a path with the arguments stripped.
 	 *
 	 * <p>Held here rather than read from the command tree, which lives in {@code client} and needs
 	 * Minecraft. It is a tripwire, not a source of truth: when it disagrees with the guide, one of
 	 * the two has been changed without the other.
 	 */
-	private static final Set<String> SUBCOMMANDS = Set.of(
-			"bazaar", "npc", "snipe", "guide", "status", "config", "take", "close", "abandon",
-			"ledger", "hud", "capture", "track", "sync", "gui", "reload");
+	private static final Set<String> COMMANDS = Set.of(
+			"", "bazaar", "npc", "npc plan", "npc reprice", "snipe", "guide", "status", "config",
+			"config edit", "take", "close", "abandon", "ledger", "ledger forget", "ledger clear",
+			"ledger clear confirm", "ledger clear unquoted", "ledger clear unquoted confirm", "hud",
+			"capture", "track", "sync", "gui", "reload");
+
+	/** The first word of each, which is all a mention buried in a sentence can be checked against. */
+	private static final Set<String> SUBCOMMANDS = COMMANDS.stream()
+			.map(path -> path.split(" ")[0])
+			.collect(Collectors.toSet());
 
 	/** {@code /flip} followed by a word, which is how the guide writes a command. */
 	private static final Pattern MENTION = Pattern.compile("/flip (<?[a-z]+)");
@@ -90,6 +98,37 @@ class GuideTest {
 		}
 
 		assertEquals(List.of(), unknown, "the guide describes commands that do not exist");
+	}
+
+	/**
+	 * The command list is checked whole, not just on its first word.
+	 *
+	 * <p>A mention inside a sentence can only be checked that far, because the word after a command
+	 * is usually prose. A heading in the command list is the command and nothing else, so a renamed
+	 * subcommand is caught here rather than leaving the guide telling players to type something the
+	 * tree no longer answers to.
+	 */
+	@Test
+	void everyCommandTheGuideListsIsSpelledTheWayTheTreeSpellsIt() {
+		Guide.Section commands = Guide.sections().stream()
+				.filter(section -> section.keyword().equals("commands"))
+				.findFirst()
+				.orElseThrow();
+
+		for (Guide.Term term : commands.terms()) {
+			assertTrue(term.name().startsWith("/flip"),
+					term.name() + " is in the command list but is not a command");
+
+			// "/flip close <id> <units> <price>" is the close command; the placeholders are the
+			// arguments, and the tree does not have a literal called <id>.
+			String path = term.name().substring("/flip".length())
+					.replaceAll("<[a-z]+>", "")
+					.trim()
+					.replaceAll(" +", " ");
+
+			assertTrue(COMMANDS.contains(path), "the guide lists " + term.name()
+					+ ", which is not a command the tree registers");
+		}
 	}
 
 	private static void collectUnknown(String text, List<String> unknown) {
