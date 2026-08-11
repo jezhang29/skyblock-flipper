@@ -1099,7 +1099,9 @@ public final class FlipScreen extends Screen {
 			return false;
 		}
 
-		int row = (int) ((mouseY - basketRowsTop) / basketRowHeight);
+		// Tested before the division, which truncates towards zero: a click one row above the first
+		// one divides to 0 as well, and the column headings sit in exactly that band.
+		int row = mouseY < basketRowsTop ? -1 : (int) ((mouseY - basketRowsTop) / basketRowHeight);
 
 		if (row >= 0 && row < basketRowCount) {
 			selectedLine = row;
@@ -1120,7 +1122,8 @@ public final class FlipScreen extends Screen {
 			return false;
 		}
 
-		int row = (int) ((mouseY - positionRowsTop) / positionRowHeight);
+		int row = mouseY < positionRowsTop ? -1
+				: (int) ((mouseY - positionRowsTop) / positionRowHeight);
 
 		if (row >= 0 && row < positionRows.size()) {
 			selectedPosition = positionRows.get(row);
