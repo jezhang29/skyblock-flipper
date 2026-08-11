@@ -84,6 +84,11 @@ test {
 		systemProperty "skyblockflipper.tapeBacktest", "true"
 		systemProperty "skyblockflipper.tapeDir",
 				project.findProperty("tapeDir") ?: "run/config/skyblock-flipper/tape"
+		// The bazaar tape is a separate directory with a separate format, and the backtests that
+		// read it were documenting an override nothing passed through. Both tapes live under the
+		// real game directory rather than run/, since there is no dev client.
+		systemProperty "skyblockflipper.bazaarTapeDir",
+				project.findProperty("bazaarTapeDir") ?: "run/config/skyblock-flipper/bazaar-tape"
 		// It prints the measurement it makes, which is the point of running it.
 		testLogging.showStandardStreams = true
 		// A week of server-collected tape is over a gigabyte of blobs, and the window backtest

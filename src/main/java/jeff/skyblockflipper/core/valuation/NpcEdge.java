@@ -71,8 +71,12 @@ public record NpcEdge(
 	 * <p>The threshold protects slots rather than coins, which is a distinction worth keeping
 	 * straight. With a hard chase stop a vanished edge does not lose money - the order simply never
 	 * fills, and an unfilled order is cancelled. What it costs is one of 21 slots for the length of a
-	 * cycle. Measured on a holdout backtest: of 161 products above 95%, <b>none</b> realized a loss,
-	 * against 2 of 22 in the 50-95% band.
+	 * cycle. Measured on a holdout rolled across 13 days of tape, 4,692 candidate-windows: the gap
+	 * closed inside the resting window in <b>0.2%</b> of windows above 95%, against 3.2% between 50%
+	 * and 95% and <b>17.2%</b> below 50%.
+	 *
+	 * <p>{@code NpcPersistenceBacktestTest} re-measures exactly that and fails if the separation
+	 * goes away, because a threshold nobody re-derives is a threshold that quietly stops being true.
 	 */
 	public boolean holdsEdge(double minPersistence) {
 		return persistence >= minPersistence;

@@ -48,8 +48,8 @@ import java.util.Optional;
  *
  * <ul>
  *   <li><b>Persistence.</b> The gap must have been there in 95% of taped samples. On a holdout
- *       backtest none of 161 products above that line realized a loss, against 2 of 22 between
- *       50% and 95%.</li>
+ *       rolled across 13 days of tape, gaps above that line closed inside the resting window in
+ *       0.2% of 3,868 windows, against 17.2% of 291 windows below 50%.</li>
  *   <li><b>Margin floor.</b> {@code npcMinMarginRatio}, default 15% of the NPC price. Measured
  *       peak of a sweep: 172.5M a day at 15% against 104.6M at 5% and 161.1M at 20%, where above
  *       20% the pool gets too small to spend the day's budget.</li>
