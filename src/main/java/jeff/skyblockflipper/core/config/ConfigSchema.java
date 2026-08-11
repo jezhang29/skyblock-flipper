@@ -185,7 +185,7 @@ public final class ConfigSchema {
 							+ "Slots are what limits this trade rather than coins, so lowering it "
 							+ "is how you leave room for spread flipping. Asking for more than your "
 							+ "Bazaar Flipper level allows changes nothing.",
-					0, 56, 1,
+					0, Fees.MAX_BAZAAR_ORDER_SLOTS, 1,
 					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v),
 			new Entry.Flag("npcRepriceReminder", "Remind me to reprice",
 					"Say so in chat when your resting NPC buy orders have been outbid, at most once "

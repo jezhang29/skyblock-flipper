@@ -427,7 +427,7 @@ public final class FlipperConfig {
 		npcRestingHours = Math.clamp(npcRestingHours, 0.5d, 24.0d);
 		// Zero means "all of them", so it stays; the ceiling is the most any Bazaar Flipper level
 		// could give. What the account actually has still wins at plan time.
-		npcMaxOrderSlots = Math.clamp(npcMaxOrderSlots, 0, 56);
+		npcMaxOrderSlots = Math.clamp(npcMaxOrderSlots, 0, Fees.MAX_BAZAAR_ORDER_SLOTS);
 		hudLines = Math.clamp(hudLines, 1, 10);
 		// A zero or negative discount would call every listing at fair value a bargain and hand
 		// the sweep tens of thousands of blobs to decode.

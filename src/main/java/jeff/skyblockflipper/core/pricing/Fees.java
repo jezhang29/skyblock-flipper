@@ -32,6 +32,16 @@ public record Fees(int bazaarFlipperLevel, boolean derpy) {
 	/** Extra slots each perk level grants, to a total of 28 at level 2. */
 	private static final int BAZAAR_ORDER_SLOTS_PER_LEVEL = 7;
 
+	/**
+	 * The most order slots any account can have: 28, at Bazaar Flipper 2.
+	 *
+	 * <p>Here rather than written out wherever a setting needs a ceiling. {@code npcMaxOrderSlots}
+	 * offered up to 56 - the old six-level formula - so the settings screen let a player ask for
+	 * twice the slots the game has, and the basket then reported a bound it could never reach.
+	 */
+	public static final int MAX_BAZAAR_ORDER_SLOTS =
+			BAZAAR_BASE_ORDER_SLOTS + BAZAAR_ORDER_SLOTS_PER_LEVEL * MAX_BAZAAR_FLIPPER_LEVEL;
+
 	private static final double BIN_FEE_UNDER_10M = 0.01d;
 	private static final double BIN_FEE_UNDER_100M = 0.02d;
 	private static final double BIN_FEE_ABOVE_100M = 0.025d;

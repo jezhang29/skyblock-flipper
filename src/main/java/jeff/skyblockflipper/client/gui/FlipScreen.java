@@ -679,7 +679,10 @@ public final class FlipScreen extends Screen {
 			cursor += font.wordWrapHeight(message, panelWidth - 2 * PANEL_PAD);
 		} else {
 			int priceWidth = font.width(Component.literal("000000.0")) + 8;
-			int unitsWidth = font.width(Component.literal("000,000")) + 8;
+			// Wide enough for the order split - "3 x 256 + 112" - rather than for the total alone.
+			// A total on its own reads as one order, and an order the bazaar will not accept is
+			// the one mistake this panel can make that costs a trip to the menu to discover.
+			int unitsWidth = font.width(Component.literal("00 x 00000 + 00000")) + 8;
 			int nameWidth = panelWidth - 2 * PANEL_PAD - priceWidth - unitsWidth;
 
 			Component priceHeading = Component.literal("post at");
@@ -687,7 +690,7 @@ public final class FlipScreen extends Screen {
 					x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(priceHeading),
 					cursor, TEXT_DIM);
 
-			Component unitsHeading = Component.literal("units");
+			Component unitsHeading = Component.literal("orders");
 			graphics.text(font, unitsHeading,
 					x + panelWidth - PANEL_PAD - font.width(unitsHeading), cursor, TEXT_DIM);
 			cursor += font.lineHeight + 2;
@@ -711,7 +714,7 @@ public final class FlipScreen extends Screen {
 						x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(price), cursor,
 						TEXT_NOTE);
 
-				Component units = Component.literal(String.valueOf(line.units()));
+				Component units = Component.literal(line.orderSplit());
 				graphics.text(font, units,
 						x + panelWidth - PANEL_PAD - font.width(units), cursor, TEXT_DIM);
 				cursor += basketRowHeight;
@@ -796,8 +799,11 @@ public final class FlipScreen extends Screen {
 
 		cursor = field(graphics, x, cursor, contentWidth, "Post",
 				String.format("%.1f as a buy order", plan.postPrice()));
-		cursor = field(graphics, x, cursor, contentWidth, "Units", line.units()
-				+ (line.orders() > 1 ? " over " + line.orders() + " orders" : " in one order"));
+		cursor = field(graphics, x, cursor, contentWidth, "Units", line.orders() > 1
+				? line.units() + " as " + line.orderSplit()
+				: line.units() + " in one order");
+		cursor = field(graphics, x, cursor, contentWidth, "Order limit",
+				plan.unitsPerOrder() + " units");
 		cursor = field(graphics, x, cursor, contentWidth, "NPC pays",
 				String.format("%.1f", plan.npcPrice()));
 		cursor = field(graphics, x, cursor, contentWidth, "Net/unit",

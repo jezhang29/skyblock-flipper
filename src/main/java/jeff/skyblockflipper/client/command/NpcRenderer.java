@@ -85,7 +85,7 @@ public final class NpcRenderer {
 						.withStyle(ChatFormatting.GREEN));
 
 		if (line.orders() > 1) {
-			text.append(Component.literal("  " + line.orders() + " orders")
+			text.append(Component.literal("  as " + line.orderSplit())
 					.withStyle(ChatFormatting.GRAY));
 		}
 
@@ -101,8 +101,11 @@ public final class NpcRenderer {
 				.withStyle(ChatFormatting.AQUA);
 
 		text.append(field("Post", String.format("%.1f as a buy order", plan.postPrice())));
-		text.append(field("Units", line.units() + " over " + line.orders()
-				+ (line.orders() == 1 ? " order" : " orders")));
+		text.append(field("Units", line.orders() == 1
+				? String.valueOf(line.units())
+				: line.units() + " as " + line.orderSplit()));
+		text.append(field("Orders", line.orders() + ", holding at most "
+				+ plan.unitsPerOrder() + " units each"));
 		text.append(field("Sell to NPC at", String.format("%.1f", plan.npcPrice())));
 		text.append(field("Net/unit", String.format("%.1f (%.0f%% margin)", plan.unitNetProfit(),
 				plan.marginRatio() * 100.0d)));

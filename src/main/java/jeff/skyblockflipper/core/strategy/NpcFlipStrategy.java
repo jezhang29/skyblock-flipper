@@ -3,6 +3,7 @@ package jeff.skyblockflipper.core.strategy;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.pricing.FillModel;
 import jeff.skyblockflipper.core.pricing.FillModel.FillEstimate;
 import jeff.skyblockflipper.core.text.Coins;
@@ -80,16 +81,6 @@ import java.util.Optional;
 public final class NpcFlipStrategy implements FlipStrategy {
 	/** How deep into the ask side to walk before giving up. */
 	private static final int MAX_LEVELS = 10;
-
-	/**
-	 * Units one bazaar order may cover: 71,680 for a stackable item, 256 for one that is not.
-	 *
-	 * <p>A plan larger than this is not impossible, it just needs more than one order, and orders
-	 * are the resource this whole strategy is competing for. For an unstackable item it binds
-	 * immediately: fourteen slots is 3,584 units, whatever the book would have filled.
-	 */
-	private static final long MAX_UNITS_PER_ORDER_STACKABLE = 71_680L;
-	private static final long MAX_UNITS_PER_ORDER_UNSTACKABLE = 256L;
 
 	/**
 	 * Below this weekly turnover on the side you are acquiring from, the item does not trade enough
@@ -178,7 +169,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				continue;
 			}
 
-			Limits limits = Limits.of(priced.entry(), priced.npcPrice(), context);
+			Limits limits = Limits.of(product, priced.entry(), priced.npcPrice(), context);
 
 			if (limits.capUnits() <= 0L) {
 				continue;
@@ -234,7 +225,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 			return Optional.empty();
 		}
 
-		Limits limits = Limits.of(entry, npcPrice, context);
+		Limits limits = Limits.of(product, entry, npcPrice, context);
 
 		if (limits.capUnits() <= 0L) {
 			return Optional.empty();
@@ -461,16 +452,21 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	 */
 	private record Limits(long unitsPerLoad, double restingHours, long capUnits,
 			long maxUnitsPerOrder, int orderSlots) {
-		static Limits of(ItemCatalog.Entry entry, double npcPrice, StrategyContext context) {
+		/**
+		 * <p>Both stacking-derived limits come from {@link Stacking}, which reads the book rather
+		 * than the catalog's {@code unstackable} flag. The flag is absent on every reforge stone
+		 * and on Jungle Heart, and believing it sized a basket line at 500 units of an item the
+		 * bazaar will not take more than 256 of in one order.
+		 */
+		static Limits of(BazaarProduct product, ItemCatalog.Entry entry, double npcPrice,
+				StrategyContext context) {
 			NpcContext npc = context.npc();
 
 			return new Limits(
-					SLOTS_PER_LOAD * entry.stackSize(),
+					SLOTS_PER_LOAD * Stacking.stackSize(entry, product),
 					npc.restingHours(),
 					npc.capUnits(npcPrice),
-					entry.unstackable()
-							? MAX_UNITS_PER_ORDER_UNSTACKABLE
-							: MAX_UNITS_PER_ORDER_STACKABLE,
+					Stacking.unitsPerOrder(entry, product),
 					npc.orderSlots(context.fees()));
 		}
 

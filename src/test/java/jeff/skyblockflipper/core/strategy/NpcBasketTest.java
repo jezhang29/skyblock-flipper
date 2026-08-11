@@ -190,6 +190,31 @@ class NpcBasketTest {
 	}
 
 	@Test
+	void aLineSaysHowItsUnitsDivideIntoOrdersYouCanPlace() {
+		// The failure this exists for: a line reading "3584" was typed into a bazaar that takes 256
+		// of the item at a time. The total alone reads as one order whatever the order count says.
+		StrategyContext context = manyItems(5, 10_000_000_000L,
+				npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED), true);
+
+		assertEquals("14 x 256", NpcBasket.plan(context).lines().getFirst().orderSplit());
+
+		// A line the bankroll cut short mid-order says so rather than rounding to whole orders.
+		NpcBasket.Line partial = new NpcBasket.Line(
+				plan("ITEM_0", 256L), 500L, 2, 500_000L, 1_000.0d);
+
+		assertEquals("256 + 244", partial.orderSplit());
+
+		// And one order's worth is just the number: there is nothing to divide.
+		assertEquals("200", new NpcBasket.Line(plan("ITEM_0", 256L), 200L, 1, 1L, 1.0d).orderSplit());
+	}
+
+	/** A plan carrying nothing but the per-order ceiling, which is all {@code orderSplit} reads. */
+	private static NpcPlan plan(String id, long unitsPerOrder) {
+		return new NpcPlan(id, id, 1000.0d, 800.0d, 800.0d, 200.0d, 100_000L, unitsPerOrder,
+				36L, 100.0d, true, null, 0.5d);
+	}
+
+	@Test
 	void neverPlansMoreCoinsOutOfTheNpcThanTheDayHasLeft() {
 		// 1M of budget at 1000 a unit is 1000 units, across every item at once.
 		StrategyContext context = manyItems(20, 10_000_000_000L,

@@ -178,6 +178,45 @@ binding resource.
 Same lesson the repo already recorded for signature terms: measure against the tail, not the
 median.
 
+### Which items stack: the items resource cannot tell you, the book can
+
+Found in play 2026-08-11. With 8 order slots the basket asked for 500 Jungle Hearts and 500 Clipped
+Wings. Both are unstackable, so the bazaar takes 256 of each in one order, and neither line could be
+placed as written.
+
+The cause is that `/v2/resources/skyblock/items` does not carry the answer. Measured against the
+live resource on 2026-08-11:
+
+- 515 of 5,646 items carry `unstackable`.
+- **0 of the 107 reforge stones carry it**, and `CLIPPED_WINGS`, `BEADY_EYES` and `MANTID_CLAW` are
+  reforge stones. `JUNGLE_HEART` does not carry it either.
+- Nothing else in the resource separates the cases. Comparing 107 items measured unstackable against
+  108 measured stackable, `material`, `tier`, `category` and `museum` all overlap; 52 of the
+  unstackable group (the `ENCHANTMENT_*` books) are not in the resource at all.
+
+The order book answers it exactly. A price level reports units and the number of orders holding
+them, so `amount / orders` is a lower bound on the largest order there, and an order over 256 units
+cannot exist on an item that does not stack. Across the whole bazaar the observed maxima land in two
+clusters with nothing between them:
+
+| observed largest order | products |
+| --- | --- |
+| exactly 256 | 107 |
+| exactly 71,680 | 101 |
+| everything else | thin books, no evidence either way |
+
+**Unproven is read as unstackable**, and that costs almost nothing. Of the 117 products an NPC
+basket could draw from that day, 108 proved stackable and the 9 that did not are all genuinely
+unstackable in game — the reforge stones, the potato books, Jungle Heart, Overflowing Trash Can.
+
+**One snapshot is enough; there is nothing to accumulate across polls.** The weakest of the 108
+proofs was an 8,786-unit order, 34x the threshold, and none fell between 256 and 4,096. An item
+cannot flicker between the two answers on a book that deep, so `Stacking` reads the current book and
+holds no state.
+
+This is the same failure shape the repo already records for shared item ids: the wrong answer is
+silent. A 500-unit line is a perfectly plausible number right up to the moment you type it in.
+
 ### Rejected: any guard on book depth
 
 The unguarded basket posts `OVERFLOWING_TRASH_CAN` at 141% of the whole resting buy side,
@@ -226,7 +265,8 @@ an upper bound; per-cycle figures are sound.
    - `npcMinMarginRatio` default `0.15`, clamp `[0.02, 0.50]`
    - `npcCheckInMinutes` default `30`, clamp `[5, 480]`
    - `npcRestingHours` default `8.0`, clamp `[0.5, 24.0]`
-   - `npcMaxOrderSlots` default `0` meaning "all of `Fees.bazaarOrderSlots()`", clamp `[0, 56]`
+   - `npcMaxOrderSlots` default `0` meaning "all of `Fees.bazaarOrderSlots()`", clamp
+     `[0, Fees.MAX_BAZAAR_ORDER_SLOTS]` — 28, not the 56 the six-level formula implied
    - retire `npcSessionHours`
 3. **Rewrite `NpcFlipStrategy`'s buy-order route** — measured fill at the check-in horizon, chase
    cost, 15% floor, delete the cap-efficiency note, drop the trips story from javadoc and risks.

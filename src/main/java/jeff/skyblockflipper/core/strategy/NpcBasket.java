@@ -65,6 +65,28 @@ public final class NpcBasket {
 		public long loads() {
 			return plan.loadsFor(units);
 		}
+
+		/**
+		 * How the units divide into orders you can actually place, e.g. {@code 3 x 256 + 112}.
+		 *
+		 * <p>Here rather than in chat and on the screen separately, for the same reason
+		 * {@link Basket#boundExplanation()} is: two copies of this drift apart. A total on its own
+		 * reads as one order, which is how a line of 500 Jungle Hearts got typed into a bazaar that
+		 * takes 256 of them at a time.
+		 */
+		public String orderSplit() {
+			long perOrder = plan.unitsPerOrder();
+
+			if (perOrder <= 0L || units <= perOrder) {
+				return String.valueOf(units);
+			}
+
+			long full = units / perOrder;
+			long remainder = units % perOrder;
+			String whole = full == 1L ? String.valueOf(perOrder) : full + " x " + perOrder;
+
+			return remainder == 0L ? whole : whole + " + " + remainder;
+		}
 	}
 
 	/**
