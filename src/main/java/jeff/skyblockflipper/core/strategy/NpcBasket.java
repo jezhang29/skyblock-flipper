@@ -171,14 +171,20 @@ public final class NpcBasket {
 				break;
 			}
 
-			long units = Math.min(plan.maxUnits(), (long) slotsLeft * plan.unitsPerOrder());
-			units = Math.min(units, affordableUnits(coinsLeft, plan.unitCost()));
-			units = Math.min(units, payoutUnits(payoutLeft, plan.npcPrice()));
+			long wanted = Math.min(plan.maxUnits(), (long) slotsLeft * plan.unitsPerOrder());
+			long affordable = affordableUnits(coinsLeft, plan.unitCost());
+			long withinCap = payoutUnits(payoutLeft, plan.npcPrice());
+			long units = Math.min(wanted, Math.min(affordable, withinCap));
+
+			// Whether the bankroll cut this line short, including when it only truncated one. A run
+			// where every line was trimmed for coins but none was priced out entirely is still a
+			// run where more coins would have bought more, and reporting it as the market's fault
+			// sends the player looking in the wrong place.
+			shortOfCoins |= affordable < wanted && affordable <= withinCap;
 
 			if (units <= 0L) {
 				// Not a reason to stop: a cheaper item further down the list may still fit in what
 				// is left, and it is the same slot either way.
-				shortOfCoins |= affordableUnits(coinsLeft, plan.unitCost()) <= 0L;
 				continue;
 			}
 

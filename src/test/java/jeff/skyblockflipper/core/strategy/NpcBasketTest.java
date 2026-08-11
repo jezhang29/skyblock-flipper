@@ -70,6 +70,14 @@ class NpcBasketTest {
 				npc);
 	}
 
+	/** The same context with a per-plan share of the bankroll, so no one plan can take all of it. */
+	private static StrategyContext capped(StrategyContext context, double maxCapitalShare) {
+		return new StrategyContext(context.bazaar(), context.catalog(), context.underpriced(),
+				context.trends(), context.fees(), context.bankroll(), context.minProfitPerFlip(),
+				context.minConfidence(), context.maxAdverseDrift(), context.fillHorizon(),
+				maxCapitalShare, context.npc());
+	}
+
 	/** {@code count} interchangeable items, deep and liquid enough that only budgets can bind. */
 	private static StrategyContext manyItems(int count, long bankroll, NpcContext npc,
 			boolean unstackable) {
@@ -210,6 +218,20 @@ class NpcBasketTest {
 				"a hundred times the bankroll should buy a much larger basket: " + large.capital()
 						+ " against " + small.capital());
 		assertTrue(large.profit() > small.profit());
+	}
+
+	@Test
+	void blamesTheBankrollWhenItOnlyTruncatedTheLastLine() {
+		// Three plans, each allowed 40% of the bankroll: the first two take theirs and the third
+		// gets the 20% that is left. Every plan is on the basket and slots and cap are untouched,
+		// so the only thing that made the last line smaller than it asked for is coins.
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		NpcBasket.Basket basket = NpcBasket.plan(capped(manyItems(3, BANKROLL, npc, false), 0.4d));
+
+		assertEquals(3, basket.lines().size());
+		assertTrue(basket.lines().getLast().units() < basket.lines().getFirst().units(),
+				"the last line should have been cut short by what was left");
+		assertEquals(NpcBasket.Bound.CAPITAL, basket.bound());
 	}
 
 	@Test
