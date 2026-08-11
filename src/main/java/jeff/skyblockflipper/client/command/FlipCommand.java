@@ -10,6 +10,7 @@ import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
+import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.TapeSyncService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
@@ -29,8 +30,6 @@ import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.track.CaptureLog;
-import jeff.skyblockflipper.core.track.TradeEvent;
-import jeff.skyblockflipper.core.track.TrackedOrder;
 import jeff.skyblockflipper.core.track.TradeTracker;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -46,7 +45,6 @@ import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Predicate;
@@ -235,6 +233,9 @@ public final class FlipCommand {
 			return;
 		}
 
+		// Placing a basket is the start of a cycle, so the next reminder is due a check-in interval
+		// from here rather than from whenever the last one happened to fire.
+		NpcCheckInService.acknowledge();
 		NpcRenderer.renderBasket(source, NpcBasket.plan(CandidateFeed.context()));
 	}
 
@@ -259,29 +260,9 @@ public final class FlipCommand {
 			return;
 		}
 
-		TradeTracker tracker = TrackerService.tracker();
-		List<NpcReprice.Order> orders = new ArrayList<>();
-
-		for (TrackedOrder order : tracker.resting()) {
-			// Sell offers are the other leg of a spread flip and have nothing to do with an NPC.
-			// A price of zero means the order was seen announced in chat but never in a menu, and
-			// chat never names the price.
-			if (order.side() != TradeEvent.Side.BUY || order.unitPrice() <= 0.0d
-					|| order.remaining() <= 0L) {
-				continue;
-			}
-
-			// Enchantment-book orders carry no item data at all, so the name index is the only route
-			// from what the menu said to an id the book can be looked up by.
-			String itemId = order.itemId().isEmpty()
-					? tracker.names().idFor(order.displayName())
-					: order.itemId();
-
-			if (!itemId.isEmpty()) {
-				orders.add(new NpcReprice.Order(itemId, order.displayName(), order.unitPrice(),
-						order.remaining()));
-			}
-		}
+		// Asking counts as having been reminded, whatever the answer turns out to be.
+		NpcCheckInService.acknowledge();
+		List<NpcReprice.Order> orders = TrackerService.restingBuyOrders();
 
 		if (orders.isEmpty()) {
 			source.sendFeedback(Chat.prefixed(Component.literal(

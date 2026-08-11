@@ -186,7 +186,14 @@ public final class ConfigSchema {
 							+ "is how you leave room for spread flipping. Asking for more than your "
 							+ "Bazaar Flipper level allows changes nothing.",
 					0, 56, 1,
-					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v)));
+					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v),
+			new Entry.Flag("npcRepriceReminder", "Remind me to reprice",
+					"Say so in chat when your resting NPC buy orders have been outbid, at most once "
+							+ "per check-in interval. An order only fills while it is the best bid, "
+							+ "and a basket left alone for a cycle makes about a fifth of one that is "
+							+ "worked. Needs automatic tracking on, since that is what knows which "
+							+ "orders you have resting.",
+					c -> c.npcRepriceReminder, (c, v) -> c.npcRepriceReminder = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Scan auctions",

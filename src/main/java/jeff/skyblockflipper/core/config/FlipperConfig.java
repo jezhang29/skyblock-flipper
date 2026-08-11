@@ -251,6 +251,19 @@ public final class FlipperConfig {
 	public int npcMaxOrderSlots = 0;
 
 	/**
+	 * Whether to say in chat when resting NPC buy orders have been outbid.
+	 *
+	 * <p>The measured gap between working a basket and forgetting one is 59.7M against 11.5M per
+	 * eight-hour cycle, and nothing else in the mod is worth interrupting a player over. It speaks
+	 * when the book has actually moved past an order rather than when the clock says so - see
+	 * {@link jeff.skyblockflipper.core.strategy.NpcCheckIn} - and at most once per
+	 * {@link #npcCheckInMinutes}.
+	 *
+	 * <p>Needs {@link #autoTrackEnabled}, which is the only thing that knows what you have resting.
+	 */
+	public boolean npcRepriceReminder = true;
+
+	/**
 	 * Which strategy the unqualified views show: {@code ALL}, or one {@code StrategyKind} name.
 	 *
 	 * <p>{@code /flip}, the HUD and the flip screen's opening tab all answered "every strategy at
