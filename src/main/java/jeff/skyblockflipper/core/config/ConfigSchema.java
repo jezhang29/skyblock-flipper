@@ -245,11 +245,20 @@ public final class ConfigSchema {
 					"Render the top-candidates overlay in the corner of the screen.",
 					c -> c.hudEnabled, (c, v) -> c.hudEnabled = v),
 			new Entry.Flag("bazaarOverlayEnabled", "Show basket at the bazaar",
-					"Draw the NPC basket beside Hypixel's bazaar menu, so the price and the order "
-							+ "size are on screen where you type them instead of in chat. It "
-							+ "re-plans itself every poll and highlights the row for whichever "
-							+ "product page you have open. Nothing is clicked or filled in for you.",
+					"Draw the NPC worklist beside Hypixel's bazaar menu, so the price and the order "
+							+ "size are on screen where you type them instead of in chat. Scroll it "
+							+ "with the wheel, click a row to copy the name, click the number to "
+							+ "copy the number. It re-plans itself every poll and highlights the "
+							+ "row for whichever product page you have open. Nothing is clicked or "
+							+ "filled in for you.",
 					c -> c.bazaarOverlayEnabled, (c, v) -> c.bazaarOverlayEnabled = v),
+			new Entry.Choice("bazaarOverlaySide", "Basket panel side",
+					"Which side of Hypixel's menu that panel sits on. AUTO takes whichever side has "
+							+ "more room, which is the widest panel and a moving target: Hypixel's "
+							+ "menus differ in width, so the panel changes sides as you cross the "
+							+ "bazaar's screens. A fixed side is always where you left it.",
+					OverlaySide.names(),
+					c -> c.overlaySide().name(), (c, v) -> c.bazaarOverlaySide = v),
 			new Entry.Choice("strategyFilter", "Show only",
 					"Which strategy /flip, the HUD and the flip screen's opening tab list. The "
 							+ "per-strategy commands and tabs still show whatever you ask them for.",

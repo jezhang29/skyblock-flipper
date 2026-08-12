@@ -228,6 +228,47 @@ holds no state.
 This is the same failure shape the repo already records for shared item ids: the wrong answer is
 silent. A 500-unit line is a perfectly plausible number right up to the moment you type it in.
 
+### The cycle is one list, not two
+
+Found in play 2026-08-11. `/flip npc plan` allocated against an empty account and
+`/flip npc reprice` reviewed the resting orders, and neither knew the other existed. A player coming
+back to a book with fourteen orders on it therefore got two answers that could not both be followed:
+place twenty-one orders, and separately, here are the fourteen you have. Every trip after the first
+one of a cycle was quoting an account the player did not have.
+
+`NpcWorklist` is the join, and the arithmetic is the point rather than the presentation:
+
+- resting orders come out of the order slots and out of the bankroll before any new line is sized;
+- an item with an order already resting on it is dropped from the basket outright, because the
+  resting order's real price lives in the orders menu and a second line at a second price is bidding
+  against your own bid;
+- what comes out is one ordered list of clicks.
+
+**The order is claims, cancels, reprices, places**, and it is not the order the coins are in. A
+claim is coins already made and it blocks the item from leaving the order at all. A cancel hands
+back the order slot every line below it is short of. A place needs coins the cancels have just
+returned.
+
+### Two states the advice had nothing to say about
+
+**Partial fills.** A buy order that fills part way announces nothing in chat - the notification only
+fires on a complete fill - so the amount is read out of the orders menu, which `TradeTracker` was
+already doing and nothing was reading. `NpcReprice.Order` now carries the filled and uncollected
+counts, and an order that filled completely is kept rather than dropped for having nothing left on
+the book, which was hiding exactly the orders that had worked.
+
+**Orders that never fill.** An order can be correctly priced, on top of the book, and simply not
+filling. Every axis the book knows about reported it healthy, forever. `npcRestingHours` already
+meant "how long capital may be tied up here" and nothing enforced it, so it now does:
+`Action.EXPIRED` past the window, whatever the book says. No new parameter, and no tuning constant -
+the refund is the whole remaining stake, so the only question is whether the slot is worth more
+elsewhere, and after a full window of nothing it is.
+
+**The age is a lower bound.** The tracker starts empty every launch, so `placedAt` is when the mod
+first saw the order rather than when Hypixel accepted it. An order placed yesterday and first seen
+in today's menu is dated today and gets another full window. Expiry therefore fires late, never
+wrongly, which is the correct direction for a rule whose failure mode is cancelling a live order.
+
 ### Rejected: any guard on book depth
 
 The unguarded basket posts `OVERFLOWING_TRASH_CAN` at 141% of the whole resting buy side,
@@ -244,6 +285,53 @@ volume).
 cancel — and the player checks in several times an hour anyway.
 `BazaarSpreadStrategy.MIN_ORDERS_PER_SIDE = 15` exists to avoid undercut spirals, which cannot
 happen when the exit price is fixed. Do not import it.
+
+### What actually limits a day, measured on the live book
+
+Re-measured 2026-08-11 against the live bazaar, the live items resource and four days of the user's
+own tape (1,193,354 samples, 759 of 767 NPC-priced products with a measured edge), running
+`NpcBasket.plan` under the user's real settings and then one lever at a time. **Every row came back
+`SLOTS`.** Nothing else binds, at any setting tried.
+
+Baseline is the config as it stood: `npcMaxOrderSlots` 14, `npcMinMarginRatio` 0.15, `bankroll` 800M,
+Bazaar Flipper 1 (21 slots on the account).
+
+| change | profit/cycle | capital | ROC | NPC payout |
+| --- | --- | --- | --- | --- |
+| baseline, 14 slots | 25.1M | 58.9M | 43% | 84M |
+| `npcMaxOrderSlots` 0, so all 21 | **32.3M** | 69.5M | 47% | 102M |
+| Bazaar Flipper 2, 28 slots | **45.1M** | 101.3M | 45% | 146M |
+| 21 slots, floor 0.10 | **44.1M** | 179.4M | 25% | 223M |
+| 28 slots, floor 0.10 | **54.4M** | 227.6M | 24% | 282M |
+
+**The bankroll is not a lever here.** At the 0.10 floor with 21 slots, 400M produces the same basket
+as 1.6B; even 200M loses only 10%. At the 0.15 floor the basket asks for 69.5M of 800M. Coins are
+not what is short.
+
+**The margin floor deserves a re-measure.** The 15% peak in the sweep above was measured *under the
+500M daily cap*, and the cap is what made a fat floor pay: at a 5% floor one cycle collects 380.7M of
+NPC payout, so two cycles a day overrun the cap and the extra slots buy nothing. At 10% one cycle
+collects 223M and two fit. So the two measurements do not contradict each other - they are the same
+trade-off at different bankrolls - but 15% is no longer obviously the peak for a player whose coins
+are idle. **This is one snapshot against a day-long simulation, so it is a candidate and not a
+setting change.**
+
+The floor sweep in full, 21 slots, 800M:
+
+| floor | profit/cycle | capital | ROC | payout |
+| --- | --- | --- | --- | --- |
+| 0.05 | 46.7M | 334.0M | 14% | 380.7M |
+| 0.075 | 43.1M | 214.5M | 20% | 257.6M |
+| 0.10 | 44.1M | 179.4M | 25% | 223.4M |
+| 0.125 | 33.9M | 91.0M | 37% | 124.9M |
+| 0.15 | 32.3M | 69.5M | 47% | 101.8M |
+| 0.20 | 31.5M | 54.5M | 58% | 86.0M |
+| 0.30 | 28.7M | 32.3M | 89% | 61.0M |
+
+The check-in interval does not appear here because a static allocation cannot see it: a basket's size
+comes from fill over the resting window, and the interval's effect is on how much of it actually
+fills, which only a simulation over repeated reprices measures. That is the 59.7M-at-30-minutes
+against 67.3M-at-15 in the table above, and it still stands.
 
 ### Expected return
 

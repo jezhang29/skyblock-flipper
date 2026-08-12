@@ -11,6 +11,7 @@ import jeff.skyblockflipper.core.ledger.LedgerStats;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcPlan;
+import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
@@ -63,6 +64,7 @@ public final class FlipScreen extends Screen {
 	private static final int TEXT_DIM = 0xFFAAAAAA;
 	private static final int TEXT_WARN = 0xFFFFAA00;
 	private static final int TEXT_GOOD = 0xFF55FF55;
+	private static final int TEXT_BAD = 0xFFFF5555;
 	private static final int TEXT_NOTE = 0xFF9FD4FF;
 	private static final int ROW_SELECTED = 0x40FFD700;
 
@@ -138,13 +140,19 @@ public final class FlipScreen extends Screen {
 	private final TextButton forgetButton = new TextButton("Forget", this::forgetSelected);
 
 	/**
-	 * The Basket tab's own copy button, in the first footer slot rather than the second.
+	 * The Basket tab's own copy buttons, in the slots Take and Copy occupy elsewhere.
 	 *
 	 * <p>A basket line cannot be taken into the ledger the way a candidate can - a plan the order
 	 * slots trimmed is not the plan that was quoted - so the slot the Take button occupies is free
 	 * here, and leaving a hole in the footer to reuse one button would look like a missing control.
+	 *
+	 * <p>Three of them because a bazaar order is three things typed on three signs: the name into
+	 * the search, the price into the price box, the size into the amount box. Copying the name and
+	 * then retyping 84999.9 by hand is where the digit gets dropped.
 	 */
-	private final TextButton basketCopyButton = new TextButton("Copy name", this::copySelectedLine);
+	private final TextButton basketCopyButton = new TextButton("Copy name", this::copySelectedName);
+	private final TextButton basketPriceButton = new TextButton("Copy price", this::copySelectedPrice);
+	private final TextButton basketUnitsButton = new TextButton("Copy size", this::copySelectedUnits);
 
 	/** Only laid out and drawn when Cloth Config is installed - see {@link Settings}. */
 	private final TextButton settingsButton = new TextButton("Settings", this::openSettings);
@@ -173,15 +181,15 @@ public final class FlipScreen extends Screen {
 	private int positionRowHeight = 1;
 
 	/**
-	 * The basket as it was last allocated, rebuilt on the same revision rule as the table.
+	 * The worklist as it was last assembled, rebuilt on the same revision rule as the table.
 	 *
-	 * <p>Never allocated in a render pass: planning one walks every product on the book, and the
+	 * <p>Never assembled in a render pass: planning one walks every product on the book, and the
 	 * screen draws sixty times a second. Null until the Basket tab has been opened once, because a
 	 * player working the auction house should not pay for an allocation they are not looking at.
 	 */
-	private NpcBasket.Basket basket;
+	private NpcWorklist.Worklist worklist;
 
-	/** Basket tab: the selected row, as an index into {@link NpcBasket.Basket#lines()}. */
+	/** Basket tab: the selected row, as an index into {@link NpcWorklist.Worklist#tasks()}. */
 	private int selectedLine = -1;
 	private int basketRowsTop;
 	private int basketRowHeight = 1;
@@ -211,8 +219,13 @@ public final class FlipScreen extends Screen {
 		copyButton.setBounds(MARGIN + takeWidth + 4, buttonY, copyWidth, BUTTON_HEIGHT);
 		int abandonWidth = abandonButton.preferredWidth(font);
 		abandonButton.setBounds(MARGIN, buttonY, abandonWidth, BUTTON_HEIGHT);
-		basketCopyButton.setBounds(MARGIN, buttonY, basketCopyButton.preferredWidth(font),
+		int basketCopyWidth = basketCopyButton.preferredWidth(font);
+		int basketPriceWidth = basketPriceButton.preferredWidth(font);
+		basketCopyButton.setBounds(MARGIN, buttonY, basketCopyWidth, BUTTON_HEIGHT);
+		basketPriceButton.setBounds(MARGIN + basketCopyWidth + 4, buttonY, basketPriceWidth,
 				BUTTON_HEIGHT);
+		basketUnitsButton.setBounds(MARGIN + basketCopyWidth + basketPriceWidth + 8, buttonY,
+				basketUnitsButton.preferredWidth(font), BUTTON_HEIGHT);
 		forgetButton.setBounds(MARGIN + abandonWidth + 4, buttonY,
 				forgetButton.preferredWidth(font), BUTTON_HEIGHT);
 
@@ -304,12 +317,12 @@ public final class FlipScreen extends Screen {
 		if (tab.showsCandidates()) {
 			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH), data.trends());
 		} else if (tab == Tab.BASKET) {
-			basket = CandidateFeed.basket();
+			worklist = CandidateFeed.worklist();
 
 			// The line that was selected is not necessarily the same trade in the new allocation,
 			// and a row index that outlives its list is how a panel ends up describing something
 			// that is no longer on screen.
-			if (selectedLine >= basket.lines().size()) {
+			if (selectedLine >= worklist.tasks().size()) {
 				selectedLine = -1;
 			}
 		}
@@ -648,12 +661,12 @@ public final class FlipScreen extends Screen {
 	}
 
 	/**
-	 * Every order to place, in the order to place them.
+	 * Everything to do at the bazaar, in the order to do it.
 	 *
-	 * <p>Not a ranking, and the difference is the whole point of the panel: each row is sized against
-	 * what the rows above it already took, so following all of them spends the bankroll and the order
-	 * slots exactly once. The candidate tabs cannot show this, because a ranked list has no idea what
-	 * the row above it committed.
+	 * <p>Not a ranking, and the difference is the whole point of the panel: the orders already on
+	 * the book come first, and each new line is sized against what the rows above it took, so
+	 * following all of them spends the bankroll and the order slots exactly once. The candidate tabs
+	 * cannot show this, because a ranked list has no idea what the row above it committed.
 	 */
 	private void renderBasket(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
 			int panelHeight) {
@@ -661,11 +674,11 @@ public final class FlipScreen extends Screen {
 		int cursor = startY;
 
 		basketRowHeight = font.lineHeight + 2;
-		basketRowCount = basket == null ? 0 : basket.lines().size();
+		basketRowCount = worklist == null ? 0 : worklist.tasks().size();
 
 		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
 
-		graphics.text(font, Component.literal("Orders to place").withStyle(ChatFormatting.GOLD),
+		graphics.text(font, Component.literal("Do these").withStyle(ChatFormatting.GOLD),
 				x + PANEL_PAD, cursor, TEXT);
 		cursor += font.lineHeight + 4;
 
@@ -685,12 +698,12 @@ public final class FlipScreen extends Screen {
 			int unitsWidth = font.width(Component.literal("00 x 00000 + 00000")) + 8;
 			int nameWidth = panelWidth - 2 * PANEL_PAD - priceWidth - unitsWidth;
 
-			Component priceHeading = Component.literal("post at");
+			Component priceHeading = Component.literal("at");
 			graphics.text(font, priceHeading,
 					x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(priceHeading),
 					cursor, TEXT_DIM);
 
-			Component unitsHeading = Component.literal("orders");
+			Component unitsHeading = Component.literal("units");
 			graphics.text(font, unitsHeading,
 					x + panelWidth - PANEL_PAD - font.width(unitsHeading), cursor, TEXT_DIM);
 			cursor += font.lineHeight + 2;
@@ -698,23 +711,27 @@ public final class FlipScreen extends Screen {
 			basketRowsTop = cursor;
 
 			for (int i = 0; i < basketRowCount; i++) {
-				NpcBasket.Line line = basket.lines().get(i);
+				NpcWorklist.Task task = worklist.tasks().get(i);
 
 				if (i == selectedLine) {
 					graphics.fill(x + 1, cursor - 1, x + panelWidth - 1,
 							cursor + basketRowHeight - 1, ROW_SELECTED);
 				}
 
-				graphics.text(font, Component.literal(
-								Labels.fit(font, line.plan().displayName(), nameWidth)),
-						x + PANEL_PAD, cursor, TEXT);
+				// The verb is in the name column rather than a column of its own: at this width a
+				// fourth column costs more than it explains, and "cancel Clipped Wings" reads.
+				graphics.text(font, Component.literal(Labels.fit(font,
+								task.verb() + " " + task.displayName(), nameWidth)),
+						x + PANEL_PAD, cursor, taskColour(task.kind()));
 
-				Component price = Component.literal(String.format("%.1f", line.plan().postPrice()));
-				graphics.text(font, price,
-						x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(price), cursor,
-						TEXT_NOTE);
+				if (task.hasPrice()) {
+					Component price = Component.literal(String.format("%.1f", task.price()));
+					graphics.text(font, price,
+							x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(price), cursor,
+							TEXT_NOTE);
+				}
 
-				Component units = Component.literal(line.orderSplit());
+				Component units = Component.literal(task.orderSplit());
 				graphics.text(font, units,
 						x + panelWidth - PANEL_PAD - font.width(units), cursor, TEXT_DIM);
 				cursor += basketRowHeight;
@@ -725,6 +742,17 @@ public final class FlipScreen extends Screen {
 
 		sideScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
 		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	/** One colour per kind of click, so the shape of a trip is readable before it is read. */
+	private static int taskColour(NpcWorklist.Kind kind) {
+		return switch (kind) {
+			case CLAIM -> TEXT_GOOD;
+			case CANCEL -> TEXT_BAD;
+			case REPRICE -> TEXT_WARN;
+			case PLACE -> TEXT;
+			case HOLD -> TEXT_DIM;
+		};
 	}
 
 	/**
@@ -746,16 +774,21 @@ public final class FlipScreen extends Screen {
 				textX, cursor, TEXT);
 		cursor += font.lineHeight + 4;
 
-		if (basket == null || basket.isEmpty()) {
+		NpcBasket.Basket basket = worklist == null ? null : worklist.basket();
+
+		if (basket == null) {
 			Component message = Component.literal("Nothing to allocate.");
 			graphics.textWithWordWrap(font, message, textX, cursor, contentWidth, TEXT_DIM);
 			cursor += font.wordWrapHeight(message, contentWidth);
 		} else {
+			// Free slots rather than used ones, because that is the number a player acts on: it is
+			// what the next basket has to work with, and it already has the resting orders out of it.
 			cursor = field(graphics, textX, cursor, contentWidth, "Slots",
-					basket.slotsUsed() + " of " + basket.slotsAvailable());
+					basket.held().orders() + " resting, " + basket.slotsUsed() + " to place, "
+							+ basket.slotsAvailable() + " in all");
 			cursor = field(graphics, textX, cursor, contentWidth, "Capital",
 					String.format("%s of %s (%.0f%%)", Coins.format(basket.capital()),
-							Coins.format(basket.bankroll()), basket.capitalShare() * 100.0d));
+							Coins.format(basket.bankrollFree()), basket.capitalShare() * 100.0d));
 			cursor = field(graphics, textX, cursor, contentWidth, "Profit",
 					String.format("%s over %.0fh", Coins.format(basket.profit()),
 							basket.restingHours()));
@@ -782,35 +815,79 @@ public final class FlipScreen extends Screen {
 		detailScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
 	}
 
-	/** @return the y the content finished at */
+	/**
+	 * What the selected click is and why.
+	 *
+	 * <p>Two shapes, because the rows come from two places. A new order carries a whole plan - fill
+	 * rate, measured edge, confidence - and an order already on the book carries none of that and
+	 * carries instead the one fact a plan cannot have: the price it actually got.
+	 *
+	 * @return the y the content finished at
+	 */
 	private int renderBasketLine(GuiGraphicsExtractor graphics, int x, int y, int contentWidth) {
-		if (selectedLine < 0 || selectedLine >= basket.lines().size()) {
+		if (selectedLine < 0 || selectedLine >= worklist.tasks().size()) {
 			Component message = Component.literal("Select a row for what to type into the bazaar.");
 			graphics.textWithWordWrap(font, message, x, y, contentWidth, TEXT_DIM);
 			return y + font.wordWrapHeight(message, contentWidth);
 		}
 
-		NpcBasket.Line line = basket.lines().get(selectedLine);
-		NpcPlan plan = line.plan();
+		NpcWorklist.Task task = worklist.tasks().get(selectedLine);
 
-		Component name = Component.literal(plan.displayName());
+		Component name = Component.literal(task.verb() + " " + task.displayName());
 		graphics.textWithWordWrap(font, name, x, y, contentWidth, 0xFF55FFFF);
 		int cursor = y + font.wordWrapHeight(name, contentWidth) + 3;
 
-		cursor = field(graphics, x, cursor, contentWidth, "Post",
-				String.format("%.1f as a buy order", plan.postPrice()));
-		cursor = field(graphics, x, cursor, contentWidth, "Units", line.orders() > 1
-				? line.units() + " as " + line.orderSplit()
-				: line.units() + " in one order");
-		cursor = field(graphics, x, cursor, contentWidth, "Order limit",
-				plan.unitsPerOrder() + " units");
-		cursor = field(graphics, x, cursor, contentWidth, "NPC pays",
+		Component reason = Component.literal(task.reason());
+		graphics.textWithWordWrap(font, reason, x, cursor, contentWidth, TEXT_DIM);
+		cursor += font.wordWrapHeight(reason, contentWidth) + 4;
+
+		if (task.hasPrice()) {
+			cursor = field(graphics, x, cursor, contentWidth, "Price",
+					String.format("%.1f", task.price()));
+		}
+
+		cursor = field(graphics, x, cursor, contentWidth, "Units",
+				task.orderSplit().equals(String.valueOf(task.units()))
+						? String.valueOf(task.units())
+						: task.units() + " as " + task.orderSplit());
+
+		if (task.profit() > 0.0d) {
+			cursor = field(graphics, x, cursor, contentWidth,
+					task.kind() == NpcWorklist.Kind.CLAIM ? "Already made" : "Worth",
+					Coins.format(task.profit()));
+		}
+
+		if (task.capital() > 0L) {
+			cursor = field(graphics, x, cursor, contentWidth,
+					task.kind() == NpcWorklist.Kind.CANCEL ? "Frees" : "Ties up",
+					Coins.format(task.capital()));
+		}
+
+		return task.kind() == NpcWorklist.Kind.PLACE
+				? renderPlanDetail(graphics, x, cursor, contentWidth, task.itemId())
+				: cursor;
+	}
+
+	/** The plan behind a new order, which only exists for a row the basket produced. */
+	private int renderPlanDetail(GuiGraphicsExtractor graphics, int x, int y, int contentWidth,
+			String itemId) {
+		NpcPlan plan = worklist.basket().lines().stream()
+				.map(NpcBasket.Line::plan)
+				.filter(candidate -> candidate.itemId().equals(itemId))
+				.findFirst()
+				.orElse(null);
+
+		if (plan == null) {
+			return y;
+		}
+
+		int cursor = field(graphics, x, y, contentWidth, "NPC pays",
 				String.format("%.1f", plan.npcPrice()));
 		cursor = field(graphics, x, cursor, contentWidth, "Net/unit",
 				String.format("%.1f (%.0f%% margin)", plan.unitNetProfit(),
 						plan.marginRatio() * 100.0d));
-		cursor = field(graphics, x, cursor, contentWidth, "Capital", Coins.format(line.capital()));
-		cursor = field(graphics, x, cursor, contentWidth, "Profit", Coins.format(line.profit()));
+		cursor = field(graphics, x, cursor, contentWidth, "Order limit",
+				plan.unitsPerOrder() + " units");
 
 		if (plan.chaseCost() > 0.0d) {
 			cursor = field(graphics, x, cursor, contentWidth, "Chase",
@@ -874,6 +951,8 @@ public final class FlipScreen extends Screen {
 			forgetButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
 		} else if (tab == Tab.BASKET) {
 			basketCopyButton.render(graphics, font, mouseX, mouseY, selectedLine >= 0);
+			basketPriceButton.render(graphics, font, mouseX, mouseY, selectedHasPrice());
+			basketUnitsButton.render(graphics, font, mouseX, mouseY, selectedLine >= 0);
 		}
 
 		closeButton.render(graphics, font, mouseX, mouseY, true);
@@ -905,7 +984,7 @@ public final class FlipScreen extends Screen {
 				FlipKeybinds.boundKeyName() + " or Esc closes.",
 				switch (tab) {
 					case LEDGER -> "Abandon keeps a position in the numbers, Forget deletes it.";
-					case BASKET -> "Place them all, then run /flip npc reprice on the way back.";
+					case BASKET -> "Work the list top down: claims, cancels, reprices, then places.";
 					default -> "Click a column to sort, a row to select.";
 				},
 				"Guide tab defines every column.");
@@ -1037,17 +1116,78 @@ public final class FlipScreen extends Screen {
 		notice = "Copied \"" + candidate.displayName() + "\" - paste it into the bazaar search.";
 	}
 
-	private void copySelectedLine() {
-		if (basket == null || selectedLine < 0 || selectedLine >= basket.lines().size()) {
+	/** The selected task, or null when the selection points at nothing. */
+	private NpcWorklist.Task selectedTask() {
+		return worklist == null || selectedLine < 0 || selectedLine >= worklist.tasks().size()
+				? null
+				: worklist.tasks().get(selectedLine);
+	}
+
+	private boolean selectedHasPrice() {
+		NpcWorklist.Task task = selectedTask();
+		return task != null && task.hasPrice();
+	}
+
+	private void copySelectedName() {
+		NpcWorklist.Task task = selectedTask();
+
+		if (task == null) {
 			notice = "Select a row first.";
 			return;
 		}
 
-		NpcPlan plan = basket.lines().get(selectedLine).plan();
+		minecraft.keyboardHandler.setClipboard(task.displayName());
+		notice = "Copied \"" + task.displayName() + "\" - paste it into the bazaar search.";
+	}
 
-		minecraft.keyboardHandler.setClipboard(plan.displayName());
-		notice = String.format("Copied \"%s\" - buy order at %.1f for %d units.", plan.displayName(),
-				plan.postPrice(), basket.lines().get(selectedLine).units());
+	/**
+	 * The price, written out in full, because it is typed into a box character by character.
+	 *
+	 * <p>The one number here that cannot be approximated: 84999.9 retyped as 85000 is an order at a
+	 * different price, and on the wrong side of a book that is already at 85000.
+	 */
+	private void copySelectedPrice() {
+		NpcWorklist.Task task = selectedTask();
+
+		if (task == null || !task.hasPrice()) {
+			notice = "That row has no price to type - it is a button in the orders menu.";
+			return;
+		}
+
+		String price = String.format("%.1f", task.price());
+		minecraft.keyboardHandler.setClipboard(price);
+		notice = "Copied " + price + " - paste it into the price box.";
+	}
+
+	/**
+	 * The units of one order, never the line total.
+	 *
+	 * <p>A line of 500 unstackable units is three orders, and typing 500 into the amount box is the
+	 * mistake {@code orderSplit} exists to prevent, so what goes on the clipboard is what one order
+	 * takes.
+	 */
+	private void copySelectedUnits() {
+		NpcWorklist.Task task = selectedTask();
+
+		if (task == null) {
+			notice = "Select a row first.";
+			return;
+		}
+
+		String units = String.valueOf(unitsPerOrder(task));
+		minecraft.keyboardHandler.setClipboard(units);
+		notice = units.equals(String.valueOf(task.units()))
+				? "Copied " + units + " - paste it into the amount box."
+				: "Copied " + units + " - one order of " + task.orderSplit() + ".";
+	}
+
+	/** Units one order of this task holds, which is the whole line unless the bazaar splits it. */
+	private long unitsPerOrder(NpcWorklist.Task task) {
+		return worklist.basket().lines().stream()
+				.filter(line -> line.plan().itemId().equals(task.itemId()))
+				.mapToLong(line -> Math.min(task.units(), line.plan().unitsPerOrder()))
+				.findFirst()
+				.orElse(task.units());
 	}
 
 	@Override
@@ -1072,7 +1212,9 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
-		if (tab == Tab.BASKET && basketCopyButton.clicked(mouseX, mouseY)) {
+		if (tab == Tab.BASKET && (basketCopyButton.clicked(mouseX, mouseY)
+				|| basketPriceButton.clicked(mouseX, mouseY)
+				|| basketUnitsButton.clicked(mouseX, mouseY))) {
 			return true;
 		}
 

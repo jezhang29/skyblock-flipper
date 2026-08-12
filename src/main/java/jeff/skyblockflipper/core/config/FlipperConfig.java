@@ -314,6 +314,16 @@ public final class FlipperConfig {
 	 */
 	public boolean bazaarOverlayEnabled = true;
 
+	/**
+	 * Which side of Hypixel's menu the bazaar panel sits on: LEFT, RIGHT or AUTO.
+	 *
+	 * <p>Fixed by default. AUTO takes whichever side has more room, which is the widest panel and
+	 * the wrong answer in play: Hypixel's menus are not all the same width, so the panel moves from
+	 * one edge to the other as you cross the bazaar's own screens and has to be found again each
+	 * time.
+	 */
+	public String bazaarOverlaySide = OverlaySide.LEFT.name();
+
 	/** How many candidates the HUD lists. Kept short; the full list is what {@code /flip} is for. */
 	public int hudLines = 3;
 
@@ -383,6 +393,11 @@ public final class FlipperConfig {
 		try (var writer = Files.newBufferedWriter(file)) {
 			GSON.toJson(this, writer);
 		}
+	}
+
+	/** Resolved once per frame by the bazaar panel, for the same reason {@link #anchor()} is. */
+	public OverlaySide overlaySide() {
+		return OverlaySide.parse(bazaarOverlaySide);
 	}
 
 	/** Resolved once per frame by the HUD, so parsing stays out of the render path's way. */
@@ -479,6 +494,7 @@ public final class FlipperConfig {
 		hudMarginX = Math.clamp(hudMarginX, 0, 400);
 		hudMarginY = Math.clamp(hudMarginY, 0, 400);
 		hudAnchor = anchor().name();
+		bazaarOverlaySide = overlaySide().name();
 		// An unknown name would silently mean "every strategy", which looks like the filter
 		// being ignored rather than being misspelled.
 		StrategyKind kind = filteredKind();

@@ -225,8 +225,11 @@ public final class FlipCommand {
 	}
 
 	/**
-	 * The NPC basket: every order slot and the bankroll allocated once, rather than a ranked list
-	 * where each row is sized against the whole bankroll on its own.
+	 * The whole trip: what to do with the orders already resting, then the new ones to place.
+	 *
+	 * <p>Every order slot and the bankroll allocated once, rather than a ranked list where each row
+	 * is sized against the whole bankroll on its own - and, since the worklist, allocated over what
+	 * is actually free rather than over an account with nothing in it.
 	 */
 	private static void showBasket(FabricClientCommandSource source) {
 		if (!marketReady(source)) {
@@ -236,7 +239,14 @@ public final class FlipCommand {
 		// Placing a basket is the start of a cycle, so the next reminder is due a check-in interval
 		// from here rather than from whenever the last one happened to fire.
 		NpcCheckInService.acknowledge();
-		NpcRenderer.renderBasket(source, NpcBasket.plan(CandidateFeed.context()));
+		NpcRenderer.renderWorklist(source, CandidateFeed.worklist());
+
+		if (!TrackerService.enabled()) {
+			source.sendFeedback(Component.literal(
+							"  Automatic tracking is off, so this assumes every order slot is empty. "
+									+ "/flip track makes it size around what you already have resting.")
+					.withStyle(ChatFormatting.YELLOW));
+		}
 	}
 
 	/**
@@ -262,16 +272,15 @@ public final class FlipCommand {
 
 		// Asking counts as having been reminded, whatever the answer turns out to be.
 		NpcCheckInService.acknowledge();
-		List<NpcReprice.Order> orders = TrackerService.restingBuyOrders();
 
-		if (orders.isEmpty()) {
+		if (TrackerService.restingBuyOrders().isEmpty()) {
 			source.sendFeedback(Chat.prefixed(Component.literal(
 					"No resting buy orders are known yet. Open Bazaar -> Manage Orders and run this "
 							+ "again.").withStyle(ChatFormatting.YELLOW)));
 			return;
 		}
 
-		NpcRenderer.renderReprice(source, NpcReprice.review(orders, CandidateFeed.context()));
+		NpcRenderer.renderResting(source, CandidateFeed.worklist());
 	}
 
 	/** Whether there is a book to answer with, with the reason there is not if there is not. */
