@@ -124,6 +124,37 @@ class OrderMenuParserTest {
 		assertFalse(OrderMenuParser.isOrdersMenu(null));
 	}
 
+	@Test
+	void readsAClaimTotalThatCameOutFractional() {
+		// Five units at 1,619.2 pays 8,004.9, and the menu prints the decimal. An integer-only
+		// pattern reads that order as having nothing to claim, which is the same wrong answer as
+		// the order having been claimed already.
+		OrderSnapshot order = find("ENCHANTED_SLIME_BALL", TradeEvent.Side.SELL);
+
+		assertEquals(8_004.9d, order.claimCoins());
+		assertTrue(order.hasSomethingToClaim());
+	}
+
+	@Test
+	void separatesAFillFromAFillNobodyCollected() {
+		// The 1,344x offer appears twice at the same 903/1.3k: once with "You have 34,107 coins to
+		// claim!" and once, after the claim, without it. Filled: does not move between them, so the
+		// claim line is the whole difference and reading only Filled: reports 903 units waiting on
+		// an order that has already paid out.
+		List<OrderSnapshot> partials = allOrders().stream()
+				.filter(o -> o.isPartial() && o.total() == 1_344L)
+				.toList();
+
+		assertTrue(partials.stream().anyMatch(o -> o.uncollected().isEmpty()));
+		assertTrue(partials.stream().anyMatch(o -> o.uncollected().orElse(-1L) == 0L));
+	}
+
+	@Test
+	void countsWhatABuyOrderIsHoldingInUnits() {
+		// A buy order names its items, so what is uncollected is stated rather than derived.
+		assertEquals(8L, find("ENCHANTED_ENDSTONE", TradeEvent.Side.BUY).uncollected().orElseThrow());
+	}
+
 	private static OrderSnapshot onlyPartial() {
 		return allOrders().stream().filter(OrderSnapshot::isPartial).findFirst().orElseThrow();
 	}

@@ -37,7 +37,12 @@ public final class OrderMenuParser {
 	/** {@code By: [MVP+] Bee__Bot}, and the rank tag is optional because not every player has one. */
 	private static final Pattern OWNER = Pattern.compile("^By: (?:\\[[^]]+] )?(\\S+)$");
 
-	private static final Pattern CLAIM_COINS = Pattern.compile("^You have ([\\d,]+) coins to claim!$");
+	/**
+	 * {@code You have 24,998 coins to claim!}, and also {@code You have 8,004.9 coins to claim!} - a
+	 * sell of five units at 1,619.2 pays a fractional total, and the decimal is printed.
+	 */
+	private static final Pattern CLAIM_COINS =
+			Pattern.compile("^You have ([\\d,]+(?:\\.\\d+)?) coins to claim!$");
 
 	private static final Pattern CLAIM_ITEMS = Pattern.compile("^You have ([\\d,]+) items? to claim!$");
 
