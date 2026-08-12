@@ -333,6 +333,63 @@ comes from fill over the resting window, and the interval's effect is on how muc
 fills, which only a simulation over repeated reprices measures. That is the 59.7M-at-30-minutes
 against 67.3M-at-15 in the table above, and it still stands.
 
+### The margin floor, settled: it depends on the bankroll, and 0.15 is right at neither end
+
+Measured 2026-08-11 by `NpcSettingsSweepTest` (`./gradlew test -PtapeBacktest`), which is the
+day-long version the re-measure above asked for: three 8-hour cycles against the live book, each
+basket's NPC payout charged against the 500M cap, floors and slot counts swept one at a time. 767
+products with a measured edge, 2,124 on the book, Bazaar Flipper 1.
+
+At the user's live settings — 14 slots, 800M bankroll:
+
+| floor | profit/day | capital | ROC | payout | cap spent |
+| --- | --- | --- | --- | --- | --- |
+| 0.05 | 48.3M | 451.7M | 11% | 500.0M | yes |
+| 0.075 | 73.5M | 426.5M | 17% | 500.0M | yes |
+| 0.09–0.105 | 81.6M | 418.4M | 19% | 500.0M | yes |
+| **0.11** | **86.1M** | 413.9M | 21% | 500.0M | yes |
+| 0.115 | 62.4M | 188.0M | 33% | 250.4M | no |
+| 0.125 | 66.6M | 178.2M | 37% | 244.8M | no |
+| **0.15 (shipped)** | **66.1M** | 133.4M | 50% | 199.5M | no |
+| 0.30 | 54.1M | 75.9M | 71% | 130.0M | no |
+
+**The rule the shape of that curve gives is: the best floor is the highest one that still spends the
+whole daily cap.** Everything at or below 0.11 exhausts the 500M; everything above it leaves 250M to
+300M of cap unspent, and profit falls by exactly that unspent share. Below 0.09 the cap gets spent on
+items whose margin is too thin to pay for it.
+
+**The 0.115 cliff is one item.** `ENCHANTED_RAW_SALMON` sits at an 11.3% margin and carries 92.0M of
+the first basket's 167.4M payout and 10.4M of its 27.7M profit. A floor of 0.11 is 0.003 from
+dropping it; 0.10 is 0.013 from it and sits on a flat stretch worth 81.6M. **Prefer 0.10 to 0.11**:
+the extra 4.5M/day is not worth a setting that one item's drift turns into a 24M/day loss.
+
+Sweeping the bankroll with the floor, at 14 slots, shows why the earlier two measurements disagreed:
+
+| bankroll | best floor | profit/day | vs 0.15 |
+| --- | --- | --- | --- |
+| 25M | 0.30 | 52.9M | +69% |
+| 100M | 0.12 | 66.6M | +1% |
+| 250M and above | 0.11 | 86.1M | +30% |
+
+**A thin floor pays only while the daily cap is what you run out of.** With 25M in the purse the
+capital runs out long before the cap, so the highest return per coin wins and 0.30 beats 0.15 by
+69%. Past roughly 250M the cap binds instead and the fat floor leaves half of it unspent. The
+shipped 0.15 is optimal at neither end — it is within 1% of the peak only in the narrow band around
+100M — which is an argument for making the floor a function of the bankroll rather than for moving
+the constant. **Not done: that is a design change, and it is the one open question here.**
+
+The extra candidates a 0.10 floor admits are exactly as durable as the fat ones, so this costs
+nothing in slot risk. Re-running the persistence holdout at the lower floor
+(`-PnpcMinMarginRatio=0.10`) adds 530 candidate-windows to the ≥95% cohort and moves neither number:
+
+| floor candidates drawn at | ≥95% windows | realized/quoted | gap closed |
+| --- | --- | --- | --- |
+| 0.15 | 4,056 | 1.00 | 0.3% |
+| 0.10 | 4,586 | 1.00 | 0.3% |
+
+Slots are still the other lever and still the bigger one: at floor 0.10, going from 14 slots to all
+21 is 81.6M/day against 93.9M. That is the coop's slots, so it is not a free change.
+
 ### Expected return
 
 ~86M coins per 8-hour cycle at 30-minute repricing, cap-bound at roughly two cycles a day. The
