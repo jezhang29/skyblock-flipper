@@ -89,14 +89,15 @@ public final class Guide {
 					+ "to one strategy"),
 			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, "
 					+ "your ledger and this guide. The keybind opens the same thing"),
-			new Term("/flip npc plan", "Every NPC buy order to place right now, sized so that the "
-					+ "whole set fits your order slots and your bankroll once. The ranked list sizes "
-					+ "each row on its own, so following three of those spends the bankroll three "
-					+ "times. Same thing as the Basket tab"),
-			new Term("/flip npc reprice", "Checks the buy orders you already have resting: which "
-					+ "have been outbid and where to move them, and which have been outbid past the "
-					+ "point of being worth a slot. Needs /flip track on and the orders menu opened "
-					+ "at least once, because that is the only place your real posted price exists"),
+			new Term("/flip npc plan", "Everything to do at the bazaar right now: what to collect, "
+					+ "cancel and reprice on the orders you already have, then the new orders to "
+					+ "place in the slots and coins that are left. The ranked list sizes each row on "
+					+ "its own, so following three of those spends the bankroll three times. Same "
+					+ "thing as the Basket tab"),
+			new Term("/flip npc reprice", "The same list with the new orders left off - what a trip "
+					+ "back to a full book is actually about. Needs /flip track on and the orders "
+					+ "menu opened at least once, because that is the only place your real posted "
+					+ "price exists"),
 			new Term("/flip take <rank>", "Records the flip on that line of the last list you were "
 					+ "shown, at the numbers you were shown"),
 			new Term("/flip close <id> <units> <price>", "Closes a position with what actually "
@@ -275,29 +276,53 @@ public final class Guide {
 	 */
 	private static final Section BASKET = new Section("basket", "The basket, and working it",
 			List.of(
-					new Term("What it is", "Every NPC buy order worth placing right now, sized so "
-							+ "the whole set fits your order slots, your bankroll and the day's NPC "
-							+ "budget exactly once. /flip npc plan prints it and the Basket tab shows "
-							+ "it. The ranked list answers a different question: each row there is "
-							+ "sized against your whole bankroll on its own, so following the top "
-							+ "three would spend it three times"),
+					new Term("What it is", "One list of clicks: the orders already on your book "
+							+ "first - anything filled to collect, anything to cancel, anything "
+							+ "outbid - and then the new orders to place in whatever slots and coins "
+							+ "are left. /flip npc plan prints it, the Basket tab shows it, and the "
+							+ "panel at the bazaar draws it. The ranked list answers a different "
+							+ "question: each row there is sized against your whole bankroll on its "
+							+ "own, so following the top three would spend it three times"),
+					new Term("The order to work it in", "Top down, and the order is not the order "
+							+ "the coins are in. Claims first, because those coins are already made "
+							+ "and the items cannot go to an NPC until they are out of the order. "
+							+ "Cancels next, because they hand back the order slot everything below "
+							+ "them is short of. Then the reprices, then the new orders - which need "
+							+ "the coins the cancels just returned"),
 					new Term("Place all of it", "A ranking is a menu to choose one thing from. A "
 							+ "basket is a list of things to do, and half of one spends the bankroll "
 							+ "on half the plan while leaving the same slots idle"),
+					new Term("Coming back later", "You do not decide between repricing and making a "
+							+ "new plan - it is one list and it already knows. Orders you have "
+							+ "resting are taken out of the slots and the coins before anything new "
+							+ "is sized, and an item you already have an order on is never offered "
+							+ "again, because a second order at a second price is bidding against "
+							+ "yourself. If nothing new appears, every slot is working"),
 					new Term("Why it is ordered like that", "By profit per inventory load, not by "
 							+ "margin. Measured over a full day: ranking on profit per load made "
 							+ "76.4M, ranking on margin as a percent of the NPC price made 4.8M, "
 							+ "because that fills every slot with 7-coin items and thousands of "
 							+ "inventory loads. A 98% margin on something worth 7 coins is a rounding "
 							+ "error once it is holding a slot"),
-					new Term("The panel at the bazaar", "With Show basket at the bazaar on, the basket "
-						+ "is drawn beside Hypixel's own menu the whole time you are in it: name, "
-						+ "price to post, and how the units divide into orders. It re-plans itself "
-						+ "every poll and highlights the row for whichever product page you have "
-						+ "open. It stays up for a few seconds after the menu closes, which is what "
-						+ "puts it on screen while you are typing an amount or a price into the "
-						+ "sign, so nothing has to be remembered from chat. It only ever draws - "
-						+ "nothing is clicked, filled in or placed for you"),
+					new Term("The panel at the bazaar", "With Show basket at the bazaar on, the list "
+						+ "is drawn beside Hypixel's own menu the whole time you are in it: what to "
+						+ "do, the price to type, and how the units divide into orders. It rebuilds "
+						+ "itself every poll and highlights the row for whichever product page you "
+						+ "have open. It stays up for a few seconds after the menu closes, which is "
+						+ "what puts it on screen while you are typing an amount or a price into the "
+						+ "sign, so nothing has to be remembered from chat"),
+					new Term("Scrolling and copying it", "The wheel scrolls the panel when the list "
+						+ "is longer than the screen, so a long list never has to be chased into "
+						+ "chat. Clicking a row copies the item name for the search sign; clicking "
+						+ "the price or the size on the second line of a row copies that number "
+						+ "instead. The Basket tab has the same three as buttons. Nothing is ever "
+						+ "clicked, filled in or placed for you, and a click that lands on the panel "
+						+ "never reaches the menu behind it"),
+					new Term("Which side it sits on", "Basket panel side: LEFT, RIGHT or AUTO. AUTO "
+						+ "takes whichever side of Hypixel's menu has more room, which is the widest "
+						+ "panel and a moving one - Hypixel's menus differ in width, so it changes "
+						+ "sides as you move between the bazaar's screens. LEFT and RIGHT keep it "
+						+ "where you left it and only move if the chosen side has no room at all"),
 				new Term("Post at", "The price to type into Create Buy Order - one tenth above "
 							+ "the best bid, which is what puts you at the front of the queue. It is "
 							+ "not the same as the plan's cost per unit, which also carries the chase "
@@ -322,13 +347,22 @@ public final class Guide {
 							+ "on top. It flattens below an hour, so checking in more often than "
 							+ "every 15 minutes buys very little"),
 					new Term("The reminder", "You do not have to watch the clock. With Remind me to "
-							+ "reprice on, a line appears in chat when the book has actually moved "
-							+ "past your orders - never merely because the interval elapsed - and at "
-							+ "most once per check-in interval. It plays a note with it unless you "
-							+ "turn that off, because Skyblock scrolls chat fast enough to lose the "
-							+ "line before it is read. Click the [reprice] on the end of it "
-							+ "to run the round. Asking for a basket or a reprice yourself restarts "
-							+ "the interval, so it never arrives on top of the list it points at"),
+							+ "reprice on, you get a toast in the corner, a line in chat and a note "
+							+ "when the book has actually moved past your orders - never merely "
+							+ "because the interval elapsed - and at most once per check-in "
+							+ "interval. Three channels because Skyblock scrolls chat fast enough to "
+							+ "lose a line before it is read; the toast is the one that waits for "
+							+ "you. Click the [reprice] on the end of the chat line to run the "
+							+ "round. Asking for a basket or a reprice yourself restarts the "
+							+ "interval, so it never arrives on top of the list it points at"),
+					new Term("If it never says anything", "Most likely nothing has ever shown it your "
+							+ "orders. A chat line about a placement carries the size and the total "
+							+ "and never the price per unit, and the price is the whole input to a "
+							+ "reprice - so open Bazaar -> Manage Orders once per session and it has "
+							+ "what it needs. It now says so itself rather than staying quiet: if "
+							+ "you see \"cannot see your orders\", that is this. Otherwise check "
+							+ "/flip track is on, and remember that asking for a plan yourself "
+							+ "restarts the interval"),
 					new Term("What it takes to be told", "The reminder speaks when the outbid orders "
 							+ "are worth more than Minimum profit per flip put together, or when any "
 							+ "one order has been chased past the stop. A cancel is always worth "
@@ -337,6 +371,30 @@ public final class Guide {
 					new Term("Cancelling costs nothing", "The NPC price cannot move, so an order the "
 							+ "book has chased past the stop is coins parked, not coins lost. Cancel "
 							+ "it, take the coins back, and put the slot on something else"),
+					new Term("Partial fills", "A buy order that fills part way announces nothing at "
+							+ "all in chat - the notification only ever fires on a complete fill - so "
+							+ "the mod reads the amount out of Bazaar -> Manage Orders instead, which "
+							+ "is right about it whether or not you were watching. What you do about "
+							+ "it is nothing special: claim what filled, and leave the rest of the "
+							+ "order resting or reprice it like any other. The list says both, as "
+							+ "two rows"),
+					new Term("Claim", "The filled units are inside the order until you press Claim. "
+							+ "Those coins are already made and they are not spendable, and the "
+							+ "items cannot be carried to an NPC at all, so a claim is the one row "
+							+ "worth interrupting you for however small it is. It is always listed "
+							+ "first, and it is listed even for an order you are about to cancel"),
+					new Term("Orders that take forever", "An order can be correctly priced, on top "
+							+ "of the book, and simply not filling - nobody is dumping that item "
+							+ "today. Order resting window is how long the coins were lent to the "
+							+ "trade, and past it the list says cancel however healthy the order "
+							+ "looks. The refund is the whole remaining stake, so the only question "
+							+ "is whether the slot is worth more elsewhere, and after a full window "
+							+ "of nothing it is"),
+					new Term("How old it thinks your orders are", "It counts from the first time it "
+							+ "saw the order, not from when Hypixel accepted it, because nothing is "
+							+ "remembered between launches. So an order placed yesterday and first "
+							+ "seen in today's menu is treated as new and gets another full window. "
+							+ "It expires things late rather than wrongly"),
 					new Term("It has to see your orders", "Repricing compares the price your order "
 							+ "actually rests at against the book, and the bazaar orders menu is the "
 							+ "only place that price exists - the plan's own figure includes chasing "

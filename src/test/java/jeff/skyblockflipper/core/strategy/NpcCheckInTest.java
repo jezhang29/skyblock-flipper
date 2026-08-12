@@ -23,7 +23,7 @@ class NpcCheckInTest {
 	/** An order outbid to {@code postPrice}, still inside the stop. */
 	private static NpcReprice.Advice reprice(String id, double postPrice, long remaining) {
 		return new NpcReprice.Advice(
-				new NpcReprice.Order(id, id, postPrice - 10.0d, remaining),
+				NpcReprice.Order.of(id, id, postPrice - 10.0d, remaining),
 				NpcReprice.Action.REPRICE,
 				NPC_PRICE, postPrice, postPrice, 850.0d,
 				(NPC_PRICE - postPrice) / NPC_PRICE, "outbid");
@@ -31,14 +31,14 @@ class NpcCheckInTest {
 
 	private static NpcReprice.Advice cancel(String id, double yourPrice, long remaining) {
 		return new NpcReprice.Advice(
-				new NpcReprice.Order(id, id, yourPrice, remaining),
+				NpcReprice.Order.of(id, id, yourPrice, remaining),
 				NpcReprice.Action.CANCEL,
 				NPC_PRICE, 900.0d, 900.1d, 850.0d, 0.1d, "past the stop");
 	}
 
 	private static NpcReprice.Advice hold(String id) {
 		return new NpcReprice.Advice(
-				new NpcReprice.Order(id, id, 800.0d, 500L),
+				NpcReprice.Order.of(id, id, 800.0d, 500L),
 				NpcReprice.Action.HOLD,
 				NPC_PRICE, 800.0d, 800.0d, 850.0d, 0.2d, "top of the book");
 	}
@@ -119,5 +119,40 @@ class NpcCheckInTest {
 		assertEquals(1, due.repriceCount());
 		assertEquals(1, due.cancelCount());
 		assertFalse(due.profitAtStake() >= MIN_PROFIT);
+	}
+
+	/**
+	 * Filled units nobody has collected qualify at any size, and lead the count.
+	 *
+	 * <p>Unlike everything else here that is not a forecast: the coins are made, and until the units
+	 * are out of the order they cannot be carried to an NPC, so the flip is stalled behind a button.
+	 */
+	@Test
+	void alwaysReportsUnitsWaitingToBeClaimed() {
+		NpcReprice.Advice filled = new NpcReprice.Advice(
+				new NpcReprice.Order("A", "A", 800.0d, 500L, 0L, 500L, 0L),
+				NpcReprice.Action.HOLD,
+				NPC_PRICE, 800.0d, 800.0d, 850.0d, 0.2d, "filled completely");
+
+		NpcCheckIn.Due due = NpcCheckIn.due(List.of(filled, hold("B")), MIN_PROFIT).orElseThrow();
+
+		assertEquals(1, due.claimCount());
+		assertEquals(0, due.repriceCount());
+		assertEquals(0, due.cancelCount());
+		assertEquals(100_000.0d, due.claimable(), 1.0d);
+	}
+
+	/** An expired order is a cancel: same click, same freed slot, different reason. */
+	@Test
+	void countsAnExpiredOrderAsACancel() {
+		NpcReprice.Advice expired = new NpcReprice.Advice(
+				NpcReprice.Order.of("A", "A", 800.0d, 500L),
+				NpcReprice.Action.EXPIRED,
+				NPC_PRICE, 800.0d, 800.0d, 850.0d, 0.2d, "past the window");
+
+		NpcCheckIn.Due due = NpcCheckIn.due(List.of(expired), MIN_PROFIT).orElseThrow();
+
+		assertEquals(1, due.cancelCount());
+		assertEquals(400_000L, due.capitalToFree());
 	}
 }

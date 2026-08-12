@@ -1,8 +1,11 @@
 package jeff.skyblockflipper.core.strategy;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * What to do with all of your order slots at once, rather than what one item is worth.
@@ -31,6 +34,54 @@ import java.util.List;
  */
 public final class NpcBasket {
 	private NpcBasket() {
+	}
+
+	/**
+	 * What is already on the book, so a basket adds to a position rather than re-planning from an
+	 * empty account.
+	 *
+	 * <p>Without this the second basket of a session is the first one again: every slot free, the
+	 * whole bankroll available, and the items you are already bidding on offered back to you. Follow
+	 * it and you spend coins you have not got on orders you already have, at a second price, bidding
+	 * against your own resting order on the same book.
+	 *
+	 * <p><b>An item you hold is dropped from the basket entirely rather than topped up.</b> The
+	 * order already resting on it is {@link NpcReprice}'s to talk about, and it has the one number a
+	 * new line does not: the price you actually got. Two lines on one item, quoted from two
+	 * different sides of the mod, is how a player ends up outbidding themselves.
+	 *
+	 * @param orders  bazaar order slots the resting orders occupy
+	 * @param capital coins they have tied up, at the price they actually rest at
+	 * @param itemIds products with an order already resting on them
+	 */
+	public record Held(int orders, long capital, Set<String> itemIds) {
+		public Held {
+			itemIds = Set.copyOf(itemIds);
+			orders = Math.max(0, orders);
+			capital = Math.max(0L, capital);
+		}
+
+		/** Nothing resting: a fresh account, or a caller with no way to know. */
+		public static Held nothing() {
+			return new Held(0, 0L, Set.of());
+		}
+
+		/** One slot per order, because that is what the bazaar charges for one. */
+		public static Held of(Collection<NpcReprice.Order> resting) {
+			Set<String> ids = new HashSet<>();
+			long capital = 0L;
+
+			for (NpcReprice.Order order : resting) {
+				ids.add(order.itemId());
+				capital += Math.round(order.unitPrice() * order.remaining());
+			}
+
+			return new Held(resting.size(), capital, ids);
+		}
+
+		public boolean isEmpty() {
+			return orders == 0 && capital == 0L && itemIds.isEmpty();
+		}
 	}
 
 	/** Which shared resource ran out, i.e. what would have to change to deploy more. */
@@ -92,34 +143,52 @@ public final class NpcBasket {
 	/**
 	 * A whole basket, sized and costed.
 	 *
+	 * @param slotsUsed      order slots the new lines want
 	 * @param slotsAvailable order slots the basket was allowed to use, settings and account together
+	 * @param slotsOnAccount order slots the account actually has, which is only different when
+	 *                       {@code npcMaxOrderSlots} caps it below that
 	 * @param bankroll       coins it was allowed to spend, read at plan time
+	 * @param held           what was already resting when this was allocated, which is what the new
+	 *                       lines were sized around
 	 * @param bound          which shared resource ran out first
 	 */
 	public record Basket(
 			List<Line> lines,
 			int slotsUsed,
 			int slotsAvailable,
+			int slotsOnAccount,
 			long capital,
 			long bankroll,
 			double profit,
 			long npcPayout,
 			long loads,
 			double restingHours,
+			Held held,
 			Bound bound
 	) {
 		public Basket {
 			lines = List.copyOf(lines);
+			held = held == null ? Held.nothing() : held;
 		}
 
 		public static Basket empty(StrategyContext context) {
-			return new Basket(List.of(), 0, context.npc().orderSlots(context.fees()), 0L,
-					context.bankroll(), 0.0d, 0L, 0L, context.npc().restingHours(),
-					Bound.CANDIDATES);
+			return new Basket(List.of(), 0, context.npc().orderSlots(context.fees()),
+					context.fees().bazaarOrderSlots(), 0L, context.bankroll(), 0.0d, 0L, 0L,
+					context.npc().restingHours(), Held.nothing(), Bound.CANDIDATES);
 		}
 
 		public boolean isEmpty() {
 			return lines.isEmpty();
+		}
+
+		/** Slots left after what is already resting, which is what the new lines were fitted into. */
+		public int slotsFree() {
+			return Math.max(0, slotsAvailable - held.orders());
+		}
+
+		/** Coins left after what is already resting, which is what the new lines were sized against. */
+		public long bankrollFree() {
+			return Math.max(0L, bankroll - held.capital());
 		}
 
 		/** Coins an hour across the resting window, the same axis a single candidate is ranked on. */
@@ -143,10 +212,29 @@ public final class NpcBasket {
 		 * <p>Here rather than in each of the two things that display a basket, so chat and the screen
 		 * cannot end up telling a player different stories about the same allocation.
 		 */
+		/**
+		 * Whether the settings, rather than the account, are what capped the slots.
+		 *
+		 * <p>Worth its own answer because it is the one slot limit that costs nothing to lift and is
+		 * invisible from inside the game. Measured on the live book on 2026-08-11 with this user's
+		 * own settings: 14 slots made 25.1M a cycle where the 21 the account had made 32.3M.
+		 */
+		public boolean slotsCappedBySettings() {
+			return slotsAvailable < slotsOnAccount;
+		}
+
 		public String boundExplanation() {
 			return switch (bound) {
-				case SLOTS -> "Order slots are what ran out. Each Bazaar Flipper level adds seven.";
-				case CAPITAL -> "Coins ran out with " + (slotsAvailable - slotsUsed)
+				case SLOTS -> slotsCappedBySettings()
+						? "Order slots are what ran out, and NPC order slots in settings is holding "
+								+ "you to " + slotsAvailable + " of the " + slotsOnAccount
+								+ " your account has. Set it to 0 for all of them."
+						: held.orders() == 0
+						? "Order slots are what ran out. Each Bazaar Flipper level adds seven."
+						: "Order slots are what ran out, and " + held.orders() + " of "
+								+ slotsAvailable + " are already resting. Cancelling one that is "
+								+ "past its window is the cheapest way to free one.";
+				case CAPITAL -> "Coins ran out with " + (slotsFree() - slotsUsed)
 						+ " order slots still free.";
 				case DAILY_CAP -> "The day's NPC coin budget ran out. It refills at UTC midnight.";
 				case CANDIDATES -> "Nothing else on the book clears the filters, so this is the "
@@ -163,10 +251,21 @@ public final class NpcBasket {
 	 * window than {@code minProfitPerFlip} an hour is skipped rather than allowed to occupy a slot.
 	 */
 	public static Basket plan(StrategyContext context) {
+		return plan(context, Held.nothing());
+	}
+
+	/**
+	 * The same allocation, over what is left after {@code held}.
+	 *
+	 * <p>The overload that matters in play. A basket planned against an empty account is only right
+	 * once per cycle, on the first trip; every trip after that, some slots and some coins are
+	 * already committed, and a plan that does not know it is a plan for an account you do not have.
+	 */
+	public static Basket plan(StrategyContext context, Held held) {
 		List<NpcPlan> plans = new ArrayList<>(NpcFlipStrategy.restingPlans(context));
 
 		if (plans.isEmpty()) {
-			return Basket.empty(context);
+			return withHeld(Basket.empty(context), held);
 		}
 
 		plans.sort(Comparator.comparingDouble(NpcPlan::profitPerLoad).reversed());
@@ -177,8 +276,8 @@ public final class NpcBasket {
 		// survive it, and the only way to guarantee that is to never keep the number.
 		long bankroll = context.bankroll();
 
-		int slotsLeft = slotsAvailable;
-		long coinsLeft = bankroll;
+		int slotsLeft = Math.max(0, slotsAvailable - held.orders());
+		long coinsLeft = Math.max(0L, bankroll - held.capital());
 		long payoutLeft = npc.capRemaining();
 
 		List<Line> lines = new ArrayList<>();
@@ -191,6 +290,12 @@ public final class NpcBasket {
 		for (NpcPlan plan : plans) {
 			if (slotsLeft <= 0) {
 				break;
+			}
+
+			// An order already rests on this item at a price the reprice round knows and this does
+			// not. Offering a second line would have the player bid against their own order.
+			if (held.itemIds().contains(plan.itemId())) {
+				continue;
 			}
 
 			long wanted = Math.min(plan.maxUnits(), (long) slotsLeft * plan.unitsPerOrder());
@@ -233,9 +338,23 @@ public final class NpcBasket {
 			}
 		}
 
-		return new Basket(lines, slotsAvailable - slotsLeft, slotsAvailable, capital, bankroll,
-				profit, payout, loads, npc.restingHours(),
+		return new Basket(lines, slotsAvailable - held.orders() - slotsLeft, slotsAvailable,
+				context.fees().bazaarOrderSlots(), capital, bankroll, profit, payout, loads,
+				npc.restingHours(), held,
 				bound(slotsLeft, payoutLeft, coinsLeft, shortOfCoins, lines.size(), plans.size()));
+	}
+
+	/**
+	 * An empty basket, told what it was empty against.
+	 *
+	 * <p>"Nothing to place" and "nothing to place because every slot is already working" are
+	 * different answers, and only one of them is a reason to go and look at the book.
+	 */
+	private static Basket withHeld(Basket basket, Held held) {
+		return new Basket(basket.lines(), basket.slotsUsed(), basket.slotsAvailable(),
+				basket.slotsOnAccount(), basket.capital(), basket.bankroll(), basket.profit(),
+				basket.npcPayout(), basket.loads(), basket.restingHours(), held,
+				held.orders() >= basket.slotsAvailable() ? Bound.SLOTS : basket.bound());
 	}
 
 	/**

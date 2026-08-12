@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -273,5 +274,97 @@ class NpcBasketTest {
 		assertEquals(0, basket.slotsUsed());
 		assertEquals(NpcBasket.Bound.CANDIDATES, basket.bound());
 		assertEquals(0.0d, basket.profitPerHour());
+	}
+
+	/**
+	 * The second basket of a cycle is not the first one again.
+	 *
+	 * <p>Without this the mod tells a player with fourteen orders resting to place twenty-one more,
+	 * spending coins that are already escrowed into slots that do not exist.
+	 */
+	@Test
+	void allocatesOnlyTheSlotsAndCoinsThatAreActuallyFree() {
+		// Coins to spare and thin books, so one item fills one order and slots are what bind.
+		NpcContext npc = npc(10, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(20, 10_000_000_000L, npc, false, 3_000_000L);
+
+		NpcBasket.Basket empty = NpcBasket.plan(context);
+		NpcBasket.Basket partial = NpcBasket.plan(context, new NpcBasket.Held(6, 0L, Set.of()));
+
+		assertEquals(10, empty.slotsUsed());
+		assertEquals(4, partial.slotsFree());
+		assertEquals(4, partial.slotsUsed());
+		assertEquals(NpcBasket.Bound.SLOTS, partial.bound());
+	}
+
+	@Test
+	void sizesTheBasketAgainstTheCoinsNotAlreadyEscrowed() {
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(20, BANKROLL, npc, false);
+
+		NpcBasket.Basket partial =
+				NpcBasket.plan(context, new NpcBasket.Held(1, BANKROLL / 2L, Set.of()));
+
+		assertEquals(BANKROLL / 2L, partial.bankrollFree());
+		assertTrue(partial.capital() <= BANKROLL / 2L,
+				"asked for " + partial.capital() + " with half the bankroll already committed");
+
+		// And the full-account basket really does want more than that, so this is a restriction
+		// rather than a book that was never worth half the bankroll.
+		assertTrue(NpcBasket.plan(context).capital() > BANKROLL / 2L);
+	}
+
+	/**
+	 * An item you already have an order on is dropped, not topped up. The resting order has a price
+	 * this allocator does not know, and a second line at a second price is bidding against yourself.
+	 */
+	@Test
+	void refusesToPlaceASecondOrderOnAnItemAlreadyResting() {
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(5, BANKROLL, npc, false);
+
+		NpcBasket.Basket basket = NpcBasket.plan(context,
+				new NpcBasket.Held(1, 0L, Set.of("ITEM_0")));
+
+		assertFalse(basket.lines().isEmpty());
+		assertTrue(basket.lines().stream().noneMatch(line -> line.plan().itemId().equals("ITEM_0")),
+				"ITEM_0 already has an order resting on it");
+	}
+
+	/** Every slot working is a different answer from nothing being worth an order. */
+	@Test
+	void blamesTheSlotsWhenEveryOneIsAlreadyResting() {
+		// All 14 the account has, so the settings are not what capped it and the explanation is
+		// about the orders rather than about a setting to change.
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		NpcBasket.Basket basket = NpcBasket.plan(manyItems(20, BANKROLL, npc, false),
+				new NpcBasket.Held(14, 0L, Set.of()));
+
+		assertTrue(basket.isEmpty());
+		assertEquals(0, basket.slotsFree());
+		assertEquals(NpcBasket.Bound.SLOTS, basket.bound());
+		assertFalse(basket.slotsCappedBySettings());
+		assertTrue(basket.boundExplanation().contains("already resting"),
+				basket.boundExplanation());
+	}
+
+	/**
+	 * The one slot limit that costs nothing to lift, and the one the game cannot show you.
+	 *
+	 * <p>Measured on the live book on 2026-08-11 against a real config that had it set to 14 of 21:
+	 * 25.1M a cycle against 32.3M. The basket knew, and said "each Bazaar Flipper level adds seven",
+	 * which is advice to buy a perk the player already had.
+	 */
+	@Test
+	void namesTheSettingWhenItIsTheSettingCappingTheSlots() {
+		NpcBasket.Basket basket = NpcBasket.plan(manyItems(30, 10_000_000_000L,
+				npc(4, NpcContext.CAP_UNLIMITED), false, 3_000_000L));
+
+		assertEquals(NpcBasket.Bound.SLOTS, basket.bound());
+		assertEquals(4, basket.slotsAvailable());
+		assertEquals(14, basket.slotsOnAccount());
+		assertTrue(basket.slotsCappedBySettings());
+		assertTrue(basket.boundExplanation().contains("NPC order slots in settings"),
+				basket.boundExplanation());
 	}
 }

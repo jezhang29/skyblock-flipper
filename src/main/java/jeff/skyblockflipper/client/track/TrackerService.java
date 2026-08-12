@@ -48,6 +48,17 @@ public final class TrackerService {
 	/** Set after the first ledger write failure, so a broken disk costs one log line, not one a trade. */
 	private static boolean broken;
 
+	/**
+	 * Bumped whenever anything the tracker knows might have changed.
+	 *
+	 * <p>Exists so a cache keyed on the market can also notice the account. Placing an order changes
+	 * what there is to do without changing the book, and a panel keyed only on the bazaar revision
+	 * spends the next poll telling the player to place the orders they have just placed. Deliberately
+	 * coarse - one bump per event accepted, not one per real change - because the cost of an
+	 * unnecessary rebuild is one allocation and the cost of a missed one is a wrong instruction.
+	 */
+	private static long orderRevision;
+
 	private TrackerService() {
 	}
 
@@ -55,13 +66,20 @@ public final class TrackerService {
 		return SkyblockFlipperClient.config().autoTrackEnabled && !broken;
 	}
 
+	/** A counter that moves whenever the tracker has been fed. See {@link #orderRevision}. */
+	public static long orderRevision() {
+		return orderRevision;
+	}
+
 	public static void accept(CapturedChat chat) {
 		tracker().accept(chat);
+		orderRevision++;
 		drain();
 	}
 
 	public static void accept(CapturedMenu menu) {
 		tracker().accept(menu);
+		orderRevision++;
 		drain();
 	}
 
@@ -91,6 +109,11 @@ public final class TrackerService {
 	 * A price of zero means the order was seen announced in chat but never in a menu, and chat never
 	 * names the price. An order whose name matches nothing in the item catalog cannot be looked up
 	 * on the book at all.
+	 *
+	 * <p><b>An order with nothing left on the book is kept when it still holds uncollected units.</b>
+	 * That is a completely filled order waiting to be claimed, which is the one state where there is
+	 * money to collect and no order to reprice, and dropping it was hiding exactly the trades that
+	 * had worked.
 	 */
 	public static List<NpcReprice.Order> restingBuyOrders() {
 		TradeTracker tracker = tracker();
@@ -98,7 +121,7 @@ public final class TrackerService {
 
 		for (TrackedOrder order : tracker.resting()) {
 			if (order.side() != TradeEvent.Side.BUY || order.unitPrice() <= 0.0d
-					|| order.remaining() <= 0L) {
+					|| (order.remaining() <= 0L && order.unclaimed() <= 0L)) {
 				continue;
 			}
 
@@ -109,12 +132,30 @@ public final class TrackerService {
 					: order.itemId();
 
 			if (!itemId.isEmpty()) {
+				// placedAt is when this session first saw the order, not when Hypixel accepted it.
+				// The tracker starts empty every launch, so it is a lower bound on the real age and
+				// the resting-window rule built on it fires late rather than wrongly.
 				orders.add(new NpcReprice.Order(itemId, order.displayName(), order.unitPrice(),
-						order.remaining()));
+						order.total(), order.remaining(), order.unclaimed(), order.placedAt()));
 			}
 		}
 
 		return orders;
+	}
+
+	/**
+	 * Whether there are buy orders the tracker has heard about but cannot price.
+	 *
+	 * <p>The state that looks exactly like a broken reminder. Chat announces a placement with its
+	 * size and its total escrow and never with a price per unit, so an order that has only ever been
+	 * announced cannot be compared to the book at all - {@link #restingBuyOrders()} drops it, every
+	 * consumer sees an empty list, and the mod says nothing about a bazaar full of orders. Opening
+	 * the orders menu once fixes it, and this exists so something can say so.
+	 */
+	public static boolean hasUnpricedBuyOrders() {
+		return tracker().resting().stream()
+				.anyMatch(order -> order.side() == TradeEvent.Side.BUY && order.unitPrice() <= 0.0d
+						&& order.remaining() > 0L);
 	}
 
 	private static void drain() {

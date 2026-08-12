@@ -28,6 +28,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class NpcRepriceTest {
 	private static final double NPC_PRICE = 1000.0d;
 
+	/** Any fixed instant. Orders built by {@link #order} carry no placement time, so no test
+	 * here trips the resting-window rule; {@code expiresAnOrderPastTheRestingWindow} builds its own. */
+	private static final long NOW = 1_754_000_000_000L;
+
 	/** With the default 15% floor, this is the highest price the item is worth chasing to. */
 	private static final double STOP = 850.0d;
 
@@ -70,12 +74,12 @@ class NpcRepriceTest {
 	}
 
 	private static NpcReprice.Order order(String id, double unitPrice, long remaining) {
-		return new NpcReprice.Order(id, id, unitPrice, remaining);
+		return NpcReprice.Order.of(id, id, unitPrice, remaining);
 	}
 
 	private static NpcReprice.Advice only(String id, double yourPrice, Double bestBid) {
 		List<NpcReprice.Advice> advice = NpcReprice.review(List.of(order(id, yourPrice, 500L)),
-				context(id, bestBid, NPC_PRICE));
+				context(id, bestBid, NPC_PRICE), NOW);
 
 		assertEquals(1, advice.size());
 		return advice.getFirst();
@@ -146,12 +150,12 @@ class NpcRepriceTest {
 	void ignoresOrdersOnItemsNoNpcBuys() {
 		// An ordinary spread flip. It has a resting buy order too, and nothing here is about it.
 		assertTrue(NpcReprice.review(List.of(order("ITEM", 800.0d, 500L)),
-				context("ITEM", 820.0d, null)).isEmpty());
+				context("ITEM", 820.0d, null), NOW).isEmpty());
 
 		// Same for an order on a product the current snapshot does not carry: that is a book that
 		// has not been fetched, not an order that is wrong.
 		assertTrue(NpcReprice.review(List.of(order("MISSING", 800.0d, 500L)),
-				context("ITEM", 820.0d, NPC_PRICE)).isEmpty());
+				context("ITEM", 820.0d, NPC_PRICE), NOW).isEmpty());
 	}
 
 	@Test
@@ -168,7 +172,7 @@ class NpcRepriceTest {
 		List<NpcReprice.Advice> advice = NpcReprice.review(List.of(
 				order("HELD", 800.0d, 5_000L),
 				order("SMALL", 800.0d, 100L),
-				order("BIG", 800.0d, 900L)), context(products, items));
+				order("BIG", 800.0d, 900L)), context(products, items), NOW);
 
 		assertEquals(List.of("BIG", "SMALL", "HELD"),
 				advice.stream().map(a -> a.order().itemId()).toList());
@@ -176,5 +180,81 @@ class NpcRepriceTest {
 		// The held order is the largest of the three, so this really is action first rather than
 		// size first.
 		assertEquals(NpcReprice.Action.HOLD, advice.getLast().action());
+	}
+
+	/**
+	 * The one rule here that is not about the book: coins were lent to this trade for a window, and
+	 * an order that is still correctly priced after the window is still holding a slot.
+	 */
+	@Test
+	void expiresAnOrderPastTheRestingWindow() {
+		long placed = NOW - Math.round(NpcContext.DEFAULT_RESTING_HOURS * 3_600_000.0d) - 1L;
+		NpcReprice.Order order =
+				new NpcReprice.Order("ITEM", "ITEM", 800.0d, 500L, 500L, 0L, placed);
+
+		// Top of the book, correctly priced, and nothing at all has filled in eight hours.
+		List<NpcReprice.Advice> advice = NpcReprice.review(List.of(order),
+				context("ITEM", 800.0d, NPC_PRICE), NOW);
+
+		assertEquals(NpcReprice.Action.EXPIRED, advice.getFirst().action());
+		assertTrue(advice.getFirst().needsAction());
+		assertTrue(advice.getFirst().isCancel());
+		assertEquals(400_000L, advice.getFirst().capitalAtStake());
+	}
+
+	@Test
+	void leavesAnOrderInsideItsWindowAlone() {
+		NpcReprice.Order order = new NpcReprice.Order("ITEM", "ITEM", 800.0d, 500L, 500L, 0L,
+				NOW - 3_600_000L);
+
+		assertEquals(NpcReprice.Action.HOLD, NpcReprice.review(List.of(order),
+				context("ITEM", 800.0d, NPC_PRICE), NOW).getFirst().action());
+	}
+
+	/**
+	 * An order with no placement time is every order in a fresh session, and expiring those on a
+	 * default of zero would cancel a whole basket the first time the orders menu was opened.
+	 */
+	@Test
+	void neverExpiresAnOrderNothingHasTimed() {
+		assertEquals(NpcReprice.Action.HOLD,
+				only("ITEM", 800.0d, 800.0d).action());
+	}
+
+	/** A partial fill is two facts: units to collect, and an order still worth repricing. */
+	@Test
+	void reportsUnclaimedUnitsAlongsideTheBookAdvice() {
+		NpcReprice.Order order = new NpcReprice.Order("ITEM", "ITEM", 800.0d, 500L, 300L, 200L, 0L);
+
+		NpcReprice.Advice advice = NpcReprice.review(List.of(order),
+				context("ITEM", 820.0d, NPC_PRICE), NOW).getFirst();
+
+		assertEquals(NpcReprice.Action.REPRICE, advice.action());
+		assertTrue(advice.hasUnclaimed());
+		assertEquals(200L, advice.order().filled());
+		assertTrue(advice.order().partlyFilled());
+
+		// 200 units bought at 800 that the NPC pays 1000 for.
+		assertEquals(200.0d * 200L, advice.claimableProfit(), 1e-6d);
+
+		// The reprice is about the 300 still on the book, not about the 500 originally ordered.
+		assertEquals(20.1d * 300.0d, advice.extraCost(), 1e-6d);
+	}
+
+	/**
+	 * A completely filled order has nothing left to price and everything left to collect. It used to
+	 * be dropped for having no units on the book, which hid exactly the orders that had worked.
+	 */
+	@Test
+	void keepsACompletelyFilledOrderForItsClaim() {
+		NpcReprice.Order order = new NpcReprice.Order("ITEM", "ITEM", 800.0d, 500L, 0L, 500L, 0L);
+
+		NpcReprice.Advice advice = NpcReprice.review(List.of(order),
+				context("ITEM", 900.0d, NPC_PRICE), NOW).getFirst();
+
+		assertEquals(NpcReprice.Action.HOLD, advice.action());
+		assertTrue(advice.hasUnclaimed());
+		assertTrue(advice.needsAnything());
+		assertTrue(advice.reason().contains("Filled completely"), advice.reason());
 	}
 }

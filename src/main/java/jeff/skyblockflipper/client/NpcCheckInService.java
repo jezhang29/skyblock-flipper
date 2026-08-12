@@ -11,12 +11,14 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.sounds.SoundEvents;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -43,6 +45,15 @@ import java.util.List;
 public final class NpcCheckInService {
 	/** High enough to carry over Skyblock's own noise without being an alarm. */
 	private static final float CHIME_PITCH = 1.5f;
+
+	/**
+	 * The toast's identity, so a second reminder replaces the first rather than stacking under it.
+	 *
+	 * <p>{@code SystemToastId} has a public constructor precisely so a mod can have one of its own;
+	 * reusing a vanilla id would let an unrelated notification cancel this one and the other way
+	 * round.
+	 */
+	private static final SystemToast.SystemToastId TOAST_ID = new SystemToast.SystemToastId();
 
 	/** The book this last looked at, so an unchanged snapshot costs nothing. */
 	private static long reviewedRevision = -1L;
@@ -96,17 +107,47 @@ public final class NpcCheckInService {
 		}
 
 		reviewedRevision = revision;
-		List<NpcReprice.Order> orders = TrackerService.restingBuyOrders();
+		// The review directly rather than through CandidateFeed.worklist(), which would allocate a
+		// whole basket - a pass over every product on the book - on every poll for a player who has
+		// not asked for one. It is the same NpcReprice.review the worklist runs on the same orders,
+		// so the two cannot disagree about what needs a click.
+		List<NpcReprice.Advice> advice = NpcReprice.review(TrackerService.restingBuyOrders(),
+				CandidateFeed.context(), now);
 
-		if (orders.isEmpty()) {
+		if (advice.isEmpty()) {
+			if (TrackerService.hasUnpricedBuyOrders()) {
+				lastNoticeAt = now;
+				announceUnwatched();
+			}
+
 			return;
 		}
 
-		NpcCheckIn.due(NpcReprice.review(orders, CandidateFeed.context()), config.minProfitPerFlip)
-				.ifPresent(due -> {
-					lastNoticeAt = now;
-					announce(due);
-				});
+		NpcCheckIn.due(advice, config.minProfitPerFlip).ifPresent(due -> {
+			lastNoticeAt = now;
+			announce(due);
+		});
+	}
+
+	/**
+	 * The reminder cannot do its job, and says so rather than staying quiet.
+	 *
+	 * <p>An order announced in chat carries its size and its total but never its price per unit, and
+	 * the price is the whole input to a reprice - so an order the mod has only heard about is one it
+	 * cannot advise on. The orders menu is where the price is, and until it has been drawn once this
+	 * service has nothing to say about a book full of orders. Silence there is indistinguishable
+	 * from a reminder that does not work, which is what it was mistaken for.
+	 */
+	private static void announceUnwatched() {
+		MutableComponent message = Component.literal("[Flipper] ").withStyle(ChatFormatting.GOLD)
+				.append(Component.literal("Open Bazaar -> Manage Orders once so I can watch your "
+						+ "orders. Chat never says what price an order rests at, so until that menu "
+						+ "has been on screen there is nothing to reprice against.")
+						.withStyle(ChatFormatting.YELLOW));
+
+		send(message);
+		toast("Flipper cannot see your orders",
+				"Open Bazaar -> Manage Orders once");
 	}
 
 	/**
@@ -126,7 +167,38 @@ public final class NpcCheckInService {
 								.withClickEvent(new ClickEvent.RunCommand("/flip npc reprice"))));
 
 		send(message);
+		toast(due.orders() + (due.orders() == 1 ? " NPC order needs a click"
+				: " NPC orders need a click"), toastDetail(due));
 		chime();
+	}
+
+	/**
+	 * The same notice as a toast, because a chat line is not a notification.
+	 *
+	 * <p>Skyblock's chat runs at a speed that loses a line inside a few seconds, and the one message
+	 * this mod sends unprompted was going out into that. A toast sits in the corner for its own
+	 * duration whatever chat is doing, and {@code addOrUpdate} means a second reminder replaces the
+	 * first rather than building a column of them.
+	 *
+	 * <p>Two lines and no numbers past the counts: a toast is what makes you look, and
+	 * {@code /flip npc reprice} is what you look at.
+	 */
+	private static void toast(String title, String detail) {
+		Minecraft client = Minecraft.getInstance();
+
+		SystemToast.addOrUpdate(client.gui.toastManager(), TOAST_ID,
+				Component.literal(title).withStyle(ChatFormatting.GOLD),
+				Component.literal(detail));
+	}
+
+	private static String toastDetail(NpcCheckIn.Due due) {
+		if (due.claimCount() > 0) {
+			return Coins.format(due.claimable()) + " filled and uncollected";
+		}
+
+		return due.cancelCount() > 0
+				? Coins.format(due.capitalToFree()) + " parked, /flip npc reprice"
+				: Coins.format(due.profitAtStake()) + " at stake, /flip npc reprice";
 	}
 
 	/**
@@ -148,26 +220,32 @@ public final class NpcCheckInService {
 				.play(SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_PLING, CHIME_PITCH));
 	}
 
+	/**
+	 * What is waiting, claims first.
+	 *
+	 * <p>A claim is coins already earned, so it leads whatever else is in the same trip: a reminder
+	 * that opens with an outbid order buries the one line that is not a forecast.
+	 */
 	private static String summary(NpcCheckIn.Due due) {
-		StringBuilder text = new StringBuilder()
-				.append(due.orders())
-				.append(due.orders() == 1 ? " NPC order needs a click: " : " NPC orders need a click: ");
+		List<String> parts = new ArrayList<>();
 
-		if (due.repriceCount() > 0) {
-			text.append(due.repriceCount()).append(" outbid, worth ")
-					.append(Coins.format(due.profitAtStake()));
-		}
-
-		if (due.repriceCount() > 0 && due.cancelCount() > 0) {
-			text.append("; ");
+		if (due.claimCount() > 0) {
+			parts.add(due.claimCount() + " filled, " + Coins.format(due.claimable())
+					+ " to collect");
 		}
 
 		if (due.cancelCount() > 0) {
-			text.append(due.cancelCount()).append(" past the stop, holding ")
-					.append(Coins.format(due.capitalToFree()));
+			parts.add(due.cancelCount() + " to cancel, freeing "
+					+ Coins.format(due.capitalToFree()));
 		}
 
-		return text.toString();
+		if (due.repriceCount() > 0) {
+			parts.add(due.repriceCount() + " outbid, worth "
+					+ Coins.format(due.profitAtStake()));
+		}
+
+		return due.orders() + (due.orders() == 1 ? " NPC order needs" : " NPC orders need")
+				+ " a click: " + String.join("; ", parts);
 	}
 
 	private static void send(Component message) {

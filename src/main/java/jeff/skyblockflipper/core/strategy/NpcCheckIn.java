@@ -29,14 +29,19 @@ public final class NpcCheckIn {
 	 * is for, and printing it unasked would be the same interruption twice.
 	 *
 	 * @param repriceCount  orders that have been outbid and are still worth chasing
-	 * @param cancelCount   orders the book has chased past the stop
+	 * @param cancelCount   orders the book has chased past the stop, plus the ones that have outlived
+	 *                      the resting window. Both end in the same click and free the same slot
+	 * @param claimCount    orders holding units that filled and were never collected
 	 * @param profitAtStake coins the reprices are still worth if they fill at the advised price
 	 * @param capitalToFree coins the cancels would hand back, which are otherwise parked in a trade
 	 *                      that can no longer pay
+	 * @param claimable     coins of profit sitting in filled units nobody has collected. Already
+	 *                      earned rather than forecast, which is why any amount of it is worth saying
 	 */
-	public record Due(int repriceCount, int cancelCount, double profitAtStake, long capitalToFree) {
+	public record Due(int repriceCount, int cancelCount, int claimCount, double profitAtStake,
+			long capitalToFree, double claimable) {
 		public int orders() {
-			return repriceCount + cancelCount;
+			return repriceCount + cancelCount + claimCount;
 		}
 	}
 
@@ -49,6 +54,10 @@ public final class NpcCheckIn {
 	 *   <li><b>Any cancel.</b> The book has caught the NPC price on that item, so the coins are
 	 *       parked in a trade that cannot pay and an order slot is held by it. That is worth saying
 	 *       however small it is, because the fix frees the binding resource.
+	 *   <li><b>Any claim.</b> Units have filled and the coins for them are sitting inside an order.
+	 *       That is money already made rather than forecast, and until it is collected the item
+	 *       cannot be carried to an NPC at all, so the whole point of the flip is stalled behind
+	 *       one click.
 	 *   <li><b>Reprices worth {@code minProfit} in total.</b> Summed rather than judged one at a
 	 *       time: eight orders worth 20k each are a trip worth making even where one is not.
 	 * </ul>
@@ -59,16 +68,25 @@ public final class NpcCheckIn {
 	public static Optional<Due> due(List<NpcReprice.Advice> advice, double minProfit) {
 		int reprices = 0;
 		int cancels = 0;
+		int claims = 0;
 		double profit = 0.0d;
 		long capital = 0L;
+		double claimable = 0.0d;
 
 		for (NpcReprice.Advice entry : advice) {
+			// Independent of the action: an order can be outbid and hold a partial fill at once, and
+			// both are things to do on the same trip.
+			if (entry.hasUnclaimed()) {
+				claims++;
+				claimable += entry.claimableProfit();
+			}
+
 			switch (entry.action()) {
 				case REPRICE -> {
 					reprices++;
 					profit += entry.profitAtStake();
 				}
-				case CANCEL -> {
+				case CANCEL, EXPIRED -> {
 					cancels++;
 					capital += entry.capitalAtStake();
 				}
@@ -77,10 +95,10 @@ public final class NpcCheckIn {
 			}
 		}
 
-		if (cancels == 0 && (reprices == 0 || profit < minProfit)) {
+		if (cancels == 0 && claims == 0 && (reprices == 0 || profit < minProfit)) {
 			return Optional.empty();
 		}
 
-		return Optional.of(new Due(reprices, cancels, profit, capital));
+		return Optional.of(new Due(reprices, cancels, claims, profit, capital, claimable));
 	}
 }

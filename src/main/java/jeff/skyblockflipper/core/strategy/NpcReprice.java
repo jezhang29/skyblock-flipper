@@ -38,15 +38,47 @@ public final class NpcReprice {
 	/**
 	 * One resting buy order, as whatever read the orders menu understands it.
 	 *
-	 * <p>Deliberately not {@code TrackedOrder}: this needs a price and a size and nothing else, and
-	 * taking the tracker's type would tie the money math to the bookkeeping that happens to be
-	 * feeding it today.
+	 * <p>Deliberately not {@code TrackedOrder}: this needs a price, a size, how much of it has
+	 * happened and when it started, and taking the tracker's type would tie the money math to the
+	 * bookkeeping that happens to be feeding it today.
 	 *
 	 * @param unitPrice the price the order actually rests at, which is the whole input. A plan's
 	 *                  quoted cost includes the chase it had not paid yet, so it is not this
+	 * @param total     units the order was placed for, so a partial fill can be described as a share
+	 *                  of something
 	 * @param remaining units still on the book, i.e. what a reprice would be moving
+	 * @param unclaimed units that have already filled and are sitting in the order waiting to be
+	 *                  collected. Coins you own and cannot spend until you click Claim, and the one
+	 *                  part of a partial fill that has a deadline of sorts: nothing else can be done
+	 *                  with that item until it is out of the order
+	 * @param placedAt  epoch millis the order started resting, or 0 when nothing knows. <b>A lower
+	 *                  bound, never an upper one.</b> The tracker starts empty each session, so an
+	 *                  order placed yesterday and first seen in today's orders menu is dated to
+	 *                  today. Age therefore under-reports, which makes {@link Action#EXPIRED} fire
+	 *                  late rather than wrongly
 	 */
-	public record Order(String itemId, String displayName, double unitPrice, long remaining) {
+	public record Order(String itemId, String displayName, double unitPrice, long total,
+			long remaining, long unclaimed, long placedAt) {
+		/** A bare order with nothing known about its history, which is what most tests want. */
+		public static Order of(String itemId, String displayName, double unitPrice, long remaining) {
+			return new Order(itemId, displayName, unitPrice, remaining, remaining, 0L, 0L);
+		}
+
+		/** Units that have filled, whether or not they have been collected. */
+		public long filled() {
+			return Math.max(0L, total - remaining);
+		}
+
+		public boolean partlyFilled() {
+			return filled() > 0L && remaining > 0L;
+		}
+
+		/** Hours the order is known to have been resting, or empty when nothing timed it. */
+		public OptionalDouble restingHours(long now) {
+			return placedAt <= 0L || now <= placedAt
+					? OptionalDouble.empty()
+					: OptionalDouble.of((now - placedAt) / 3_600_000.0d);
+		}
 	}
 
 	public enum Action {
@@ -57,7 +89,19 @@ public final class NpcReprice {
 		REPRICE,
 
 		/** Outbid past the point where the trade is worth a slot. Take the order off the book. */
-		CANCEL
+		CANCEL,
+
+		/**
+		 * Still priced fine and still not filled, past the window the coins were budgeted for.
+		 *
+		 * <p>The one piece of advice here that is not about the book. {@code npcRestingHours} means
+		 * "how long capital may sit in this trade", and until now nothing enforced it: an order that
+		 * held the top of the book and collected nothing for a day was reported as healthy every
+		 * time, because on every axis the book knows about it was. Cancelling it is not a loss - the
+		 * refund is the whole remaining stake - it is the slot and the coins going back to the
+		 * basket, which is the only place they can earn anything.
+		 */
+		EXPIRED
 	}
 
 	/**
@@ -89,9 +133,19 @@ public final class NpcReprice {
 
 		/** Profit still on the table if the remaining units fill at the advised price. */
 		public double profitAtStake() {
-			return action == Action.CANCEL
+			return action == Action.CANCEL || action == Action.EXPIRED
 					? 0.0d
 					: (npcPrice - priceInQuestion()) * order.remaining();
+		}
+
+		/** Coins the units already filled are worth at the NPC, which is what claiming releases. */
+		public double claimableProfit() {
+			return Math.max(0.0d, npcPrice - order.unitPrice()) * order.unclaimed();
+		}
+
+		/** Whether there is a partial fill sitting in the order waiting to be collected. */
+		public boolean hasUnclaimed() {
+			return order.unclaimed() > 0L;
 		}
 
 		/** Coins tied up in the units still resting, at whatever they would end up costing. */
@@ -103,8 +157,19 @@ public final class NpcReprice {
 			return action == Action.REPRICE ? postPrice : order.unitPrice();
 		}
 
+		/** Whether this order wants a click on the book, ignoring anything waiting to be claimed. */
 		public boolean needsAction() {
 			return action != Action.HOLD;
+		}
+
+		/** Whether the player has anything at all to do here, claiming included. */
+		public boolean needsAnything() {
+			return needsAction() || hasUnclaimed();
+		}
+
+		/** Whether the advice is to take the order off the book, for whichever of the two reasons. */
+		public boolean isCancel() {
+			return action == Action.CANCEL || action == Action.EXPIRED;
 		}
 	}
 
@@ -118,26 +183,31 @@ public final class NpcReprice {
 	 *
 	 * <p>Sorted with the ones needing a click first and the largest of those at the top, because the
 	 * list is read while standing at a bazaar menu with a limited amount of patience.
+	 *
+	 * @param now epoch millis, passed rather than read so the resting-window rule is testable. Core
+	 *            owns no clock
 	 */
-	public static List<Advice> review(List<Order> orders, StrategyContext context) {
+	public static List<Advice> review(List<Order> orders, StrategyContext context, long now) {
 		List<Advice> advice = new ArrayList<>();
 
 		for (Order order : orders) {
-			adviseOn(order, context).ifPresent(advice::add);
+			adviseOn(order, context, now).ifPresent(advice::add);
 		}
 
 		advice.sort(Comparator
-				.comparing((Advice a) -> a.needsAction() ? 0 : 1)
+				.comparing((Advice a) -> a.needsAnything() ? 0 : 1)
 				.thenComparing(Comparator.comparingLong(Advice::capitalAtStake).reversed()));
 
 		return advice;
 	}
 
-	private static Optional<Advice> adviseOn(Order order, StrategyContext context) {
+	private static Optional<Advice> adviseOn(Order order, StrategyContext context, long now) {
 		ItemCatalog.Entry entry = context.catalog().get(order.itemId()).orElse(null);
 		BazaarProduct product = context.bazaar().products().get(order.itemId());
 
-		if (entry == null || product == null || order.remaining() <= 0L) {
+		// An order with nothing on the book and nothing to collect is finished, not resting.
+		if (entry == null || product == null
+				|| (order.remaining() <= 0L && order.unclaimed() <= 0L)) {
 			return Optional.empty();
 		}
 
@@ -150,6 +220,26 @@ public final class NpcReprice {
 		NpcContext npc = context.npc();
 		double chaseStop = npc.maxChasePrice(npcPrice);
 		OptionalDouble bestBid = product.instantSellPrice();
+
+		// Filled to the last unit and still holding them. There is no order left to price, so every
+		// branch below would be reasoning about a book position that no longer exists; the whole of
+		// what is left to do is the claim, which the caller reads off unclaimed().
+		if (order.remaining() <= 0L) {
+			return Optional.of(new Advice(order, Action.HOLD, npcPrice, order.unitPrice(),
+					order.unitPrice(), chaseStop, margin(npcPrice, order.unitPrice()),
+					"Filled completely - all " + order.total() + " units are in the order waiting "
+							+ "to be collected"));
+		}
+
+		// Before anything about the book, because it is not a fact about the book: the window is how
+		// long these coins were ever meant to sit here, and an order that outlives it is holding a
+		// slot the basket could refill whether or not it is still correctly priced. Placed first so
+		// an outbid order past its window is told to come back rather than to chase.
+		Optional<Advice> expired = expiry(order, npcPrice, chaseStop, npc, now);
+
+		if (expired.isPresent()) {
+			return expired;
+		}
 
 		// An empty buy side with an order resting in it means the snapshot predates the order. Say
 		// so rather than computing a reprice off a book that does not contain your own bid.
@@ -196,6 +286,36 @@ public final class NpcReprice {
 				String.format("Outbid at %.1f. Move to %.1f and it is still a %.0f%% margin, with "
 								+ "%.1f of room left before the stop", bid, postPrice,
 						margin(npcPrice, postPrice) * 100.0d, chaseStop - postPrice)));
+	}
+
+	/**
+	 * The order has been resting longer than the coins were budgeted for, if anything timed it.
+	 *
+	 * <p>Deliberately blunt: past the window, with units still on the book, the advice is to take
+	 * them back. There is no partial credit for an order that is nearly done, because the refund is
+	 * the whole remaining stake and the same coins in the next basket are worth a measured amount
+	 * more. What stops this being noise is that {@link Order#placedAt} under-reports - it is when
+	 * the mod first saw the order, not when Hypixel accepted it - so a long-resting order the
+	 * tracker met five minutes ago is silently given another full window.
+	 */
+	private static Optional<Advice> expiry(Order order, double npcPrice, double chaseStop,
+			NpcContext npc, long now) {
+		OptionalDouble resting = order.restingHours(now);
+
+		if (resting.isEmpty() || resting.getAsDouble() < npc.restingHours()) {
+			return Optional.empty();
+		}
+
+		double hours = resting.getAsDouble();
+		String filled = order.filled() > 0L
+				? String.format("%d of %d units filled", order.filled(), order.total())
+				: "nothing has filled";
+
+		return Optional.of(new Advice(order, Action.EXPIRED, npcPrice, order.unitPrice(),
+				order.unitPrice(), chaseStop, margin(npcPrice, order.unitPrice()),
+				String.format("Resting %.1fh against a %.0fh window and %s. Cancel it: the refund is "
+								+ "the whole remaining stake, and the slot is what the next basket is "
+								+ "short of", hours, npc.restingHours(), filled)));
 	}
 
 	private static double margin(double npcPrice, double price) {
