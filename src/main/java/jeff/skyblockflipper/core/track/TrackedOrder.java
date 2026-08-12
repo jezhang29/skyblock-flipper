@@ -112,11 +112,26 @@ public final class TrackedOrder {
 
 	void applySnapshot(OrderSnapshot snapshot) {
 		// The menu is the ground truth for how much filled, including everything that happened
-		// with the client shut. It is never the truth about how much was collected: a claimed
-		// order simply stops showing coins, which is indistinguishable from never having filled.
+		// with the client shut.
 		filled = Math.max(filled, snapshot.filled());
 		total = snapshot.total();
 		unitPrice = snapshot.unitPrice();
+
+		// And for how much was collected, which used to be read as unknowable here. It is not: the
+		// menu prints "You have 3 items to claim!" on top of the Filled: line, and stops printing it
+		// once they are claimed, so what is uncollected is stated and what is collected is the rest.
+		//
+		// Without this a claim made before the tracker ever saw the order - in an earlier session,
+		// on another device - was invisible, and the order sat forever reporting filled units nobody
+		// had collected. A 1,525 unit Bronze Bowl order that filled 3 and had them claimed hours
+		// earlier was still the top line of the worklist, telling the player to claim 3 items that
+		// were already in their inventory.
+		//
+		// Computed against the snapshot's own filled count rather than the field above, so a chat
+		// stream that has run ahead of the menu cannot turn "nothing waiting" into units collected
+		// that the menu never reported filling.
+		snapshot.uncollected().ifPresent(waiting ->
+				claimed = Math.clamp(Math.max(claimed, snapshot.filled() - waiting), 0L, total));
 
 		if (itemId.isEmpty()) {
 			itemId = snapshot.itemId();

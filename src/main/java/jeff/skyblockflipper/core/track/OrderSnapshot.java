@@ -1,5 +1,7 @@
 package jeff.skyblockflipper.core.track;
 
+import java.util.OptionalLong;
+
 /**
  * One resting bazaar order as the orders menu described it at one moment.
  *
@@ -29,6 +31,29 @@ public record OrderSnapshot(long at, TradeEvent.Side side, String itemId, String
 	/** Filled but not yet collected, which is the state a tracker has to notice and act on. */
 	public boolean hasSomethingToClaim() {
 		return claimCoins > 0.0d || claimItems > 0L;
+	}
+
+	/**
+	 * Units that filled and are still sitting in the order, or empty when the menu cannot say.
+	 *
+	 * <p><b>The claim line is the only thing that distinguishes a collected fill from a fresh one.</b>
+	 * {@code Filled:} never goes down: an order that filled 3 of 1,525 and had those 3 collected still
+	 * reads {@code Filled: 3/1.5k} forever. What changes is that {@code You have 3 items to claim!}
+	 * stops being printed, and its absence is the evidence that nothing is waiting - the session this
+	 * was written from shows the same 903-unit partial fill with the claim line and then, two snapshots
+	 * later, without it.
+	 *
+	 * <p>A buy order holds items, so the count is exact. A sell offer holds coins, and the menu names
+	 * the coins rather than the units they came from, so the only reading available is the one where
+	 * there are none: no claim line means everything filled has been collected. With coins waiting,
+	 * this is empty rather than a unit count divided out of a taxed total.
+	 */
+	public OptionalLong uncollected() {
+		if (side == TradeEvent.Side.BUY) {
+			return OptionalLong.of(claimItems);
+		}
+
+		return claimCoins > 0.0d ? OptionalLong.empty() : OptionalLong.of(0L);
 	}
 
 	/** A fill that stopped short. The units left resting are {@code total - filled}. */

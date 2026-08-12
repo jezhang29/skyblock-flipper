@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -230,6 +231,83 @@ class TradeTrackerTest {
 		tracker.accept(chat("[Bazaar] Cancelled! Refunded 1,000 coins from cancelling Buy Order!"));
 
 		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Purple Candy").status());
+	}
+
+	/**
+	 * The Bronze Bowl case, measured live on 2026-08-11.
+	 *
+	 * <p>A 1,525 unit buy order filled 3 and the player claimed them. The menu still reads
+	 * {@code Filled: 3/1.5k} an hour later - that line never goes down - and the worklist kept its
+	 * top row saying "claim Bronze Bowl, 3" for the rest of the day. What actually changed at the
+	 * claim is that {@code You have 3 items to claim!} stopped being printed.
+	 */
+	@Test
+	void stopsWaitingOnUnitsTheMenuNoLongerHolds() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(buyOrder(1_000L, 3L, "You have 3 items to claim!"));
+		assertEquals(3L, order(tracker, "Bronze Bowl").unclaimed());
+
+		// Nothing in chat: the claim happened in a session this tracker never saw.
+		tracker.accept(buyOrder(2_000L, 3L));
+
+		assertEquals(3L, order(tracker, "Bronze Bowl").filled());
+		assertEquals(3L, order(tracker, "Bronze Bowl").claimed());
+		assertEquals(0L, order(tracker, "Bronze Bowl").unclaimed());
+		assertTrue(tracker.awaitingClaim().isEmpty());
+
+		// The other 1,522 are still on the book, so the order is still a position - it just has
+		// nothing to collect.
+		assertEquals(1_522L, order(tracker, "Bronze Bowl").remaining());
+		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Bronze Bowl").status());
+	}
+
+	/** A later fill on the same order is waiting again, so the claim is not a permanent silence. */
+	@Test
+	void noticesUnitsThatFilledAfterTheLastClaim() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(buyOrder(1_000L, 3L));
+		tracker.accept(buyOrder(2_000L, 11L, "You have 8 items to claim!"));
+
+		assertEquals(8L, order(tracker, "Bronze Bowl").unclaimed());
+		assertEquals(3L, order(tracker, "Bronze Bowl").claimed());
+	}
+
+	/**
+	 * A sell offer names coins rather than units, so only the empty case can be read off it.
+	 *
+	 * <p>Dividing a taxed coin total by a unit price to recover units would be a guess, and a guess
+	 * that came out one unit high would mark a fill as collected that is still sitting there.
+	 */
+	@Test
+	void leavesASellOfferAloneWhileCoinsAreWaiting() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(sellOffer(1_000L, 903L, "You have 34,107 coins to claim!"));
+		assertEquals(903L, order(tracker, "Slimeball").unclaimed());
+
+		tracker.accept(sellOffer(2_000L, 903L));
+		assertEquals(0L, order(tracker, "Slimeball").unclaimed());
+	}
+
+	private static CapturedMenu buyOrder(long at, long filled, String... claim) {
+		return orders(at, "BUY Bronze Bowl", "BRONZE_BOWL", "Order amount: 1,525x",
+				"Filled: " + filled + "/1.5k (0.2%)", "Price per unit: 2,724.0 coins", claim);
+	}
+
+	private static CapturedMenu sellOffer(long at, long filled, String... claim) {
+		return orders(at, "SELL Slimeball", "SLIME_BALL", "Offer amount: 1,344x",
+				"Filled: " + filled + "/1.3k (67.2%)", "Price per unit: 38.2 coins", claim);
+	}
+
+	private static CapturedMenu orders(long at, String name, String itemId, String amount,
+			String filled, String price, String... claim) {
+		List<String> lore = new ArrayList<>(List.of(amount, filled, price, "By: [MVP+] " + ME));
+		lore.addAll(List.of(claim));
+
+		return new CapturedMenu(at, "Co-op Bazaar Orders",
+				List.of(new CapturedSlot(11, name, lore, itemId, 1, "")));
 	}
 
 	private static CapturedChat chat(String line) {
