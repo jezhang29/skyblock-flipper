@@ -76,7 +76,17 @@ class NpcPersistenceBacktestTest {
 
 	/** The shipped filters a candidate has to clear before it is a candidate at all. */
 	private static final long MIN_WEEKLY_SOLD = 10_000L;
-	private static final double MIN_MARGIN_RATIO = 0.15d;
+
+	/**
+	 * The margin floor candidates are drawn at, i.e. {@code npcMinMarginRatio}.
+	 *
+	 * <p>Overridable with {@code -PnpcMinMarginRatio=0.10} because the floor is a setting and a test
+	 * that can only judge one value of it cannot answer the question a change to it raises: a
+	 * thinner floor admits thinner gaps, and whether those are as durable as the fat ones is exactly
+	 * what this measures. Defaults to the shipped 0.15.
+	 */
+	private static final double MIN_MARGIN_RATIO = Double.parseDouble(
+			System.getProperty("skyblockflipper.npcMinMarginRatio", "0.15"));
 
 	/** Holdout samples needed before a window is judged, i.e. about an hour of tape. */
 	private static final int MIN_HOLDOUT_SAMPLES = 10;

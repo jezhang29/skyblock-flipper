@@ -89,6 +89,11 @@ test {
 		// real game directory rather than run/, since there is no dev client.
 		systemProperty "skyblockflipper.bazaarTapeDir",
 				project.findProperty("bazaarTapeDir") ?: "run/config/skyblock-flipper/bazaar-tape"
+		// The NPC margin floor is a setting, so the backtests that judge candidates drawn at it
+		// have to be runnable at a floor other than the shipped one - otherwise a proposed change
+		// to npcMinMarginRatio cannot be checked before it is made.
+		systemProperty "skyblockflipper.npcMinMarginRatio",
+				project.findProperty("npcMinMarginRatio") ?: "0.15"
 		// It prints the measurement it makes, which is the point of running it.
 		testLogging.showStandardStreams = true
 		// A week of server-collected tape is over a gigabyte of blobs, and the window backtest
