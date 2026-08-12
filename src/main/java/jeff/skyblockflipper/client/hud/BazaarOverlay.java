@@ -59,23 +59,54 @@ import java.util.List;
  * which is a small price for covering the one screen the plan is actually typed into.
  */
 public final class BazaarOverlay {
-	private static final int PANEL = 0xD0000000;
-	private static final int PANEL_EDGE = 0xFF404040;
-	private static final int TEXT = 0xFFFFFFFF;
-	private static final int TEXT_DIM = 0xFFAAAAAA;
-	private static final int TEXT_PRICE = 0xFF9FD4FF;
-	private static final int TEXT_UNITS = 0xFF55FF55;
+	private static final int PANEL = 0xE0080A0D;
+	private static final int PANEL_EDGE = 0xFF3A4048;
+	private static final int HEADER_RULE = 0x40FFFFFF;
+	private static final int GROUP_RULE = 0x22FFFFFF;
+	private static final int ROW_STRIPE = 0x14FFFFFF;
+	private static final int TEXT = 0xFFF0F2F5;
+	private static final int TEXT_DIM = 0xFF8B939C;
+	private static final int TEXT_PRICE = 0xFF7FB8FF;
+	private static final int TEXT_UNITS = 0xFFBFD8B0;
 	private static final int TEXT_COPIED = 0xFFFFD700;
 	private static final int ROW_OPEN = 0x50FFD700;
 	private static final int ROW_HOVER = 0x30FFFFFF;
 
+	/**
+	 * One colour per {@link NpcWorklist.Kind}, which is what makes a twenty-row list scannable.
+	 *
+	 * <p>Every row used to be the same white, so the only thing separating "these coins are already
+	 * yours" from "type this price into a box" was reading the first word of each line. The list is
+	 * already sorted by kind, so colouring the verb and the stripe beside it turns it into blocks a
+	 * player can find their place in without reading.
+	 */
+	private static int colourOf(NpcWorklist.Kind kind) {
+		return switch (kind) {
+			case CLAIM -> 0xFFFFD24A;
+			case CANCEL -> 0xFFFF6B6B;
+			case REPRICE -> 0xFFFFA65C;
+			case PLACE -> 0xFF6FD98A;
+			case HOLD -> TEXT_DIM;
+		};
+	}
+
 	private static final int PAD = 4;
+
+	/** Width of the coloured bar down the left of each row, in panel pixels. */
+	private static final int ACCENT = 2;
+
+	/** Space between that bar and the text. */
+	private static final int ACCENT_GAP = 3;
 
 	/** Gap between the name line and the numbers under it. */
 	private static final int LINE_GAP = 1;
 
 	/** Gap between the price and the units on the numbers line, and the click boundary between them. */
 	private static final int NUMBER_GAP = 5;
+
+	/** Drawn before the price and after the units, so two bare numbers cannot read as one. */
+	private static final String PRICE_MARK = "@";
+	private static final String UNITS_MARK = "x";
 
 	/** Width the panel would like before it starts shrinking to fit the space beside the menu. */
 	private static final int TARGET_WIDTH = 150;
@@ -289,27 +320,36 @@ public final class BazaarOverlay {
 		 *              box character by character, and 84999.9 shortened to 85k is a different order.
 		 *              Empty on a claim or a cancel, which are a button rather than a number
 		 */
-		private record Row(NpcWorklist.Task task, String name, String price, String units) {
+		private record Row(NpcWorklist.Task task, String verb, String name, String price,
+				String units) {
+			int colour() {
+				return colourOf(task.kind());
+			}
 		}
 
 		static Board of(NpcWorklist.Worklist worklist, String title, Font font) {
 			List<Row> rows = new ArrayList<>();
 			List<String> names = new ArrayList<>();
 			int width = TARGET_WIDTH;
+			int indent = PAD + ACCENT + ACCENT_GAP;
 
 			for (NpcWorklist.Task task : worklist.pending()) {
-				Row row = new Row(task, task.verb() + " " + task.displayName(),
+				Row row = new Row(task, task.verb(), task.displayName(),
 						task.hasPrice() ? String.format("%.1f", task.price()) : "",
 						task.orderSplit());
 
 				rows.add(row);
 				names.add(task.displayName());
-				width = Math.max(width, PAD * 2 + Math.max(text(font, row.name()),
-						text(font, row.price()) + NUMBER_GAP + text(font, row.units())));
+
+				int nameLine = text(font, row.verb() + " " + row.name());
+				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
+						+ text(font, row.units()) + text(font, UNITS_MARK);
+
+				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
 			}
 
 			return new Board(rows, BazaarMenu.productPageFor(title, names), worklist.holding(),
-					width, font.lineHeight * 2 + LINE_GAP + 2, font.lineHeight + 3);
+					width, font.lineHeight * 2 + LINE_GAP + 2, font.lineHeight + 5);
 		}
 
 		private static int text(Font font, String value) {
@@ -340,46 +380,87 @@ public final class BazaarOverlay {
 			int height = height(shown, font);
 			int first = Hit.firstRow();
 			int last = Math.min(rows.size(), first + shown);
+			int right = x + width;
+			int textX = x + PAD + ACCENT + ACCENT_GAP;
 
-			graphics.fill(x, y, x + width, y + height, PANEL);
-			graphics.fill(x, y, x + width, y + 1, PANEL_EDGE);
-			graphics.fill(x, y + height - 1, x + width, y + height, PANEL_EDGE);
+			graphics.fill(x, y, right, y + height, PANEL);
+			// A whole border rather than two edges: the panel sits on top of Hypixel's own menu art,
+			// and an unclosed box reads as part of it.
+			graphics.fill(x, y, right, y + 1, PANEL_EDGE);
+			graphics.fill(x, y + height - 1, right, y + height, PANEL_EDGE);
+			graphics.fill(x, y, x + 1, y + height, PANEL_EDGE);
+			graphics.fill(right - 1, y, right, y + height, PANEL_EDGE);
 
 			int cursor = y + PAD;
 
 			graphics.text(font, Component.literal(heading(first, last))
 					.withStyle(ChatFormatting.GOLD), x + PAD, cursor, TEXT);
+			graphics.fill(x + 1, cursor + headerHeight - 3, right - 1, cursor + headerHeight - 2,
+					HEADER_RULE);
 			cursor += headerHeight;
 
 			for (int i = first; i < last; i++) {
 				Row row = rows.get(i);
+				int bottom = cursor + rowHeight - 2;
+
+				// Zebra striping under everything else. Two-line rows with no background of their own
+				// ran together into a wall of text, which is what made a twenty-row list unreadable.
+				if ((i & 1) == 1) {
+					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_STRIPE);
+				}
 
 				// The row for the product page actually open, so a list of twenty does not have to
 				// be read through to find the one in front of you.
 				if (!openProduct.isEmpty()
 						&& row.task().displayName().equalsIgnoreCase(openProduct)) {
-					graphics.fill(x + 1, cursor - 1, x + width - 1, cursor + rowHeight - 2, ROW_OPEN);
+					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_OPEN);
 				} else if (i == hovered) {
-					graphics.fill(x + 1, cursor - 1, x + width - 1, cursor + rowHeight - 2, ROW_HOVER);
+					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_HOVER);
 				}
 
-				graphics.text(font, Component.literal(row.name()), x + PAD, cursor, TEXT);
-
-				int numbersY = cursor + font.lineHeight + LINE_GAP;
-				int unitsX = x + width - PAD - text(font, row.units());
-
-				graphics.text(font, Component.literal(row.units()), unitsX, numbersY, TEXT_UNITS);
-
-				if (!row.price().isEmpty()) {
-					graphics.text(font, Component.literal(row.price()),
-							unitsX - NUMBER_GAP - text(font, row.price()), numbersY, TEXT_PRICE);
+				// Where one kind of work ends and the next begins. The list is sorted claims, cancels,
+				// reprices, places, so this is a group boundary and not a per-row decoration.
+				if (i > first && rows.get(i - 1).task().kind() != row.task().kind()) {
+					graphics.fill(x + 1, cursor - 1, right - 1, cursor, GROUP_RULE);
 				}
+
+				graphics.fill(x + PAD, cursor, x + PAD + ACCENT, bottom, row.colour());
+
+				graphics.text(font, Component.literal(row.verb()), textX, cursor, row.colour());
+				graphics.text(font, Component.literal(row.name()),
+						textX + text(font, row.verb() + " "), cursor, TEXT);
+
+				drawNumbers(graphics, font, row, textX, right, cursor + font.lineHeight + LINE_GAP);
 
 				cursor += rowHeight;
 			}
 
 			graphics.text(font, Component.literal(Hit.footer(this)), x + PAD, cursor,
 					Hit.copiedRecently() ? TEXT_COPIED : TEXT_DIM);
+		}
+
+		/**
+		 * The price on the left of its line and the size on the right, each with a one-character mark.
+		 *
+		 * <p>Both numbers used to be pushed against the right edge, where {@code 306.5 26737} read as
+		 * one number twice - and the two are typed into different boxes. The marks are drawn rather
+		 * than made part of the string, because clicking either half copies the string.
+		 */
+		private void drawNumbers(GuiGraphicsExtractor graphics, Font font, Row row, int textX,
+				int right, int y) {
+			int unitsX = right - PAD - text(font, UNITS_MARK) - text(font, row.units());
+
+			graphics.text(font, Component.literal(row.units()), unitsX, y, TEXT_UNITS);
+			graphics.text(font, Component.literal(UNITS_MARK), unitsX + text(font, row.units()), y,
+					TEXT_DIM);
+
+			if (row.price().isEmpty()) {
+				return;
+			}
+
+			graphics.text(font, Component.literal(PRICE_MARK), textX, y, TEXT_DIM);
+			graphics.text(font, Component.literal(row.price()), textX + text(font, PRICE_MARK), y,
+					TEXT_PRICE);
 		}
 
 		/** The heading says how far down a scrolled list you are, and nothing when it all fits. */
@@ -389,8 +470,17 @@ public final class BazaarOverlay {
 					: "Do these (" + (first + 1) + "-" + last + " of " + rows.size() + ")";
 		}
 
+		/**
+		 * What the footer says when nothing has just been copied.
+		 *
+		 * <p>"1 ok" was not a sentence anybody could act on. The holds are the orders that need no
+		 * click, so saying what they are is the difference between a number and an explanation of why
+		 * they are not in the list above.
+		 */
 		String hint() {
-			return holding > 0 ? "click to copy - " + holding + " ok" : "click name/number to copy";
+			return holding > 0
+					? "click to copy - " + holding + " resting fine"
+					: "click a name or a number to copy";
 		}
 	}
 
@@ -532,7 +622,8 @@ public final class BazaarOverlay {
 			}
 
 			Font font = Minecraft.getInstance().font;
-			int unitsLeft = x + width - Math.round((PAD + Board.text(font, row.units())) * scale);
+			int unitsLeft = x + width - Math.round((PAD + Board.text(font, UNITS_MARK)
+					+ Board.text(font, row.units())) * scale);
 
 			if (mouseX >= unitsLeft) {
 				// The units of one order rather than the whole line: it is what goes in the amount
