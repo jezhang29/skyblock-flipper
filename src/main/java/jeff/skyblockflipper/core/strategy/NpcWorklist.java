@@ -345,7 +345,7 @@ public final class NpcWorklist {
 		tasks.addAll(claims(advice));
 		tasks.addAll(cancels(advice));
 		tasks.addAll(round == null ? reprices(advice) : roundReprices(rows, context, basket));
-		tasks.addAll(places(basket));
+		tasks.addAll(places(basket, context));
 		tasks.addAll(holds(advice, rows, round != null));
 
 		return new Worklist(tasks, basket, advice, round);
@@ -484,11 +484,27 @@ public final class NpcWorklist {
 	}
 
 	/**
-	 * The round's rows, at the prices it froze, in the order it ranked them.
+	 * The round's rows, in the order it ranked them, at the price the bazaar will offer for them now.
 	 *
 	 * <p>One row per item however many orders it takes, and left in the round's own order rather than
 	 * re-sorted: the round ranked on what each reprice is expected to earn before the next trip, which
 	 * is the number that decided the row was worth a click at all.
+	 *
+	 * <p><b>The row's membership is frozen and its price is not.</b> The two were frozen together and
+	 * they answer different questions. Which items to work has to hold still, or the list churns and
+	 * asks for a click that is stale before the player reaches a menu - that is the whole finding of
+	 * {@code docs/adr/0002-reprice-in-rounds.md} and none of it changes here. What to type does not
+	 * benefit from holding still, because the player is standing in front of Hypixel's own
+	 * "+0.1 coins" button, which reads the live book: a price frozen half an hour ago is visibly a
+	 * different number from the one the game is offering, and the player has to decide which to
+	 * believe. Measured over 2026-08-11..13 of the bazaar tape, the top bid moved inside a
+	 * thirty-minute window on 39% of {@code ENCHANTED_POISONOUS_POTATO} samples and 83% of
+	 * {@code BRONZE_BOWL} ones, so that is not a rare disagreement.
+	 *
+	 * <p>So this quotes {@code outbidBuyOrder()} off the snapshot in hand, which is the same
+	 * computation the button performs and at most one poll behind it. The frozen price is still what
+	 * {@link NpcRound#outstanding} judges the row worked against - the player acted on that number -
+	 * and still what {@code reserve} sizes the hold with.
 	 */
 	private static List<Task> roundReprices(List<NpcRound.Row> rows, StrategyContext context,
 			NpcBasket.Basket basket) {
@@ -502,18 +518,44 @@ public final class NpcWorklist {
 		List<Task> tasks = new ArrayList<>();
 
 		for (NpcRound.Row row : rows) {
+			double stop = chaseStop(context, row);
+			double price = postPriceNow(context, row);
+
+			// The book has caught the stop while the row was in hand. Where an order is still resting
+			// the live review has already emitted the cancel and rowsToWork dropped this; where the
+			// player is mid-reprice there is no order to cancel and nothing to say but "do not post
+			// it", so the row goes and the basket gets its coins back.
+			if (stop > 0.0d && price > stop) {
+				continue;
+			}
+
 			long perOrder = unitsPerOrder(context, row.itemId());
-			long capital = Math.round(row.postPrice() * row.units());
-			long firstOrder = Math.round(row.postPrice() * Math.min(row.units(), perOrder));
+			long capital = Math.round(price * row.units());
+			long firstOrder = Math.round(price * Math.min(row.units(), perOrder));
 			boolean placeFirst = freeSlots >= 1 && freeCoins >= firstOrder;
 
-			tasks.add(new Task(Kind.REPRICE, row.itemId(), row.displayName(), row.postPrice(),
+			tasks.add(new Task(Kind.REPRICE, row.itemId(), row.displayName(), price,
 					row.units(), Stacking.orderSplit(row.units(), perOrder),
 					profitAtStake(context, row), capital,
-					repriceReason(row, perOrder, placeFirst, capital)));
+					repriceReason(row, price, perOrder, placeFirst, capital, stop)));
 		}
 
 		return tasks;
+	}
+
+	/**
+	 * Where to post this row to be the top of the book, off the snapshot in hand.
+	 *
+	 * <p>Falls back to the round's frozen price when the snapshot has no buy side for the item, which
+	 * means the book has not been fetched rather than that nobody is bidding. A stale number beats no
+	 * number in a field the player is about to type into.
+	 */
+	private static double postPriceNow(StrategyContext context, NpcRound.Row row) {
+		BazaarProduct product = context.bazaar().products().get(row.itemId());
+
+		return product == null
+				? row.postPrice()
+				: product.outbidBuyOrder().orElse(row.postPrice());
 	}
 
 	/**
@@ -526,22 +568,46 @@ public final class NpcWorklist {
 	 * the round and its slot and capital are reserved, so what it needs to go back on the book is
 	 * still there when the player gets to it.
 	 */
-	private static String repriceReason(NpcRound.Row row, long perOrder, boolean placeFirst,
-			long capital) {
+	private static String repriceReason(NpcRound.Row row, double price, long perOrder,
+			boolean placeFirst, long capital, double chaseStop) {
 		String size = row.orders() == 1
 				? String.format("%d units", row.units())
 				: String.format("%d orders, %s units", row.orders(),
 						Stacking.orderSplit(row.units(), perOrder));
 
-		String worth = String.format("Outbid. Move %s to %.1f, worth about %s before the next "
-				+ "check-in. ", size, row.postPrice(), Coins.format(row.gain()));
+		// One instruction, not two numbers to choose between. The bazaar's "+0.1 coins" button is
+		// the same computation this price is - top bid plus one increment - so naming the button
+		// rather than asking the player to compare it against the figure means there is nothing to
+		// get wrong when the book has moved in the seconds since the last poll. The stop is quoted
+		// as a bound and not as a decision: a row whose live price is already past it never reaches
+		// this list.
+		String worth = String.format("Outbid. Move %s back to the top with the bazaar's own "
+						+ "\"+0.1 coins\" button - about %.1f, and never above %.1f. Worth about %s "
+						+ "before the next check-in. ",
+				size, price, chaseStop, Coins.format(row.gain()));
 
 		return worth + (placeFirst
 				? "A slot and the coins are free, so place the new order first and cancel the old "
 						+ "one after: that way the item is never off the book"
-				: "Cancel first, then re-post at that price - it is held for the rest of the round, "
-						+ "and so are the slot and the " + Coins.format(capital) + " it needs, so "
-						+ "the basket cannot spend them while you are mid-reprice");
+				: "Cancel first, then re-post - the row, the slot and the " + Coins.format(capital)
+						+ " it needs are held for the rest of the round, so the basket cannot spend "
+						+ "them while you are mid-reprice");
+	}
+
+	/**
+	 * The highest price this item is still worth chasing to, recomputed rather than frozen.
+	 *
+	 * <p>Safe to take live, unlike the post price: it is the NPC price - which cannot move - against
+	 * {@code npcMinMarginRatio}, so nothing about the book enters it. It is the same
+	 * {@code NpcContext.maxChasePrice} the review used to decide the row was a reprice and not a
+	 * cancel.
+	 */
+	private static double chaseStop(StrategyContext context, NpcRound.Row row) {
+		double npcPrice = context.catalog().get(row.itemId())
+				.flatMap(ItemCatalog.Entry::npcPrice)
+				.orElse(0.0d);
+
+		return context.npc().maxChasePrice(npcPrice);
 	}
 
 	/** Coins still reachable on the row, the same axis every other task reports profit on. */
@@ -562,14 +628,21 @@ public final class NpcWorklist {
 	}
 
 	/** The new orders, in the order the allocator ranked them. */
-	private static List<Task> places(NpcBasket.Basket basket) {
+	private static List<Task> places(NpcBasket.Basket basket, StrategyContext context) {
+		// Same instruction as a reprice, because it is the same click. A new order is priced off the
+		// snapshot in hand rather than off a round, so it was never as stale as a frozen reprice -
+		// but naming the button in one place and a bare number in the other is what makes a player
+		// wonder which of the two the mod means.
 		return basket.lines().stream()
 				.map(line -> new Task(Kind.PLACE, line.plan().itemId(), line.plan().displayName(),
 						line.plan().postPrice(), line.units(), line.orderSplit(), line.profit(),
 						line.capital(),
-						String.format("Buy order at %.1f, sell to the NPC at %.1f: %.0f%% margin on "
-										+ "%d units", line.plan().postPrice(), line.plan().npcPrice(),
-								line.plan().marginRatio() * 100.0d, line.units())))
+						String.format("Buy order with the bazaar's own \"+0.1 coins\" button - about "
+										+ "%.1f, and never above %.1f. Sell to the NPC at %.1f: "
+										+ "%.0f%% margin on %d units", line.plan().postPrice(),
+								context.npc().maxChasePrice(line.plan().npcPrice()),
+								line.plan().npcPrice(), line.plan().marginRatio() * 100.0d,
+								line.units())))
 				.toList();
 	}
 

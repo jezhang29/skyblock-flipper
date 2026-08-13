@@ -48,9 +48,18 @@ minutes while a Clipped Wings order will hold for hours.
 
 **Chase on a clock, not on the book.** Reprice advice is delivered in rounds.
 
-- A round is a frozen list of tasks with **frozen prices**, opened at most once per
-  `npcCheckInMinutes`. Prices computed when the round opens do not move while you work it, so a
-  number can be read, walked to a menu and typed.
+- A round is a **frozen list of tasks**, opened at most once per `npcCheckInMinutes`. Which items
+  are being worked does not change while you work it, so the panel does not grow a row, drop one or
+  re-rank them between menus.
+- **Superseded 2026-08-12: the price on a row is quoted live, not frozen.** The two were frozen
+  together and only the list needed it. The player is standing in front of Hypixel's "+0.1 coins"
+  button, which computes the same top-bid-plus-increment off the live book, so a frozen price is
+  visibly a different number from the one the game offers and nothing on the panel said which to
+  trust. The top bid moves inside a thirty-minute window on 39% of `ENCHANTED_POISONOUS_POTATO`
+  samples and 83% of `BRONZE_BOWL` ones (2026-08-11..13 tape), so that was the common case.
+  `NpcRound.Row.postPrice` is still frozen and is still what `outstanding` judges a row worked
+  against and what the reservation is sized on — it is no longer what the panel tells anyone to
+  type. See `docs/npc-flipping.md` for the table.
 - A round survives menu closes and NPC trips. **Closing the bazaar means nothing** — you have to
   leave it to sell to the NPC. It ends when the tracker sees every task done, or when the interval
   elapses and a fresh round supersedes it with recomputed prices.
@@ -177,11 +186,15 @@ Each step compiles and passes tests on its own and is committed `wip:` as it lan
    Rows merge per item, taking the **highest** of the merged post prices so no order is re-posted
    under the top of the book, and `OUTBID_TOLERANCE` is package-visible so the round calls the same
    two prices equal that the review does.
-   **A row is outstanding while the item has nothing resting on it**, which is what holds the price
-   through the cancel half of its own reprice - fault 3 above. The cost is a row that lingers when a
-   re-post fills and is claimed inside the same interval, leaving no order behind as evidence it
-   moved; the next round clears it. A stale row costs one wasted click, and dropping a row mid-reprice
-   costs the number the player was walking to the menu to type.
+   **A row is outstanding while the item has nothing resting on it**, which is what holds the row
+   through the cancel half of its own reprice - fault 3 above.
+   **Amended 2026-08-12:** that reading also kept a row whose order had filled completely and been
+   claimed, because a finished flip and a half-done reprice look identical from the resting orders.
+   Measured on the user's own account: 3,391 units of Enchanted Poisonous Potato still being asked
+   for after the flip was sold, with the slot and 3.5M reserved against the basket for the rest of
+   the interval. `TrackedOrder.finishedByFilling()` and `TradeTracker.filledSince(at)` supply the
+   evidence from outside; a cancel is deliberately never counted, so a missed refund line costs one
+   round of a stale row rather than deleting a row mid-reprice.
 4. ~~**Wire the round into `NpcWorklist`.**~~ **Done, `3841956`.** `NpcWorklist.of` gained a
    four-argument form taking the round; the three-argument one passes null and behaves exactly as
    before, which is the honest answer for a caller tracking no clock. Given a round: the review is

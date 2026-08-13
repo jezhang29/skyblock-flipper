@@ -40,7 +40,8 @@ bankroll, the 500M daily cap, and the user's time.
 | edge persistence | gap present in ≥95% of tape samples | Order-slot efficiency, not safety |
 | ranking key | profit per inventory slot-load | 16x better than cap efficiency |
 | check-in interval | 30 minutes default | User will check in several times an hour; also the length of a reprice round |
-| reprice delivery | rounds with frozen prices, never per book move | See below and `docs/adr/0002-reprice-in-rounds.md` |
+| reprice delivery | rounds with a frozen list, never per book move | See below and `docs/adr/0002-reprice-in-rounds.md` |
+| price to type | Hypixel's own "+0.1 coins" button, quoted live | The mod is always a poll behind it; frozen prices visibly disagreed |
 | resting window | 8 hours | One cycle |
 | order slots | configurable, default all available | Coop members need slots too |
 | book-depth guard | **none** | Rejected; see below |
@@ -294,10 +295,31 @@ seconds, so the mod asked for a reprice within seconds, forever.
 1h → 30 min is worth 690k of it (~1%). Continuous chasing is not the top of that curve; it is off the
 end of it, buying nothing and costing every click.
 
-So advice is delivered in **rounds**: a frozen list of tasks with frozen prices, opened at most once
-per `npcCheckInMinutes`, surviving menu closes and NPC trips, superseded when the interval elapses.
-The cost is being a price step down for up to one interval — about 1% of a cycle by the table above,
+So advice is delivered in **rounds**: a frozen list of tasks, opened at most once per
+`npcCheckInMinutes`, surviving menu closes and NPC trips, superseded when the interval elapses. The
+cost is being a price step down for up to one interval — about 1% of a cycle by the table above,
 against a chase that is not achievable by hand at any price.
+
+**The list is frozen; the price quoted on a row is not.** They were frozen together and only the
+list is what the measurement above is about. The player reading a row is standing in front of
+Hypixel's own "+0.1 coins" button, which computes exactly what the mod does — top buy order plus one
+increment — off the live book, so a price frozen half an hour ago is visibly a different number from
+the one the game is offering and there is no way to tell from the panel which to believe. Measured
+over 2026-08-11..13 of the bazaar tape, 709 thirty-minute windows per item:
+
+| item | top bid moved within the window | median | p90 |
+| --- | --- | --- | --- |
+| `ENCHANTED_POISONOUS_POTATO` | 39% | 0 increments | 2 |
+| `REVENANT_CATALYST` | 45% | 0 | 2 |
+| `HORN_OF_TAURUS` | 48% | 0 | 2 |
+| `MANTID_CLAW` | 81% | 2 | large |
+| `BRONZE_BOWL` | 83% | 2 | 8 |
+
+So the row names the button rather than a number to reconcile with it, and `NpcWorklist` re-reads
+`outbidBuyOrder()` off the snapshot in hand. `NpcRound.Row.postPrice` stays frozen for the two jobs
+that need the number the player acted on: judging a row worked (`outstanding`) and sizing the
+reserved capital. A row whose live price has passed the chase stop is dropped rather than shown, so
+the stop is a bound the player never has to apply by hand.
 
 Three things the round is measured or reasoned into, rather than chosen:
 
