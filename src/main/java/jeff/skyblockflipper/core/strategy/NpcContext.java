@@ -142,9 +142,21 @@ public record NpcContext(
 	 * taken at the largest size it is worth on its own and the next one gets what is left.
 	 */
 	public int ordersForItem(int slotsLeft) {
-		return maxOrdersPerItem == UNLIMITED_ORDERS_PER_ITEM
-				? slotsLeft
-				: Math.min(maxOrdersPerItem, slotsLeft);
+		return ordersForItem(slotsLeft, 0);
+	}
+
+	/**
+	 * The same allowance for an item that already has orders resting, which they count against.
+	 *
+	 * <p>A cap of two means two orders on the item, not two more every time the basket is re-planned
+	 * around a position it is topping up.
+	 */
+	public int ordersForItem(int slotsLeft, int alreadyResting) {
+		if (maxOrdersPerItem == UNLIMITED_ORDERS_PER_ITEM) {
+			return slotsLeft;
+		}
+
+		return Math.min(Math.max(0, maxOrdersPerItem - Math.max(0, alreadyResting)), slotsLeft);
 	}
 
 	/**

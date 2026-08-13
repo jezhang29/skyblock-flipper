@@ -46,13 +46,28 @@ class NpcWorklistTest {
 
 	/** The same market with the whole book at a different level, which is how it moves under a round. */
 	private static StrategyContext context(int count, int slots, double topBid) {
+		return context(count, slots, topBid, false);
+	}
+
+	/**
+	 * The same market on products that do not stack, where one bazaar order holds 256 units.
+	 *
+	 * <p>The case a part-placed line only exists in: 1,024 units of an unstackable product is four
+	 * orders typed one at a time, so between the first and the fourth the book holds part of a line.
+	 */
+	private static StrategyContext unstackable(int count, int slots) {
+		return context(count, slots, 700.0d, true);
+	}
+
+	private static StrategyContext context(int count, int slots, double topBid,
+			boolean unstackable) {
 		Map<String, BazaarProduct> products = new LinkedHashMap<>();
 		Map<String, ItemCatalog.Entry> items = new LinkedHashMap<>();
 
 		for (int i = 0; i < count; i++) {
 			String id = "ITEM_" + i;
 			products.put(id, product(id, topBid - i));
-			items.put(id, new ItemCatalog.Entry(id, id, NPC_PRICE, false, List.of()));
+			items.put(id, new ItemCatalog.Entry(id, id, NPC_PRICE, unstackable, List.of()));
 		}
 
 		return new StrategyContext(
@@ -102,6 +117,83 @@ class NpcWorklistTest {
 		assertTrue(worklist.pending().stream()
 				.noneMatch(task -> task.itemId().startsWith("ITEM_0")
 						|| task.itemId().equals("ITEM_1") || task.itemId().equals("ITEM_2")));
+	}
+
+	/**
+	 * A line larger than one order counts down as it is placed, rather than vanishing on the first one.
+	 *
+	 * <p>Reported from live play on 2026-08-12: the panel asked for 1,024 units of an unstackable
+	 * product, the player typed the first order of 256, and the row disappeared - the basket dropped
+	 * any item with an order resting on it, so the remaining 768 were asked for by nothing and shown
+	 * nowhere. There is no way to place four orders at once, so every multi-order line spent most of
+	 * its life in exactly this state.
+	 */
+	@Test
+	void countsDownAPartPlacedLineRatherThanForgettingIt() {
+		StrategyContext context = unstackable(1, 4);
+
+		// Four slots on a product that takes 256 to an order, so the plan is 1,024 units.
+		NpcWorklist.Task whole = of(NpcWorklist.of(List.of(), context, NOW), NpcWorklist.Kind.PLACE)
+				.getFirst();
+
+		assertEquals(1_024L, whole.units());
+		assertEquals("4 x 256", whole.orderSplit());
+
+		// One order typed, at the price the row quoted. Three to go.
+		List<NpcReprice.Order> resting =
+				List.of(NpcReprice.Order.of("ITEM_0", "ITEM_0", 700.1d, 256L));
+		NpcWorklist.Worklist worklist = NpcWorklist.of(resting, context, NOW);
+		List<NpcWorklist.Task> places = of(worklist, NpcWorklist.Kind.PLACE);
+
+		assertEquals(1, places.size());
+		assertEquals(768L, places.getFirst().units());
+		assertEquals("3 x 256", places.getFirst().orderSplit());
+		assertEquals(1, worklist.holding(), "the order already placed is a hold, not a second line");
+
+		// And the row says what is already up, so "768" cannot be read as a fresh plan of 768.
+		assertTrue(places.getFirst().reason().contains("256 of the 1024 this item is worth are "
+				+ "already resting"), places.getFirst().reason());
+	}
+
+	/** The position is what is sized, so what is already up is never bought twice. */
+	@Test
+	void stopsToppingUpWhenThePositionIsTheSizeItIsWorth() {
+		StrategyContext context = unstackable(1, 4);
+
+		// All four orders placed. Nothing is left to ask for, and the account has no slot for it.
+		List<NpcReprice.Order> resting = List.of(
+				NpcReprice.Order.of("ITEM_0", "ITEM_0", 700.1d, 256L),
+				NpcReprice.Order.of("ITEM_0", "ITEM_0", 700.1d, 256L),
+				NpcReprice.Order.of("ITEM_0", "ITEM_0", 700.1d, 256L),
+				NpcReprice.Order.of("ITEM_0", "ITEM_0", 700.1d, 256L));
+
+		NpcWorklist.Worklist worklist = NpcWorklist.of(resting, context, NOW);
+
+		assertEquals(0, worklist.count(NpcWorklist.Kind.PLACE));
+		assertEquals(4, worklist.holding());
+	}
+
+	/**
+	 * A top-up is refused while anything else in the trip is asking about the item's orders.
+	 *
+	 * <p>A reprice and a cancel each carry a price the basket does not know - the frozen one the
+	 * player is walking to the menu with, or none at all - and a place quoted from the allocator
+	 * beside a reprice quoted from the round is two prices for one item, which is how a player ends
+	 * up outbidding themselves.
+	 */
+	@Test
+	void refusesToTopUpAnItemTheTripIsAlreadyRepricing() {
+		StrategyContext context = unstackable(1, 4);
+		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 256L));
+
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(resting, context, NOW, roundOver(resting, context));
+
+		assertEquals(1, worklist.count(NpcWorklist.Kind.REPRICE));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.PLACE));
+
+		// Without the round, straight off the book, the reprice is still what owns the item.
+		assertEquals(0, NpcWorklist.of(resting, context, NOW).count(NpcWorklist.Kind.PLACE));
 	}
 
 	/**

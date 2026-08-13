@@ -3,10 +3,10 @@ package jeff.skyblockflipper.core.strategy;
 import jeff.skyblockflipper.core.model.Stacking;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -47,42 +47,99 @@ public final class NpcBasket {
 	 * it and you spend coins you have not got on orders you already have, at a second price, bidding
 	 * against your own resting order on the same book.
 	 *
-	 * <p><b>An item you hold is dropped from the basket entirely rather than topped up.</b> The
-	 * order already resting on it is {@link NpcReprice}'s to talk about, and it has the one number a
-	 * new line does not: the price you actually got. Two lines on one item, quoted from two
-	 * different sides of the mod, is how a player ends up outbidding themselves.
-	 *
-	 * @param orders  bazaar order slots the resting orders occupy
-	 * @param capital coins they have tied up, at the price they actually rest at
-	 * @param itemIds products with an order already resting on them
+	 * @param orders    bazaar order slots the resting orders occupy
+	 * @param capital   coins they have tied up, at the price they actually rest at
+	 * @param positions one entry per product with an order already resting on it
 	 */
-	public record Held(int orders, long capital, Set<String> itemIds) {
+	public record Held(int orders, long capital, Map<String, Position> positions) {
 		public Held {
-			itemIds = Set.copyOf(itemIds);
+			positions = Map.copyOf(positions);
 			orders = Math.max(0, orders);
 			capital = Math.max(0L, capital);
 		}
 
-		/** Nothing resting: a fresh account, or a caller with no way to know. */
-		public static Held nothing() {
-			return new Held(0, 0L, Set.of());
+		/**
+		 * The shape before a position could be topped up: these items are held and none of them is
+		 * open to another order.
+		 *
+		 * <p>Kept because that is the right default for a caller that knows only which items it
+		 * holds. Sizing a top-up needs the units, and guessing them from an item id would size it
+		 * wrong in the direction that over-buys.
+		 */
+		public Held(int orders, long capital, Set<String> itemIds) {
+			this(orders, capital, closedPositions(itemIds));
 		}
 
-		/** One slot per order, because that is what the bazaar charges for one. */
-		public static Held of(Collection<NpcReprice.Order> resting) {
-			Set<String> ids = new HashSet<>();
-			long capital = 0L;
+		/** Nothing resting: a fresh account, or a caller with no way to know. */
+		public static Held nothing() {
+			return new Held(0, 0L, Map.of());
+		}
 
-			for (NpcReprice.Order order : resting) {
-				ids.add(order.itemId());
-				capital += Math.round(order.unitPrice() * order.remaining());
-			}
+		public Set<String> itemIds() {
+			return positions.keySet();
+		}
 
-			return new Held(resting.size(), capital, ids);
+		/** This item's resting position, or an empty one where nothing of it is on the book. */
+		public Position position(String itemId) {
+			return positions.getOrDefault(itemId, Position.none());
+		}
+
+		/**
+		 * Whether the basket must leave this item alone: something is resting on it and nothing may
+		 * be added to that.
+		 */
+		public boolean closed(String itemId) {
+			return positions.containsKey(itemId) && !positions.get(itemId).topUp();
 		}
 
 		public boolean isEmpty() {
-			return orders == 0 && capital == 0L && itemIds.isEmpty();
+			return orders == 0 && capital == 0L && positions.isEmpty();
+		}
+
+		private static Map<String, Position> closedPositions(Set<String> itemIds) {
+			Map<String, Position> positions = new LinkedHashMap<>();
+
+			for (String itemId : itemIds) {
+				positions.put(itemId, new Position(0, 0L, false));
+			}
+
+			return positions;
+		}
+	}
+
+	/**
+	 * One item's resting position, and whether the basket may add to it.
+	 *
+	 * <p><b>Why a held item is not simply dropped any more.</b> One bazaar order holds 256 units of
+	 * an unstackable product, so a 1,024-unit line is four orders and the player places them one at
+	 * a time. Dropping the item on the first of the four deleted the line the moment it was
+	 * half-followed: the panel went quiet with 768 units unplaced and nothing anywhere said how many
+	 * were left. Reported from live play on 2026-08-12.
+	 *
+	 * <p>What the old rule was protecting is still protected, by {@link #topUp} rather than by
+	 * dropping every position. A second line is refused whenever something else in the trip is
+	 * already talking about the item's orders - a reprice, a cancel, a claim - because those carry a
+	 * price this allocator does not know, and two lines on one item quoted from two sides of the mod
+	 * is how a player ends up outbidding themselves. A position that is simply resting on top of the
+	 * book has no such second opinion attached: the shortfall goes at the same price a fresh line
+	 * would, which is where the book is now.
+	 *
+	 * @param orders bazaar orders resting on this item, which is how many slots it already holds
+	 * @param units  units the position has already committed - what the orders were placed for, not
+	 *               what is still unfilled. A part-filled order has already bought its filled units,
+	 *               and sizing the top-up off what remains on the book would buy them twice
+	 * @param topUp  whether the basket may offer the difference between {@code units} and what the
+	 *               item is worth
+	 */
+	public record Position(int orders, long units, boolean topUp) {
+		public Position {
+			orders = Math.max(0, orders);
+			units = Math.max(0L, units);
+		}
+
+		/** Nothing of this item on the book, which is what every item not in {@link Held} has. */
+		public static Position none() {
+			return new Position(0, 0L, false);
 		}
 	}
 
@@ -104,12 +161,32 @@ public final class NpcBasket {
 	/**
 	 * One item's share of the basket.
 	 *
-	 * @param units   units to buy, after every shared budget was applied
-	 * @param orders  order slots this line occupies
-	 * @param capital coins it ties up, at the chase-inclusive unit cost
-	 * @param profit  expected coins if the whole line fills
+	 * @param units        units to buy, after every shared budget was applied
+	 * @param orders       order slots this line occupies
+	 * @param capital      coins it ties up, at the chase-inclusive unit cost
+	 * @param profit       expected coins if the whole line fills
+	 * @param restingUnits units of this item the account has already committed, which this line is
+	 *                     the remainder of. Zero on a line that opens a position, and the number the
+	 *                     row has to quote on one that finishes it: a player who placed one order of
+	 *                     four needs to be told which three are left, not handed a fresh total
 	 */
-	public record Line(NpcPlan plan, long units, int orders, long capital, double profit) {
+	public record Line(NpcPlan plan, long units, int orders, long capital, double profit,
+			long restingUnits) {
+		/** A line that opens a position, i.e. the shape every line had before top-ups existed. */
+		public Line(NpcPlan plan, long units, int orders, long capital, double profit) {
+			this(plan, units, orders, capital, profit, 0L);
+		}
+
+		/** Whether this adds to a position already on the book rather than opening one. */
+		public boolean topUp() {
+			return restingUnits > 0L;
+		}
+
+		/** Units the item will be holding once this line is placed, which is what it was sized to. */
+		public long positionUnits() {
+			return units + restingUnits;
+		}
+
 		/** Coins the NPC pays out for this line, which is what the daily cap is spent in. */
 		public long npcPayout() {
 			return Math.round(plan.npcPrice() * units);
@@ -283,16 +360,24 @@ public final class NpcBasket {
 				break;
 			}
 
-			// An order already rests on this item at a price the reprice round knows and this does
-			// not. Offering a second line would have the player bid against their own order.
-			if (held.itemIds().contains(plan.itemId())) {
+			// Something else in the trip is already talking about this item's orders, at a price this
+			// allocator does not know. Offering a line as well would have the player bid against
+			// their own order.
+			if (held.closed(plan.itemId())) {
 				continue;
 			}
 
+			Position position = held.position(plan.itemId());
+
+			// Only the shortfall. maxUnits is the size the position is worth in total, so an item
+			// with 256 of its 1,024 already resting is worth 768 more and not another 1,024.
+			long room = Math.max(0L, plan.maxUnits() - position.units());
+
 			// The cap bounds this line's slots, never the basket's: what it does not spend here is
-			// left for the next item down the list, which is the whole point of capping one.
-			long wanted = Math.min(plan.maxUnits(),
-					(long) npc.ordersForItem(slotsLeft) * plan.unitsPerOrder());
+			// left for the next item down the list, which is the whole point of capping one. The
+			// orders already resting count against it, for the same reason the units do.
+			long wanted = Math.min(room,
+					(long) npc.ordersForItem(slotsLeft, position.orders()) * plan.unitsPerOrder());
 			long affordable = affordableUnits(coinsLeft, plan.unitCost());
 			long withinCap = payoutUnits(payoutLeft, plan.npcPrice());
 			long units = Math.min(wanted, Math.min(affordable, withinCap));
@@ -313,13 +398,19 @@ public final class NpcBasket {
 
 			// What the line makes in total, on the same reading of minProfitPerFlip as every other
 			// filter in the mod. See NpcFlipStrategy for why this stopped being a rate.
-			if (lineProfit < context.minProfitPerFlip()) {
+			//
+			// Judged over the whole position rather than over the remainder, because one item's
+			// position is one flip and the floor is per flip. Otherwise the last part-order of a
+			// four-order line - 112 units, a quarter of the profit - could fall under a floor the
+			// 1,024-unit flip cleared, and the row would vanish with the position unfinished, which
+			// is the failure this whole top-up path exists to fix.
+			if (plan.unitNetProfit() * (units + position.units()) < context.minProfitPerFlip()) {
 				continue;
 			}
 
 			int orders = plan.ordersFor(units);
 			long lineCapital = Math.round(plan.unitCost() * units);
-			Line line = new Line(plan, units, orders, lineCapital, lineProfit);
+			Line line = new Line(plan, units, orders, lineCapital, lineProfit, position.units());
 
 			lines.add(line);
 			slotsLeft -= orders;
