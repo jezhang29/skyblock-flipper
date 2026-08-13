@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * One batch of reprice advice, with its prices frozen for the length of a check-in interval.
@@ -209,18 +210,28 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 	 * still outstanding. Prices are compared to within {@link NpcReprice#OUTBID_TOLERANCE}, because a
 	 * price read back from an escrow line is exact only to the coin.
 	 *
-	 * <p><b>An item with nothing resting on it is outstanding, not done.</b> That is the middle of a
-	 * reprice: the cancel has happened and the re-post has not, and this is the moment the mod used
-	 * to drop the row and the price with it. The cost of that reading is a row that lingers when a
-	 * re-post fills and is claimed inside the same interval, leaving no order behind to prove it was
-	 * ever moved; the next round clears it. A stale row costs a wasted click, and dropping a row
-	 * mid-reprice costs the number the player was about to type.
+	 * <p><b>An item with nothing resting on it is outstanding unless it was bought out.</b> Two
+	 * different things produce an empty book position and they need telling apart. The middle of a
+	 * reprice is one: the cancel has happened and the re-post has not, and dropping the row there
+	 * would delete the number the player was about to type. An order that filled to the last unit
+	 * and was claimed is the other, and there the trade is over - the flip worked, the coins are in
+	 * hand, and there is no order left to move.
+	 *
+	 * <p>{@code filled} is what separates them, and it has to come from outside: the resting orders
+	 * show nothing in both cases. Measured on the user's account on 2026-08-12 - an Enchanted
+	 * Poisonous Potato order filled completely, was claimed and was sold to the NPC, and the panel
+	 * went on asking for 3,391 units to be repriced until the interval ran out, reserving the slot
+	 * and 3.5M of bankroll from the basket the whole time.
+	 *
+	 * @param filled item ids whose orders left the book by filling since this round opened, from
+	 *               {@code TradeTracker.filledSince(openedAt)}. Empty is the old behaviour, which is
+	 *               the right answer for a caller with no tracker behind it
 	 */
-	public List<Row> outstanding(List<NpcReprice.Order> resting) {
+	public List<Row> outstanding(List<NpcReprice.Order> resting, Set<String> filled) {
 		List<Row> pending = new ArrayList<>();
 
 		for (Row row : rows) {
-			if (!done(row, resting)) {
+			if (!done(row, resting, filled)) {
 				pending.add(row);
 			}
 		}
@@ -228,12 +239,21 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 		return pending;
 	}
 
-	/** Whether every row has been worked, which is the other way a round ends. */
-	public boolean complete(List<NpcReprice.Order> resting) {
-		return outstanding(resting).isEmpty();
+	/** The same question with nothing known about what filled. */
+	public List<Row> outstanding(List<NpcReprice.Order> resting) {
+		return outstanding(resting, Set.of());
 	}
 
-	private static boolean done(Row row, List<NpcReprice.Order> resting) {
+	/** Whether every row has been worked, which is the other way a round ends. */
+	public boolean complete(List<NpcReprice.Order> resting, Set<String> filled) {
+		return outstanding(resting, filled).isEmpty();
+	}
+
+	public boolean complete(List<NpcReprice.Order> resting) {
+		return complete(resting, Set.of());
+	}
+
+	private static boolean done(Row row, List<NpcReprice.Order> resting, Set<String> filled) {
 		boolean any = false;
 
 		for (NpcReprice.Order order : resting) {
@@ -252,6 +272,8 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 			any = true;
 		}
 
-		return any;
+		// Nothing of this item is resting. Bought out since the round opened means the row is done;
+		// anything else is read as a reprice in progress and the row is held.
+		return any || filled.contains(row.itemId());
 	}
 }

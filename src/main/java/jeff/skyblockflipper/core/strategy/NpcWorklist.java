@@ -312,6 +312,22 @@ public final class NpcWorklist {
 	 */
 	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
 			NpcRound round) {
+		return of(resting, context, now, round, Set.of());
+	}
+
+	/**
+	 * The same trip, told which items have been bought out since the round opened.
+	 *
+	 * <p>The one thing the resting orders cannot say. A row whose orders have all left the book is
+	 * either mid-reprice or finished, and {@link NpcRound#outstanding(List, Set)} needs to be told
+	 * which - otherwise a completed flip keeps its row, its order slot and its share of the bankroll
+	 * for the rest of the interval.
+	 *
+	 * @param filled item ids whose buy orders filled and were claimed since {@code round} opened,
+	 *               from {@code TradeTracker.filledSince}. Ignored when there is no round
+	 */
+	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
+			NpcRound round, Set<String> filled) {
 		// A reprice is only worth what it fills before the next trip, so a round part way through
 		// values its rows over what is left of it. Null is a full interval, not no time at all.
 		Duration horizon = round == null ? null : round.remaining(now);
@@ -321,7 +337,7 @@ public final class NpcWorklist {
 		// missing from this snapshot - is not an NPC position, so charging the basket a slot for it
 		// would shrink the plan on the strength of a spread flip.
 		List<NpcReprice.Order> recognised = advice.stream().map(NpcReprice.Advice::order).toList();
-		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice);
+		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, filled);
 		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, rows));
 
 		List<Task> tasks = new ArrayList<>();
@@ -345,7 +361,7 @@ public final class NpcWorklist {
 	 * leaving the row in would be telling the player to cancel it and put it back.
 	 */
 	private static List<NpcRound.Row> rowsToWork(NpcRound round, List<NpcReprice.Order> recognised,
-			List<NpcReprice.Advice> advice) {
+			List<NpcReprice.Advice> advice, Set<String> filled) {
 		if (round == null) {
 			return List.of();
 		}
@@ -358,7 +374,7 @@ public final class NpcWorklist {
 			}
 		}
 
-		return round.outstanding(recognised).stream()
+		return round.outstanding(recognised, filled).stream()
 				.filter(row -> !dead.contains(row.itemId()))
 				.toList();
 	}

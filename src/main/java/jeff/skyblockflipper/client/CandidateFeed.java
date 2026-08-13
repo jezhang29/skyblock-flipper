@@ -20,6 +20,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The single place market state gets turned into ranked candidates.
@@ -156,9 +157,16 @@ public final class CandidateFeed {
 			worklistRevision = revision;
 			worklistOrders = orders;
 			worklistRound = round;
+			// What has been bought out since the round opened, which is the only thing that tells a
+			// row with nothing resting on it apart from a reprice caught between its cancel and its
+			// re-post. Without it a flip that filled and was claimed keeps asking to be repriced,
+			// and keeps its slot and its coins reserved, until the interval runs out.
 			worklist = NpcWorklist.of(
 					TrackerService.enabled() ? TrackerService.restingBuyOrders() : List.of(),
-					context(), System.currentTimeMillis(), round);
+					context(), System.currentTimeMillis(), round,
+					TrackerService.enabled() && round != null
+							? TrackerService.filledSince(round.openedAt())
+							: Set.of());
 
 			rememberQuotes(worklist);
 		}

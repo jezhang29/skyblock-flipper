@@ -24,6 +24,7 @@ public final class TrackedOrder {
 	private long claimed;
 	private double unitPrice;
 	private Status status = Status.RESTING;
+	private long finishedAt;
 
 	TrackedOrder(long placedAt, boolean adopted, TradeEvent.Side side, String displayName,
 			String itemId, long total, double setupCoins, double unitPrice) {
@@ -119,6 +120,32 @@ public final class TrackedOrder {
 		return status == Status.RESTING;
 	}
 
+	/** Epoch millis this order left the book, or 0 while it is still on it. */
+	public long finishedAt() {
+		return finishedAt;
+	}
+
+	/**
+	 * Whether this order left the book because it was bought out rather than because it was pulled.
+	 *
+	 * <p>The distinction {@code NpcRound} cannot work without. A reprice is a cancel and a re-post,
+	 * so mid-reprice an item has nothing resting on it and the frozen row must be held; a completed
+	 * flip also has nothing resting on it and the row must go. Both look identical from the resting
+	 * orders alone, which is why the row survived a filled and claimed order for the rest of the
+	 * interval - measured on the user's own account on 2026-08-12, where 3,391 units of Enchanted
+	 * Poisonous Potato were still being asked for after the order had filled, been claimed and been
+	 * sold.
+	 *
+	 * <p>{@link Status#CLAIMED} is the clean case: every unit filled and was collected.
+	 * {@link Status#VANISHED} counts only with nothing left on the book, which is an order last seen
+	 * complete that then left the menu - collected on another device, or in a session nothing was
+	 * watching. A vanish with units still remaining is not counted, because a cancel whose refund
+	 * line was missed lands there too and reading that as a fill would drop a live row.
+	 */
+	public boolean finishedByFilling() {
+		return status == Status.CLAIMED || (status == Status.VANISHED && remaining() <= 0L);
+	}
+
 	/** Units still on the book. */
 	public long remaining() {
 		return Math.max(0L, total - filled);
@@ -168,7 +195,7 @@ public final class TrackedOrder {
 		filled = Math.clamp(Math.max(filled, units), 0L, total);
 	}
 
-	void claim(long units, double claimUnitPrice) {
+	void claim(long at, long units, double claimUnitPrice) {
 		// A claim is proof of a fill even when no notification announced one, which is the only
 		// evidence a partial fill leaves in chat.
 		filled = Math.clamp(Math.max(filled, claimed + units), 0L, total);
@@ -180,10 +207,11 @@ public final class TrackedOrder {
 
 		if (claimed >= total) {
 			status = Status.CLAIMED;
+			finishedAt = at;
 		}
 	}
 
-	void cancel(long refunded) {
+	void cancel(long at, long refunded) {
 		if (refunded < remaining()) {
 			// Not a wording Hypixel has been observed to produce, but shrinking the order is the
 			// reading that cannot invent units that never existed.
@@ -195,9 +223,11 @@ public final class TrackedOrder {
 		// is a plan that reached two thirds of itself, and that is the number the fill rate is
 		// about; rewriting total down to what filled would score it as a complete success.
 		status = Status.CANCELLED;
+		finishedAt = at;
 	}
 
-	void vanish() {
+	void vanish(long at) {
 		status = Status.VANISHED;
+		finishedAt = at;
 	}
 }
