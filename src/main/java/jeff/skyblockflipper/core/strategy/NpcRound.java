@@ -25,9 +25,19 @@ import java.util.Set;
  * worked:
  *
  * <ul>
- *   <li><b>Frozen prices.</b> A price computed when the round opened can be read, walked to a menu
- *       and typed. Recomputing it against the book the player is standing in front of would change
- *       the number between reading it and using it.
+ *   <li><b>A frozen list.</b> Which items are being worked holds still for the interval, so the
+ *       panel does not grow a row, drop one or re-rank them while the player is walking between
+ *       menus. This is the part the measurement above is about.
+ *   <li><b>Frozen prices, for judging the round rather than for typing.</b> {@link Row#postPrice}
+ *       is what {@link #outstanding} calls a row worked against and what the reserved capital is
+ *       sized on - both have to be the number the player acted on. It is <b>not</b> what the panel
+ *       quotes: {@code NpcWorklist} re-reads {@code outbidBuyOrder()} off the snapshot in hand,
+ *       because the player is standing in front of Hypixel's own "+0.1 coins" button and a price
+ *       frozen half an hour ago is visibly a different number from the one the game is offering.
+ *       Over 2026-08-11..13 of the bazaar tape the top bid moved inside a thirty-minute window on
+ *       39% of {@code ENCHANTED_POISONOUS_POTATO} samples and 83% of {@code BRONZE_BOWL} ones, so
+ *       the disagreement was the common case and the player had no way to tell which number to
+ *       believe.
  *   <li><b>It survives its own cancel.</b> The bazaar has no in-place edit, so a reprice is a cancel
  *       and then a re-post, and the cancel deletes the order the price was derived from. A row is
  *       therefore held until the item is resting at the frozen price again - see
@@ -72,9 +82,11 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 	 * {@code TRANSMISSION_TUNER} is four orders and eight clicks, and four rows saying the same price
 	 * is four times the reading for one decision.
 	 *
-	 * @param postPrice the price to type, frozen at the moment the round opened. The highest of the
-	 *                  prices the merged orders each computed, so no order in the row is re-posted
-	 *                  under the top of the book
+	 * @param postPrice where the book was when the round opened, and the yardstick a row is judged
+	 *                  worked against. The highest of the prices the merged orders each computed, so
+	 *                  no order in the row is read as unmoved for being under a cheaper sibling's
+	 *                  price. <b>Not the number the panel tells anyone to type</b> - that is re-read
+	 *                  live, see the class docs
 	 * @param units     units to move, summed across the item's orders
 	 * @param orders    how many resting orders the row covers, which is how many cancels it is
 	 * @param gain      what the whole row is expected to make over the rest of the interval, from

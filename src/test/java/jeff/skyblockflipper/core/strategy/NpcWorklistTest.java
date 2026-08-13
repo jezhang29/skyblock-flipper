@@ -181,27 +181,52 @@ class NpcWorklistTest {
 	}
 
 	/**
-	 * The price is the one the round froze, not the one the book has now.
+	 * The round freezes which items to work. It does not freeze the number typed into the price box.
 	 *
-	 * <p>The whole point of the clock. A number read here is walked to a menu and typed, and a list
-	 * that recomputes it against the live book changes it in between - which on the contested books
-	 * this strategy trades is every few seconds.
+	 * <p>The two were frozen together and only the first is what the clock is for. A player reading
+	 * this row is standing in front of Hypixel's own "+0.1 coins" button, which reads the live book,
+	 * so a price frozen half an hour ago is visibly a different number from the one the game offers
+	 * and there is no way to tell from the panel which to believe. The top bid moved inside a
+	 * thirty-minute window on 39% of Enchanted Poisonous Potato samples and 83% of Bronze Bowl ones
+	 * over 2026-08-11..13 of the tape, so that disagreement is the common case rather than the edge.
 	 */
 	@Test
-	void repricesAtThePriceTheRoundFrozeEvenAfterTheBookMoves() {
+	void keepsTheRoundsRowButQuotesThePriceTheBookHasNow() {
 		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 500L));
 		NpcRound round = roundOver(resting, context(10, 5));
 
-		// The book has since walked up 60 coins, so a fresh review would say 760.1.
+		// The book has since walked up 60 coins. The row is the round's; the price is the book's.
 		NpcWorklist.Worklist worklist =
 				NpcWorklist.of(resting, context(10, 5, 760.0d), NOW, round);
 
 		List<NpcWorklist.Task> reprices = of(worklist, NpcWorklist.Kind.REPRICE);
 
 		assertEquals(1, reprices.size());
-		assertEquals(700.1d, reprices.getFirst().price(), 1e-9d);
+		assertEquals(760.1d, reprices.getFirst().price(), 1e-9d);
 		assertEquals(500L, reprices.getFirst().units());
 		assertTrue(worklist.hasRound());
+
+		// Still one row and still the round's, rather than a fresh review of a moved book: an order
+		// too young for this round stays out of it however far the book walks.
+		assertEquals(1, round.rows().size());
+	}
+
+	/**
+	 * The book crossed the chase stop while the row was in hand, and the row goes rather than asking
+	 * for a price the strategy would refuse to open a position at.
+	 *
+	 * <p>Mid-reprice on purpose: with an order still resting the live review emits the cancel and
+	 * {@code rowsToWork} drops the row on that. With the order already cancelled there is nothing to
+	 * cancel and nothing to say but "do not put it back", so the row has to be dropped here.
+	 */
+	@Test
+	void dropsAPinnedRowTheBookHasChasedPastTheStop() {
+		NpcRound round = roundOver(List.of(outbid("ITEM_0", 500L)), context(10, 5));
+
+		// The default floor is 20% of the 1000 an NPC pays, so 800 is the stop and 850.1 is past it.
+		NpcWorklist.Worklist worklist = NpcWorklist.of(List.of(), context(10, 5, 850.0d), NOW, round);
+
+		assertTrue(of(worklist, NpcWorklist.Kind.REPRICE).isEmpty());
 	}
 
 	/**

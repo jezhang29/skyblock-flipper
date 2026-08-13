@@ -355,6 +355,15 @@ public final class Guide {
 							+ "for another reprice within seconds, forever. Being a price step down "
 							+ "for up to one check-in costs about 1% of a cycle, and chasing every "
 							+ "move is not doable by hand at any price"),
+					new Term("The price to type", "Use the bazaar's own \"+0.1 coins\" button. It "
+							+ "computes the same thing the mod does - top buy order plus one increment "
+							+ "- off the book in front of you, and the mod is always at least one poll "
+							+ "behind it, so the button cannot be wrong and the mod can be a step out. "
+							+ "The number on the row is what to expect and what the profit was worked "
+							+ "out from, not a number you have to reconcile with the game. The only "
+							+ "rule on top of the button is the chase stop, and a row whose price has "
+							+ "already passed it is taken off the list rather than left for you to "
+							+ "catch"),
 					new Term("When the next one opens", "One check-in interval after the last one, "
 							+ "whether or not you finished it. Nothing you do opens one early - "
 							+ "closing the bazaar means nothing, because you have to leave it to "
