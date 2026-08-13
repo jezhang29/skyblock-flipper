@@ -175,6 +175,38 @@ class ChatParserTest {
 		assertEquals(25_000_000.0d, bought.coins());
 	}
 
+	/**
+	 * The NPC counter, quoted from the user's own {@code chat-capture.jsonl} of 2026-08-09. It was
+	 * in that file the whole time and nothing read it, so every NPC flip bought units it could never
+	 * be seen to sell.
+	 */
+	@Test
+	void readsASaleOverAnNpcCounter() {
+		TradeEvent event = parse("You sold Enchanted Mithril x64 for 81,920 Coins!");
+
+		assertEquals(TradeEvent.Kind.NPC_SOLD, event.kind());
+		assertEquals(TradeEvent.Side.SELL, event.side());
+		assertEquals("Enchanted Mithril", event.displayName());
+		assertEquals(64L, event.units());
+		assertEquals(81_920.0d, event.coins());
+
+		// Singular for a one-coin sale, which is 18 of the lines in that capture.
+		assertEquals(1L, parse("You sold Cobblestone x1 for 1 Coin!").units());
+
+		// A name with its own digits and an x in it survives, because only the trailing count and
+		// the coins are anchored.
+		assertEquals("Healing VIII Splash Potion",
+				parse("You sold Healing VIII Splash Potion x1 for 22,833 Coins!").displayName());
+	}
+
+	@Test
+	void doesNotTakeASaleSomebodyElseAnnounced() {
+		// Same shape, spoken rather than sent by the server. Anchoring is the whole defence.
+		assertTrue(ChatParser.parse(0L,
+				"[MVP+] Griefer: You sold Hyperion x1 for 999,999,999 Coins!").isEmpty());
+		assertTrue(ChatParser.parse(0L, "That item cannot be sold!").isEmpty());
+	}
+
 	@Test
 	void tellsAnInstantBuyFromAnInstantSell() {
 		assertEquals(TradeEvent.Side.BUY, parse("[Bazaar] Bought 8x Enchanted Ice for 984.0 coins!").side());

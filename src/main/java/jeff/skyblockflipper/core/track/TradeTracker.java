@@ -134,6 +134,10 @@ public final class TradeTracker {
 
 			case INSTANT -> settle(event, Settlement.Venue.BAZAAR_INSTANT);
 
+			// No order behind it and none to find: the counter takes the stack out of the inventory
+			// and pays for it in one line. Which position it closes is the ledger's question.
+			case NPC_SOLD -> settle(event, Settlement.Venue.NPC);
+
 			case AUCTION_BOUGHT, AUCTION_SOLD -> settle(event, Settlement.Venue.AUCTION);
 
 			// Carries no price: the only line that names one is the public broadcast every player's
