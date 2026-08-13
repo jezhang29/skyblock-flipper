@@ -31,7 +31,9 @@ public record Settlement(long at, Venue venue, TradeEvent.Side side, String item
 		/** An instant buy or sell, which never rested. */
 		BAZAAR_INSTANT,
 		/** A BIN purchase or an auction of yours that sold. */
-		AUCTION
+		AUCTION,
+		/** A sale over an NPC shop counter, which is untaxed and settles the moment it happens. */
+		NPC
 	}
 
 	/** The same settlement with an id attached, once a menu has taught the name. */

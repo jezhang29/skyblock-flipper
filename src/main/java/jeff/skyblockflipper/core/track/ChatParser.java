@@ -60,6 +60,22 @@ public final class ChatParser {
 	private static final Pattern INSTANT = Pattern.compile(
 			"^\\[Bazaar] (Bought|Sold) " + NUMBER + "x (.+?) for " + NUMBER + " coins!$");
 
+	/**
+	 * The NPC shop counter, and the only line that closes an NPC flip.
+	 *
+	 * <p>Measured over the 2,229 chat lines of the 2026-08-09 capture, where it is the single most
+	 * common trade wording: {@code You sold Cobblestone x64 for 64 Coins!},
+	 * {@code You sold Enchanted Mithril x64 for 81,920 Coins!}. No {@code [Bazaar]} prefix, no
+	 * formatting codes, and {@code Coin!} rather than {@code Coins!} when the sale was for exactly
+	 * one coin - 18 lines in that capture, all of them junk sold for a coin a unit.
+	 *
+	 * <p>Anchored at both ends, because the loose half of this wording is the item name. Only the
+	 * count and the coins are structural, so a name is whatever sits between {@code You sold } and
+	 * the {@code x<count>} - which is what lets a starred or reforged item through unmangled.
+	 */
+	private static final Pattern NPC_SOLD = Pattern.compile(
+			"^You sold (.+?) x" + NUMBER + " for " + NUMBER + " Coins?!$");
+
 	private static final Pattern AUCTION_BOUGHT = Pattern.compile(
 			"^You purchased (.+?) for " + NUMBER + " coins!$");
 
@@ -134,6 +150,13 @@ public final class ChatParser {
 					: TradeEvent.Side.SELL;
 			return event(at, TradeEvent.Kind.INSTANT, side, matcher.group(3),
 					number(matcher.group(2)), number(matcher.group(4)), 0.0d);
+		}
+
+		matcher = NPC_SOLD.matcher(text);
+
+		if (matcher.matches()) {
+			return event(at, TradeEvent.Kind.NPC_SOLD, TradeEvent.Side.SELL, matcher.group(1),
+					number(matcher.group(2)), number(matcher.group(3)), 0.0d);
 		}
 
 		matcher = AUCTION_BOUGHT.matcher(text);

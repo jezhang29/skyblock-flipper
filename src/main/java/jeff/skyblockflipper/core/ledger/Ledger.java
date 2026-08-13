@@ -260,12 +260,18 @@ public final class Ledger {
 	 * <p>Gross, not profit: the cap is spent by what the NPC hands over, so it is
 	 * {@code unitsSold * unitSellPrice} and the purchase price never enters it.
 	 *
-	 * <p>An open position counts too, at the price it was quoted to sell at. Settling one requires
-	 * being told the sale happened, and selling to an NPC produces no chat line and no menu row, so
-	 * nothing observes it: counting settled units alone would read near zero for a player using
-	 * automatic tracking exactly as intended, and the cap would never bind. Stock bought under an
-	 * NPC plan is stock bought to hand to the NPC, so it is counted from the moment it is bought.
-	 * An abandoned position bought nothing beyond what it sold, and counts only that.
+	 * <p>An open position counts too, at the price it was quoted to sell at. Stock bought under an
+	 * NPC plan is stock bought to hand to the NPC, and the cap is spent when it is handed over
+	 * rather than when the plan was made, so counting from the buy runs the counter early rather
+	 * than late - which is the safe direction for a cap you do not want to hit mid-stack. An
+	 * abandoned position bought nothing beyond what it sold, and counts only that.
+	 *
+	 * <p>The open branch was originally load-bearing for a different and wrong reason: NPC sales
+	 * were believed to be unobservable, so no NPC position could ever close and settled units alone
+	 * would have read zero. {@code You sold <item> x<n> for <n> Coins!} is that observation and
+	 * {@link jeff.skyblockflipper.core.track.TradeEvent.Kind#NPC_SOLD} now books it, so a position
+	 * moves from the quoted branch to the settled one as it sells. The two are not summed - a
+	 * position is open or it is closed - so the counter does not double-count a same-day round trip.
 	 *
 	 * <p>Reads zero for a player who flips outside the mod, which overstates what is left. That is
 	 * the known cost of deriving this instead of asking the game, which exposes no such counter.
@@ -413,9 +419,11 @@ public final class Ledger {
 	}
 
 	private static StrategyKind kindOf(Settlement.Venue venue) {
-		return venue == Settlement.Venue.AUCTION
-				? StrategyKind.AUCTION_VALUE
-				: StrategyKind.BAZAAR_SPREAD;
+		return switch (venue) {
+			case AUCTION -> StrategyKind.AUCTION_VALUE;
+			case NPC -> StrategyKind.NPC_FLIP;
+			case BAZAAR_ORDER, BAZAAR_INSTANT -> StrategyKind.BAZAAR_SPREAD;
+		};
 	}
 
 	private String nextId() {

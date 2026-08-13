@@ -114,8 +114,8 @@ class LedgerTest {
 		assertEquals(720L, ledger.npcCoinsReceivedSince(0L));
 
 		// A position still open counts at the price it was quoted to sell at - 10 units the plan
-		// bought to hand to the NPC at 120 apiece. Nothing observes an NPC sale, so waiting for one
-		// to settle would mean waiting forever and never spending the cap down.
+		// bought to hand to the NPC at 120 apiece. Stock bought under an NPC plan is stock bought to
+		// hand over, so the counter runs from the buy and moves to the settled figure as it sells.
 		ledger.open(npc, 6_000L);
 
 		assertEquals(720L + 1_200L, ledger.npcCoinsReceivedSince(0L));
@@ -123,6 +123,54 @@ class LedgerTest {
 		// Yesterday's payouts are not this day's budget: the counter refills at the boundary.
 		// Positions are closed against the real clock, so a boundary after now excludes them all.
 		assertEquals(0L, ledger.npcCoinsReceivedSince(System.currentTimeMillis() + 60_000L));
+	}
+
+	/**
+	 * The gap the user's own ledger showed on 2026-08-12: two Enchanted Poisonous Potato positions,
+	 * 3.5M of stock between them, both reading zero sold long after the units had been carried to an
+	 * NPC and sold. Nothing was wrong with the ledger - no settlement for an NPC sale ever reached
+	 * it, so there was nothing to close them with.
+	 */
+	@Test
+	void aSaleOverAnNpcCounterClosesTheNpcPosition(@TempDir Path dir) throws Exception {
+		Ledger ledger = ledgerIn(dir);
+
+		FlipCandidate npc = new FlipCandidate("EPP", "Enchanted Poisonous Potato",
+				StrategyKind.NPC_FLIP, 1084.5d, 1599.8d, 515.3d, 10L, 10_845L, 5_153.0d, 0.9d,
+				List.of("buy"), List.of());
+
+		String id = ledger.open(npc, 1L).id();
+
+		LedgerEntry part = ledger.record(npcSale("EPP", "Enchanted Poisonous Potato", 6L, 1599.8d),
+				FEES, false).orElseThrow();
+
+		assertEquals(LedgerEntry.Status.OPEN, part.status());
+		assertEquals(6L, part.unitsSold());
+
+		LedgerEntry done = ledger.record(npcSale("EPP", "Enchanted Poisonous Potato", 4L, 1599.8d),
+				FEES, false).orElseThrow();
+
+		assertEquals(LedgerEntry.Status.CLOSED, done.status());
+		assertEquals(id, done.id());
+		// Untaxed, so the whole posted price less what the unit cost is the realized margin.
+		assertEquals(515.3d, done.realizedUnitNet(), 1e-9);
+	}
+
+	@Test
+	void anNpcSaleOfSomethingYouNeverFlippedSettlesAgainstNothing(@TempDir Path dir) throws Exception {
+		Ledger ledger = ledgerIn(dir);
+
+		// Selling the cobblestone you mined is not a flip closing. With no position on the item
+		// there is nothing to book it against, and inventing one would report the whole sale price
+		// as profit.
+		assertTrue(ledger.record(npcSale("COBBLESTONE", "Cobblestone", 64L, 1.0d), FEES, false)
+				.isEmpty());
+		assertEquals(0L, ledger.npcCoinsReceivedSince(0L));
+	}
+
+	private static Settlement npcSale(String itemId, String name, long units, double unitPrice) {
+		return new Settlement(1L, Settlement.Venue.NPC, TradeEvent.Side.SELL, itemId, name, units,
+				unitPrice, unitPrice * units);
 	}
 
 	@Test

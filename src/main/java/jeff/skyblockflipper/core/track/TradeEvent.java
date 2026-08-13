@@ -51,6 +51,20 @@ public record TradeEvent(long at, Kind kind, Side side, String displayName, long
 		ORDER_CANCELLED,
 		/** An instant buy or instant sell, which settles in one line with no order behind it. */
 		INSTANT,
+		/**
+		 * A stack was sold over an NPC shop counter. Carries units and the coins the NPC paid.
+		 *
+		 * <p>The other end of every NPC flip, and the one settlement that was assumed not to exist:
+		 * {@code Ledger.npcCoinsReceivedSince} was written believing an NPC sale "produces no chat
+		 * line and no menu row, so nothing observes it". It does produce a line - 60 of them for
+		 * Hard Stone alone in the 2026-08-09 capture, worded {@code You sold Cobblestone x64 for 64
+		 * Coins!} with no {@code [Bazaar]} prefix and no colour codes. Without it an NPC position
+		 * bought units and could never sell them, so every one stayed open at zero sold forever.
+		 *
+		 * <p>Untaxed: the counter pays its posted price flat, which is why {@link #coins} divides
+		 * out to {@link #unitPrice} exactly here and does not on a bazaar sell claim.
+		 */
+		NPC_SOLD,
 		/** An auction BIN was bought by you. Carries coins paid. */
 		AUCTION_BOUGHT,
 		/** An item of yours sold at auction and the coins were collected. */
