@@ -338,7 +338,7 @@ public final class NpcWorklist {
 		// would shrink the plan on the strength of a spread flip.
 		List<NpcReprice.Order> recognised = advice.stream().map(NpcReprice.Advice::order).toList();
 		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, filled);
-		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, rows));
+		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, rows, advice));
 
 		List<Task> tasks = new ArrayList<>();
 
@@ -389,18 +389,26 @@ public final class NpcWorklist {
 	 * the player holding a price they can no longer post. Reserved per item at the larger of the two
 	 * claims, never their sum, because the row and the orders behind it are the same position: an
 	 * item with two of its four orders already moved needs four slots reserved, not six.
+	 *
+	 * <p><b>It also decides which positions the basket may finish.</b> A line larger than one bazaar
+	 * order is placed one order at a time, and a position part way through one is the commonest thing
+	 * on the book: 256 of 1,024 units up, three orders still to type. That is
+	 * {@link NpcBasket.Position#topUp} - the basket is handed the size of the position and offers the
+	 * shortfall - and it is allowed only where nothing else in the trip is asking about the item's
+	 * orders. A reprice, a cancel or an expiry carries a price of its own, and a place quoted from
+	 * here beside a reprice quoted from the round is two instructions for one item. A claim does not
+	 * block it: it is a button with no price on it, and the units behind it were already counted, as
+	 * a position is sized on what its orders were placed for rather than on what is still unfilled.
 	 */
-	private static NpcBasket.Held reserve(List<NpcReprice.Order> resting, List<NpcRound.Row> rows) {
-		if (rows.isEmpty()) {
-			return NpcBasket.Held.of(resting);
-		}
-
+	private static NpcBasket.Held reserve(List<NpcReprice.Order> resting, List<NpcRound.Row> rows,
+			List<NpcReprice.Advice> advice) {
 		Map<String, Reservation> perItem = new LinkedHashMap<>();
 
 		for (NpcReprice.Order order : resting) {
 			Reservation held = perItem.computeIfAbsent(order.itemId(), id -> new Reservation());
 
 			held.orders++;
+			held.units += order.total();
 			held.capital += Math.round(order.unitPrice() * order.remaining());
 		}
 
@@ -408,24 +416,41 @@ public final class NpcWorklist {
 			Reservation held = perItem.computeIfAbsent(row.itemId(), id -> new Reservation());
 
 			held.orders = Math.max(held.orders, row.orders());
+			held.units = Math.max(held.units, row.units());
 			held.capital = Math.max(held.capital, Math.round(row.postPrice() * row.units()));
+			held.spokenFor = true;
 		}
 
+		for (NpcReprice.Advice entry : advice) {
+			Reservation held = perItem.get(entry.order().itemId());
+
+			if (held != null && entry.needsAction()) {
+				held.spokenFor = true;
+			}
+		}
+
+		Map<String, NpcBasket.Position> positions = new LinkedHashMap<>();
 		int orders = 0;
 		long capital = 0L;
 
-		for (Reservation held : perItem.values()) {
+		for (Map.Entry<String, Reservation> entry : perItem.entrySet()) {
+			Reservation held = entry.getValue();
+
 			orders += held.orders;
 			capital += held.capital;
+			positions.put(entry.getKey(),
+					new NpcBasket.Position(held.orders, held.units, !held.spokenFor));
 		}
 
-		return new NpcBasket.Held(orders, capital, perItem.keySet());
+		return new NpcBasket.Held(orders, capital, positions);
 	}
 
 	/** One item's claim on the shared resources, while the two claims on it are being reconciled. */
 	private static final class Reservation {
 		private int orders;
+		private long units;
 		private long capital;
+		private boolean spokenFor;
 	}
 
 	/** Filled units waiting to be collected, biggest first. */
@@ -629,21 +654,41 @@ public final class NpcWorklist {
 
 	/** The new orders, in the order the allocator ranked them. */
 	private static List<Task> places(NpcBasket.Basket basket, StrategyContext context) {
-		// Same instruction as a reprice, because it is the same click. A new order is priced off the
-		// snapshot in hand rather than off a round, so it was never as stale as a frozen reprice -
-		// but naming the button in one place and a bare number in the other is what makes a player
-		// wonder which of the two the mod means.
 		return basket.lines().stream()
 				.map(line -> new Task(Kind.PLACE, line.plan().itemId(), line.plan().displayName(),
 						line.plan().postPrice(), line.units(), line.orderSplit(), line.profit(),
-						line.capital(),
-						String.format("Buy order with the bazaar's own \"+0.1 coins\" button - about "
-										+ "%.1f, and never above %.1f. Sell to the NPC at %.1f: "
-										+ "%.0f%% margin on %d units", line.plan().postPrice(),
-								context.npc().maxChasePrice(line.plan().npcPrice()),
-								line.plan().npcPrice(), line.plan().marginRatio() * 100.0d,
-								line.units())))
+						line.capital(), placeReason(line, context)))
 				.toList();
+	}
+
+	/**
+	 * What to type, and on a part-placed item, what is left to type.
+	 *
+	 * <p>Same instruction as a reprice, because it is the same click. A new order is priced off the
+	 * snapshot in hand rather than off a round, so it was never as stale as a frozen reprice - but
+	 * naming the button in one place and a bare number in the other is what makes a player wonder
+	 * which of the two the mod means.
+	 *
+	 * <p>The top-up sentence is the whole answer to "how many are still to go". A 1,024-unit line is
+	 * four orders on an unstackable product, and the units on the row are only ever the remainder, so
+	 * without this a player who typed one order of 256 has no way to tell a 768-unit row from a fresh
+	 * plan that happens to be 768 units.
+	 */
+	private static String placeReason(NpcBasket.Line line, StrategyContext context) {
+		String base = String.format("Buy order with the bazaar's own \"+0.1 coins\" button - about "
+						+ "%.1f, and never above %.1f. Sell to the NPC at %.1f: %.0f%% margin on "
+						+ "%d units", line.plan().postPrice(),
+				context.npc().maxChasePrice(line.plan().npcPrice()), line.plan().npcPrice(),
+				line.plan().marginRatio() * 100.0d, line.units());
+
+		if (!line.topUp()) {
+			return base;
+		}
+
+		return base + String.format(". %d of the %d this item is worth are already resting, so this "
+						+ "is the remaining %s - %d more %s", line.restingUnits(),
+				line.positionUnits(), line.orderSplit(), line.orders(),
+				line.orders() == 1 ? "order" : "orders");
 	}
 
 	/**

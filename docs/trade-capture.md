@@ -44,7 +44,7 @@ that case is the reason menus are captured and not just chat.
 ```
 
 `itemId` is the point of the menu records. Chat gives a display name, and display names are
-ambiguous — 187 of 5549 item names are a strict prefix of another, so "Enchanted Melon" alone cannot
+ambiguous — 187 of 5549 item names Thereare a strict prefix of another, so "Enchanted Melon" alone cannot
 tell `ENCHANTED_MELON_BLOCK` from `ENCHANTED_MELON`. The menu stack carries Hypixel's own id.
 `customData` keeps the whole compound as text because it is not yet known which key matters, and the
 only way to get a missing key back is another play session.

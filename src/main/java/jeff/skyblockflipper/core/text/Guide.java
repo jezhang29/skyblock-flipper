@@ -296,9 +296,15 @@ public final class Guide {
 					new Term("Coming back later", "You do not decide between repricing and making a "
 							+ "new plan - it is one list and it already knows. Orders you have "
 							+ "resting are taken out of the slots and the coins before anything new "
-							+ "is sized, and an item you already have an order on is never offered "
-							+ "again, because a second order at a second price is bidding against "
-							+ "yourself. If nothing new appears, every slot is working"),
+							+ "is sized. If nothing new appears, every slot is working"),
+					new Term("Finishing a part-placed line", "A line of 1,024 unstackable units is "
+							+ "four orders and you type them one at a time. The row stays until the "
+							+ "whole line is up and counts down as you place it - 1,024 as 4 x 256, "
+							+ "then 768 as 3 x 256 - so what is still to type is always on the row, "
+							+ "and the detail beside it says how many are already resting. It stops "
+							+ "the moment anything else is asking about that item: while an order on "
+							+ "it is being repriced or cancelled, that row owns the price, because "
+							+ "two prices for one item is how you outbid yourself"),
 					new Term("Why it is ordered like that", "By profit per inventory load, not by "
 							+ "margin. Measured over a full day: ranking on profit per load made "
 							+ "76.4M, ranking on margin as a percent of the NPC price made 4.8M, "

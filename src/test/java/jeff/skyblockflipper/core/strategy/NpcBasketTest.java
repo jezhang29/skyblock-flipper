@@ -382,8 +382,9 @@ class NpcBasketTest {
 	}
 
 	/**
-	 * An item you already have an order on is dropped, not topped up. The resting order has a price
-	 * this allocator does not know, and a second line at a second price is bidding against yourself.
+	 * A position nothing may add to is dropped rather than offered a second line. The order resting
+	 * on it has a price this allocator does not know, and two lines on one item quoted from two
+	 * places is bidding against yourself.
 	 */
 	@Test
 	void refusesToPlaceASecondOrderOnAnItemAlreadyResting() {
@@ -396,6 +397,78 @@ class NpcBasketTest {
 		assertFalse(basket.lines().isEmpty());
 		assertTrue(basket.lines().stream().noneMatch(line -> line.plan().itemId().equals("ITEM_0")),
 				"ITEM_0 already has an order resting on it");
+	}
+
+	/**
+	 * A position open to a top-up is offered the shortfall, and only the shortfall.
+	 *
+	 * <p>One bazaar order holds 256 unstackable units, so a 3,584-unit line is fourteen orders typed
+	 * one at a time and the account spends most of the cycle holding part of one. Dropping the item
+	 * on the first of the fourteen deleted the line while it was being followed, which is what a
+	 * player hit on 2026-08-12: the row vanished at 256 units placed and nothing said 3,328.
+	 */
+	@Test
+	void offersTheRestOfAPositionItIsPartWayThrough() {
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(5, 10_000_000_000L, npc, true);
+
+		// Fourteen slots, all of them worth spending on the best item on the book.
+		NpcBasket.Line whole = NpcBasket.plan(context).lines().getFirst();
+
+		assertEquals(256L * 14L, whole.units());
+		assertFalse(whole.topUp());
+
+		NpcBasket.Basket basket = NpcBasket.plan(context, new NpcBasket.Held(1, 256L * 700L,
+				Map.of(whole.plan().itemId(), new NpcBasket.Position(1, 256L, true))));
+		NpcBasket.Line line = basket.lines().getFirst();
+
+		assertEquals(whole.plan().itemId(), line.plan().itemId());
+		assertEquals(256L * 13L, line.units(), "one order placed, thirteen slots left");
+		assertEquals(13, line.orders());
+		assertEquals("13 x 256", line.orderSplit());
+		assertTrue(line.topUp());
+		assertEquals(256L, line.restingUnits());
+		assertEquals(256L * 14L, line.positionUnits());
+
+		// The capital is for the units being placed now, not for the whole position again.
+		assertTrue(line.capital() < whole.capital(), line.capital() + " against " + whole.capital());
+	}
+
+	/** What is already committed is never bought twice, whatever is left of the slots. */
+	@Test
+	void neverBuysMoreThanThePositionIsWorth() {
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(5, 10_000_000_000L, npc, true);
+
+		NpcBasket.Line whole = NpcBasket.plan(context).lines().getFirst();
+		String best = whole.plan().itemId();
+
+		// The position already holds every unit the item is worth on its own - which is more than the
+		// slots let one basket place - so there is nothing to add to it and what is left of the slots
+		// goes to the next item down the ranking instead.
+		NpcBasket.Basket basket = NpcBasket.plan(context, new NpcBasket.Held(1, 0L,
+				Map.of(best, new NpcBasket.Position(1, whole.plan().maxUnits(), true))));
+
+		assertTrue(basket.lines().stream().noneMatch(line -> line.plan().itemId().equals(best)),
+				best + " already holds every unit it is worth");
+		assertFalse(basket.lines().isEmpty(), "the free slots should have gone somewhere");
+	}
+
+	/** A per-item order cap counts the orders already resting, not just the ones being added. */
+	@Test
+	void countsRestingOrdersAgainstThePerItemCap() {
+		StrategyContext context = manyItems(10, 10_000_000_000L,
+				npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED, 2), true);
+
+		String best = NpcBasket.plan(context).lines().getFirst().plan().itemId();
+		NpcBasket.Basket basket = NpcBasket.plan(context, new NpcBasket.Held(1, 0L,
+				Map.of(best, new NpcBasket.Position(1, 256L, true))));
+
+		assertEquals(1, basket.lines().stream()
+						.filter(line -> line.plan().itemId().equals(best))
+						.mapToInt(NpcBasket.Line::orders)
+						.sum(),
+				"capped at two orders an item, one of which is already on the book");
 	}
 
 	/** Every slot working is a different answer from nothing being worth an order. */

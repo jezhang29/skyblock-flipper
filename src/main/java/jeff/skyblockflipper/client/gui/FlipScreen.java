@@ -871,16 +871,16 @@ public final class FlipScreen extends Screen {
 	/** The plan behind a new order, which only exists for a row the basket produced. */
 	private int renderPlanDetail(GuiGraphicsExtractor graphics, int x, int y, int contentWidth,
 			String itemId) {
-		NpcPlan plan = worklist.basket().lines().stream()
-				.map(NpcBasket.Line::plan)
-				.filter(candidate -> candidate.itemId().equals(itemId))
+		NpcBasket.Line line = worklist.basket().lines().stream()
+				.filter(candidate -> candidate.plan().itemId().equals(itemId))
 				.findFirst()
 				.orElse(null);
 
-		if (plan == null) {
+		if (line == null) {
 			return y;
 		}
 
+		NpcPlan plan = line.plan();
 		int cursor = field(graphics, x, y, contentWidth, "NPC pays",
 				String.format("%.1f", plan.npcPrice()));
 		cursor = field(graphics, x, cursor, contentWidth, "Net/unit",
@@ -888,6 +888,15 @@ public final class FlipScreen extends Screen {
 						plan.marginRatio() * 100.0d));
 		cursor = field(graphics, x, cursor, contentWidth, "Order limit",
 				plan.unitsPerOrder() + " units");
+
+		// The row's units are only ever what is left to type, so on a part-placed line the size of
+		// the position it belongs to has to be somewhere: 768 as 3 x 256 reads as a whole plan
+		// otherwise, and the player has no way to see the four-order line they are three quarters
+		// of the way through.
+		if (line.topUp()) {
+			cursor = field(graphics, x, cursor, contentWidth, "Already up",
+					line.restingUnits() + " of " + line.positionUnits() + " units");
+		}
 
 		if (plan.chaseCost() > 0.0d) {
 			cursor = field(graphics, x, cursor, contentWidth, "Chase",

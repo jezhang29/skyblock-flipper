@@ -241,15 +241,48 @@ one of a cycle was quoting an account the player did not have.
 `NpcWorklist` is the join, and the arithmetic is the point rather than the presentation:
 
 - resting orders come out of the order slots and out of the bankroll before any new line is sized;
-- an item with an order already resting on it is dropped from the basket outright, because the
-  resting order's real price lives in the orders menu and a second line at a second price is bidding
-  against your own bid;
+- an item another part of the trip is already talking about - a reprice, a cancel, an expiry - is
+  dropped from the basket outright, because that row carries the price the player is walking to the
+  menu with and a second line at a second price is bidding against your own bid;
+- an item that is only resting is sized as a position: the basket offers what the item is worth
+  minus what its orders were already placed for (see below);
 - what comes out is one ordered list of clicks.
 
 **The order is claims, cancels, reprices, places**, and it is not the order the coins are in. A
 claim is coins already made and it blocks the item from leaving the order at all. A cancel hands
 back the order slot every line below it is short of. A place needs coins the cancels have just
 returned.
+
+### A line larger than one order is placed one order at a time
+
+Found in play 2026-08-12. The panel asked for 1,024 units of an unstackable product - `4 x 256`, one
+order per slot - the player typed the first order of 256, and the row disappeared from the list. The
+"drop any item with an order resting on it" rule above fired the moment the line was part-followed,
+so the remaining 768 units were asked for by nothing and displayed nowhere. **There is no way to
+place four orders in one action, so every multi-order line spent most of its life in that state**,
+and on the unstackable products this trade is mostly about, most lines are multi-order: 256 units an
+order against a plan sized in thousands.
+
+The fix is to size a held item as a **position** rather than treating its existence as a veto.
+`NpcBasket.Position` carries the orders and the units the item already has out, and the basket offers
+`maxUnits` minus that - so 1,024 becomes 768 as `3 x 256`, then 512, then 256, and the row is gone
+only when the position is complete. Three details it turns on:
+
+- **A position is sized on what its orders were placed for, not on what is still unfilled.** A
+  part-filled order has already bought its filled units; sizing off `remaining` would buy them again.
+- **The profit floor is judged over the whole position**, because one item's position is one flip and
+  `minProfitPerFlip` is per flip. Judged over the remainder, the last part-order of a four-order line
+  could fall under a floor the whole flip cleared, and the row would vanish again with the position
+  unfinished - the same failure by a different route.
+- **A top-up is refused whenever anything else in the trip is asking about that item's orders.**
+  That is what remains of the old veto, and it is the part that was actually load-bearing: a reprice
+  or a cancel carries a price of its own, and a place quoted from the allocator beside a reprice
+  quoted from the round is two prices for one item. A claim does not block it - a claim is a button
+  with no price on it, and its units are already counted in the position.
+
+The row says what is already up (`256 of the 1024 this item is worth are already resting, so this is
+the remaining 3 x 256`), because the units on a top-up row are only ever the remainder and `768` on
+its own reads as a fresh plan for 768.
 
 ### Two states the advice had nothing to say about
 
