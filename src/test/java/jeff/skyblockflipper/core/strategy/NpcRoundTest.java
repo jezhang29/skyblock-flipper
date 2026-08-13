@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -287,6 +288,28 @@ class NpcRoundTest {
 				new NpcReprice.Order("ITEM", "ITEM", 820.1d, 500L, 0L, 500L, NOW + 60_000L);
 
 		assertTrue(round.complete(List.of(filled)));
+	}
+
+	/**
+	 * The other way an item ends up with nothing resting on it, and the one the round used to get
+	 * wrong. Measured on the user's account on 2026-08-12: an Enchanted Poisonous Potato order
+	 * filled to the last unit, was claimed, and the units were sold to the NPC, and the panel went
+	 * on asking for 3,391 units to be repriced for the rest of the interval - reserving the order
+	 * slot and 3.5M of bankroll from the basket while it did.
+	 *
+	 * <p>Indistinguishable from a mid-reprice cancel by the resting orders alone, which is why the
+	 * evidence has to be handed in.
+	 */
+	@Test
+	void retiresARowWhoseOrderWasBoughtOut() {
+		NpcRound round = round();
+
+		assertFalse(round.complete(List.of(), Set.of()));
+		assertTrue(round.complete(List.of(), Set.of("ITEM")));
+		assertTrue(round.outstanding(List.of(), Set.of("ITEM")).isEmpty());
+
+		// Something else filling says nothing about this row.
+		assertFalse(round.complete(List.of(), Set.of("OTHER")));
 	}
 
 	/** Orders on other items say nothing about whether this row was worked. */

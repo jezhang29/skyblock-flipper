@@ -2,8 +2,10 @@ package jeff.skyblockflipper.core.track;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -102,6 +104,37 @@ public final class TradeTracker {
 		return orders.stream().filter(o -> o.isResting() && o.unclaimed() > 0L).toList();
 	}
 
+	/**
+	 * Items whose buy orders left the book by being bought out, since {@code at}.
+	 *
+	 * <p>The evidence a frozen {@code NpcRound} row needs to know it is finished rather than
+	 * half-worked. Both states show the same thing in {@link #resting()} - nothing - and the round
+	 * reads the absence as a reprice in progress, so without this a flip that filled and was claimed
+	 * kept asking to be repriced until the interval ran out.
+	 *
+	 * <p>Item ids rather than orders, because a round row is per item and an item's units may have
+	 * been spread over several orders that finished at different moments.
+	 *
+	 * @param at epoch millis to count from, which is the round's own open time. Orders that finished
+	 *           before the round opened are not evidence about it: the round was frozen after them
+	 */
+	public Set<String> filledSince(long at) {
+		Set<String> items = new LinkedHashSet<>();
+
+		for (TrackedOrder order : orders) {
+			if (order.side() == TradeEvent.Side.BUY && order.finishedByFilling()
+					&& order.finishedAt() >= at) {
+				String id = order.itemId().isEmpty() ? names.idFor(order.displayName()) : order.itemId();
+
+				if (!id.isEmpty()) {
+					items.add(id);
+				}
+			}
+		}
+
+		return items;
+	}
+
 	public ItemNameIndex names() {
 		return names;
 	}
@@ -118,7 +151,8 @@ public final class TradeTracker {
 			case ORDER_FILLED -> matchOnTotal(event).orElseGet(() -> adopt(event)).fill(event.units());
 
 			case ORDER_CLAIMED -> {
-				matchForClaim(event).ifPresent(order -> order.claim(event.units(), event.unitPrice()));
+				matchForClaim(event)
+						.ifPresent(order -> order.claim(event.at(), event.units(), event.unitPrice()));
 				settle(event, Settlement.Venue.BAZAAR_ORDER);
 			}
 
@@ -126,9 +160,10 @@ public final class TradeTracker {
 			// two find their order by different evidence and cancel by different amounts.
 			case ORDER_CANCELLED -> {
 				if (event.displayName().isEmpty()) {
-					matchForCoinRefund(event).ifPresent(order -> order.cancel(order.remaining()));
+					matchForCoinRefund(event)
+								.ifPresent(order -> order.cancel(event.at(), order.remaining()));
 				} else {
-					matchForCancel(event).ifPresent(order -> order.cancel(event.units()));
+					matchForCancel(event).ifPresent(order -> order.cancel(event.at(), event.units()));
 				}
 			}
 
@@ -210,7 +245,7 @@ public final class TradeTracker {
 			// row is adopted, so the cost of being wrong here is a duplicated order rather than a
 			// lost one.
 			if (order.isResting() && order.placedAt() < at && !matched.contains(order)) {
-				order.vanish();
+				order.vanish(at);
 			}
 		}
 	}

@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -359,6 +360,54 @@ class TradeTrackerTest {
 
 		tracker.accept(sellOffer(2_000L, 903L));
 		assertEquals(0L, order(tracker, "Slimeball").unclaimed());
+	}
+
+	/**
+	 * Being bought out and being cancelled both empty the book position, and only one of them means
+	 * the trade is over. {@code NpcRound} cannot retire a frozen row without being told which
+	 * happened - see the Enchanted Poisonous Potato row that outlived its own completed flip on
+	 * 2026-08-12.
+	 */
+	@Test
+	void tellsAnOrderBoughtOutFromOneTakenOffTheBook() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(new CapturedChat(1_000L,
+				"[Bazaar] Buy Order Setup! 1,525x Bronze Bowl for 4,154,100 coins."));
+		tracker.accept(buyOrder(2_000L, 0L));
+		tracker.accept(new CapturedChat(3_000L,
+				"[Bazaar] Your Buy Order for 1,525x Bronze Bowl was filled!"));
+		tracker.accept(new CapturedChat(4_000L,
+				"[Bazaar] Claimed 1,525x Bronze Bowl worth 4,154,100 coins bought for 2,724.0 each!"));
+
+		TrackedOrder bought = order(tracker, "Bronze Bowl");
+
+		assertEquals(TrackedOrder.Status.CLAIMED, bought.status());
+		assertTrue(bought.finishedByFilling());
+		assertEquals(4_000L, bought.finishedAt());
+		assertEquals(Set.of("BRONZE_BOWL"), tracker.filledSince(0L));
+
+		// Dated, so a round only counts what left the book after it opened.
+		assertTrue(tracker.filledSince(4_001L).isEmpty());
+	}
+
+	@Test
+	void doesNotCountACancelledOrderAsBoughtOut() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(new CapturedChat(1_000L,
+				"[Bazaar] Buy Order Setup! 311x Purple Candy for 6,554,823 coins."));
+		tracker.accept(new CapturedChat(2_000L,
+				"[Bazaar] Cancelled! Refunded 6,554,823 coins from cancelling Buy Order!"));
+
+		TrackedOrder cancelled = order(tracker, "Purple Candy");
+
+		assertEquals(TrackedOrder.Status.CANCELLED, cancelled.status());
+		assertFalse(cancelled.finishedByFilling());
+
+		// The cancel half of a reprice lands here, and reading it as a fill would delete the row the
+		// player is halfway through working.
+		assertTrue(tracker.filledSince(0L).isEmpty());
 	}
 
 	private static CapturedMenu buyOrder(long at, long filled, String... claim) {

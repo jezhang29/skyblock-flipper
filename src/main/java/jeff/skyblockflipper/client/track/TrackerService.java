@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turns the trades Hypixel reports into ledger entries while you play.
@@ -145,6 +146,16 @@ public final class TrackerService {
 		}
 
 		return orders;
+	}
+
+	/**
+	 * Items whose buy orders were bought out since {@code at}, for the round to retire its rows with.
+	 *
+	 * <p>Beside {@link #restingBuyOrders()} because the two are read together and describe the same
+	 * book from opposite ends: what is still on it, and what left it by filling.
+	 */
+	public static Set<String> filledSince(long at) {
+		return tracker().filledSince(at);
 	}
 
 	/**
