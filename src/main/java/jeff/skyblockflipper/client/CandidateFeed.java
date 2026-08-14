@@ -20,6 +20,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -157,16 +158,20 @@ public final class CandidateFeed {
 			worklistRevision = revision;
 			worklistOrders = orders;
 			worklistRound = round;
-			// What has been bought out since the round opened, which is the only thing that tells a
-			// row with nothing resting on it apart from a reprice caught between its cancel and its
-			// re-post. Without it a flip that filled and was claimed keeps asking to be repriced,
-			// and keeps its slot and its coins reserved, until the interval runs out.
+			// The two readings of an empty book position that are not a reprice in progress: bought
+			// out, and pulled off by you. Both looked identical to a row caught between its cancel
+			// and its re-post, so a flip that filled and was claimed - and a book the player cleared
+			// by hand - kept asking to be repriced, with the slot and the coins reserved out of the
+			// basket, until the interval ran out.
 			worklist = NpcWorklist.of(
 					TrackerService.enabled() ? TrackerService.restingBuyOrders() : List.of(),
 					context(), System.currentTimeMillis(), round,
 					TrackerService.enabled() && round != null
 							? TrackerService.filledSince(round.openedAt())
-							: Set.of());
+							: Set.of(),
+					TrackerService.enabled() && round != null
+							? TrackerService.cancelledSince(round.openedAt())
+							: Map.of());
 
 			rememberQuotes(worklist);
 		}

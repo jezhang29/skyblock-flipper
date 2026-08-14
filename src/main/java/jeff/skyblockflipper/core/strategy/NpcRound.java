@@ -240,10 +240,36 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 	 *               the right answer for a caller with no tracker behind it
 	 */
 	public List<Row> outstanding(List<NpcReprice.Order> resting, Set<String> filled) {
+		return outstanding(resting, filled, Map.of(), 0L);
+	}
+
+	/**
+	 * The same question, told when each item was last cancelled and what time it is now.
+	 *
+	 * <p>What separates the middle of a reprice from a book the player has simply cleared. Both leave
+	 * an item with nothing resting, and the row was held indefinitely for either - so cancelling every
+	 * order by hand left {@code /flip npc plan} asking to reprice orders that no longer existed, with
+	 * their slots and their coins reserved out of the basket, until the interval ran out. Reported
+	 * live 2026-08-14.
+	 *
+	 * <p>The evidence is elapsed time rather than the cancel itself, because a reprice <i>is</i> a
+	 * cancel: dropping a row when one arrives would delete the price the player cancelled in order to
+	 * re-post at. A re-post is six clicks and two signs away, so it lands inside
+	 * {@link #REPOST_GRACE}; a clear-out never lands at all.
+	 *
+	 * @param cancelledAt when each item's last buy order was cancelled, from
+	 *                    {@code TradeTracker.cancelledSince(openedAt)}. An item missing from it is
+	 *                    counted from {@link #openedAt} instead, which is the last moment its orders
+	 *                    were known to be resting
+	 * @param now         epoch millis, or 0 for a caller that tracks no clock - which keeps the old
+	 *                    behaviour of holding an empty row for the whole interval
+	 */
+	public List<Row> outstanding(List<NpcReprice.Order> resting, Set<String> filled,
+			Map<String, Long> cancelledAt, long now) {
 		List<Row> pending = new ArrayList<>();
 
 		for (Row row : rows) {
-			if (!done(row, resting, filled)) {
+			if (!done(row, resting, filled, cancelledAt, now)) {
 				pending.add(row);
 			}
 		}
@@ -265,7 +291,22 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 		return complete(resting, Set.of());
 	}
 
-	private static boolean done(Row row, List<NpcReprice.Order> resting, Set<String> filled) {
+	/**
+	 * How long a row with nothing resting is held before it is read as abandoned rather than as a
+	 * reprice half done.
+	 *
+	 * <p>Sized off the re-post, which is the only thing it must not interrupt: search, the item's
+	 * tile, Create Buy Order, the amount sign, the price sign, confirm. Five minutes is generous for
+	 * six clicks and two signs, and it is a sixth of the shortest interval worth setting, so a row
+	 * that is genuinely being worked is never dropped under the player.
+	 *
+	 * <p>Being wrong in this direction costs one row that comes back on the next round. Being wrong
+	 * the other way is what was reported: a basket held down by orders that do not exist.
+	 */
+	public static final Duration REPOST_GRACE = Duration.ofMinutes(5);
+
+	private boolean done(Row row, List<NpcReprice.Order> resting, Set<String> filled,
+			Map<String, Long> cancelledAt, long now) {
 		boolean any = false;
 
 		for (NpcReprice.Order order : resting) {
@@ -284,8 +325,17 @@ public record NpcRound(long openedAt, Duration interval, List<Row> rows) {
 			any = true;
 		}
 
-		// Nothing of this item is resting. Bought out since the round opened means the row is done;
-		// anything else is read as a reprice in progress and the row is held.
-		return any || filled.contains(row.itemId());
+		if (any || filled.contains(row.itemId())) {
+			return true;
+		}
+
+		// Nothing of this item is resting and it was not bought out. Held while a re-post could still
+		// be on its way, and read as abandoned once no plausible re-post has arrived.
+		return now > 0L && now - lastSeenResting(row, cancelledAt) >= REPOST_GRACE.toMillis();
+	}
+
+	/** The latest moment this row's orders are known to have been on the book. */
+	private long lastSeenResting(Row row, Map<String, Long> cancelledAt) {
+		return Math.max(openedAt, cancelledAt.getOrDefault(row.itemId(), 0L));
 	}
 }
