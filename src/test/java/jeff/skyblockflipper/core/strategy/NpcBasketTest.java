@@ -1,5 +1,6 @@
 package jeff.skyblockflipper.core.strategy;
 
+import jeff.skyblockflipper.core.config.NpcRanking;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
@@ -549,5 +550,45 @@ class NpcBasketTest {
 		assertTrue(basket.slotsCappedBySettings());
 		assertTrue(basket.boundExplanation().contains("NPC order slots in settings"),
 				basket.boundExplanation());
+	}
+
+	// The ranking key, which is a choice between two budgets rather than a right and a wrong answer.
+
+	private static NpcContext ranked(int maxOrderSlots, NpcRanking ranking) {
+		return new NpcContext(NpcEdgeSnapshot.empty(), NpcContext.DEFAULT_MIN_MARGIN_RATIO,
+				NpcContext.DEFAULT_CHECK_IN, NpcContext.DEFAULT_RESTING_HOURS, maxOrderSlots,
+				NpcContext.CAP_UNLIMITED, NpcContext.UNLIMITED_ORDERS_PER_ITEM, 0.0d, ranking);
+	}
+
+	/**
+	 * A stackable item carries 71,680 units in an order slot and 2,304 in an inventory load, and an
+	 * unstackable one carries 256 in both. So the two keys disagree about the same pair of items, and
+	 * which one is right depends on whether the player is short of slots or of patience.
+	 *
+	 * <p>DENSE is the richer item per inventory slot; WIDE is the richer item per order slot. On the
+	 * live book on 2026-08-14 that disagreement was worth 65.5M a cycle against 47.3M, at 363
+	 * inventory loads against 114.
+	 */
+	@Test
+	void ranksOnWhicheverBudgetTheContextNames() {
+		Map<String, BazaarProduct> products = Map.of(
+				"DENSE", product("DENSE", 99.9d, 50_000_000L),
+				"WIDE", product("WIDE", 49.9d, 50_000_000L));
+		Map<String, ItemCatalog.Entry> items = Map.of(
+				// Unstackable: 256 units an order, 36 an inventory load, 900 coins of profit a unit.
+				// 32,400 a load and 230,400 an order slot.
+				"DENSE", entry("DENSE", 1000.0d, true),
+				// Stackable: 71,680 an order, 2,304 a load, 10 coins a unit. Less per load at 23,040,
+				// and three times as much per order slot at 716,800, because one order of it is 280
+				// times the size.
+				"WIDE", entry("WIDE", 60.0d, false));
+
+		assertEquals("DENSE", NpcBasket.plan(
+						context(products, items, 100_000_000_000L, ranked(1, NpcRanking.LOAD)))
+				.lines().getFirst().plan().itemId());
+
+		assertEquals("WIDE", NpcBasket.plan(
+						context(products, items, 100_000_000_000L, ranked(1, NpcRanking.ORDER_SLOT)))
+				.lines().getFirst().plan().itemId());
 	}
 }

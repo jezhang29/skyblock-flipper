@@ -1,5 +1,6 @@
 package jeff.skyblockflipper.core.strategy;
 
+import jeff.skyblockflipper.core.config.NpcRanking;
 import jeff.skyblockflipper.core.model.Stacking;
 
 import java.util.ArrayList;
@@ -314,8 +315,9 @@ public final class NpcBasket {
 	/**
 	 * Allocates every shared resource across the items worth resting an order on.
 	 *
-	 * <p>Ranks on {@link NpcPlan#profitPerLoad()} and takes each item at the largest size it is
-	 * worth on its own, until a shared budget runs out. An item that would earn less over the whole
+	 * <p>Ranks on {@link NpcPlan#profitPerLoad()} or {@link NpcPlan#profitPerOrder()}, whichever the
+	 * context names, and takes each item at the largest size it is worth on its own, until a shared
+	 * budget runs out. An item that would earn less over the whole
 	 * window than {@code minProfitPerFlip} is skipped rather than allowed to occupy a slot.
 	 */
 	public static Basket plan(StrategyContext context) {
@@ -336,9 +338,16 @@ public final class NpcBasket {
 			return withHeld(Basket.empty(context), held);
 		}
 
-		plans.sort(Comparator.comparingDouble(NpcPlan::profitPerLoad).reversed());
-
 		NpcContext npc = context.npc();
+
+		// Profit per unit of whichever budget the player says is scarcer. Ranking on the load is the
+		// shipped behaviour and minimises carrying items to the NPC; ranking on the order slot spends
+		// the resource that actually runs out and is worth about a third more coins, at three times
+		// the hauling. See NpcRanking for both measurements.
+		plans.sort(Comparator.comparingDouble(
+				npc.ranking() == NpcRanking.ORDER_SLOT
+						? NpcPlan::profitPerOrder
+						: NpcPlan::profitPerLoad).reversed());
 		int slotsAvailable = npc.orderSlots(context.fees());
 		// Read here rather than held anywhere: a basket planned before a bankroll change must not
 		// survive it, and the only way to guarantee that is to never keep the number.

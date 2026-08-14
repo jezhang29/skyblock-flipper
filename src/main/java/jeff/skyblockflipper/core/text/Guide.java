@@ -228,6 +228,25 @@ public final class Guide {
 					+ "measured from how far the best bid has actually drifted upward per hour. It "
 					+ "is taken out of the margin before you see it, so the profit quoted is the "
 					+ "profit after repricing"),
+			new Term("Pay the chase up front", "A setting that spends those same coins on the price "
+					+ "you post at instead of on repricing. An order sitting above the book is not "
+					+ "outbid until the book climbs to it, so it holds the front without you coming "
+					+ "back. Measured over four days of tape: an order at the plain outbid price "
+					+ "spends 63% of an eight-hour window on top, one a quarter of the drift above "
+					+ "it spends 97%, and the cycle is worth 69.9M against 58.9M for repricing "
+					+ "every half hour. Set it with a long check-in interval and the cycle needs "
+					+ "one visit at each end. It is off by default because it rests on one thing "
+					+ "the tape cannot check - see Probe"),
+			new Term("Probe", "/flip npc probe <ITEM_ID> quotes a premium price for one item and "
+					+ "then watches whether anything outbids an order left there. Every price on "
+					+ "the tape was recorded from a book with none of your orders in it, so whether "
+					+ "the competition on an item re-posts above whatever is on top is the one "
+					+ "thing history cannot say. One order and one session settles it"),
+			new Term("Rank the basket by", "Which budget the basket spends first. Ranking by load "
+					+ "picks the items that carry the most profit per inventory slot, which is what "
+					+ "keeps the carrying to the NPC down; ranking by order slot picks the most "
+					+ "profit per bazaar order, which is the thing that actually runs out and is "
+					+ "worth about a third more coins at three times the hauling"),
 			new Term("Edge held", "The fraction of taped samples in which a buy order would have "
 					+ "priced under the NPC. These gaps are mostly standing features rather than "
 					+ "races: of 223 liquid items with a gap, 204 held it in over 95% of three days "

@@ -104,7 +104,12 @@ public final class CandidateFeed {
 						Duration.ofMinutes(config.npcCheckInMinutes),
 						config.npcRestingHours,
 						config.npcMaxOrderSlots,
-						npcCapRemaining(config)));
+						npcCapRemaining(config),
+						// Not a setting: the per-item order cap exists so the sweep can price one
+						// against the same allocator the mod plans with.
+						NpcContext.UNLIMITED_ORDERS_PER_ITEM,
+						config.npcDriftPremium,
+						config.npcRanking()));
 	}
 
 	/**
