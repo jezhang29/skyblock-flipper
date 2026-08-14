@@ -1,11 +1,14 @@
 package jeff.skyblockflipper.core.strategy;
 
+import jeff.skyblockflipper.core.model.Stacking;
+import jeff.skyblockflipper.core.track.BazaarMenu;
 import jeff.skyblockflipper.core.track.BazaarSlots;
 import jeff.skyblockflipper.core.track.CapturedMenu;
 import jeff.skyblockflipper.core.track.CapturedSlot;
 import jeff.skyblockflipper.core.track.OrderMenuParser;
 import jeff.skyblockflipper.core.track.TradeEvent;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.IntFunction;
@@ -28,9 +31,12 @@ import java.util.function.IntFunction;
  * click on a filled row and cancelling one is a right click on the same row, and the lore of the row
  * in front of the player decides which.
  *
- * <p><b>Three screens are still missing.</b> A product page and the amount and price pages behind it
- * are titled with the item's own name and were never captured, so a place stops at the search
- * result. See {@code docs/trade-capture.md} for the session that finishes it.
+ * <p><b>The place flow runs the whole way.</b> Search, the item's tile, Create Buy Order, the amount
+ * sign, the price sign, confirm. The three middle screens are recognised by their buttons rather
+ * than their titles, because a product page is titled {@code Item Upgrades ➜ Transmission Tuner} and
+ * the amount page {@code How many do you want?}. Their button names come from screenshots rather
+ * than a capture - see {@link BazaarSlots#CREATE_BUY_ORDER} - so each answers to more than one
+ * wording, and a wording none of them matches highlights nothing.
  */
 public final class BazaarStep {
 	/** Which mouse button the step is asking for. */
@@ -83,10 +89,51 @@ public final class BazaarStep {
 			case ORDERS -> onOrders(task, restingPrice, menu);
 			case ORDER_OPTIONS -> onOrderOptions(task, menu);
 			case BROWSE -> onBrowse(task, menu);
+			case PRODUCT -> onProduct(task, menu);
+			case AMOUNT -> sign(BazaarSlots.CUSTOM_AMOUNT, menu, "how many",
+					String.valueOf(Stacking.firstOrder(task.orderSplit())));
+			case PRICE -> sign(BazaarSlots.CUSTOM_PRICE, menu, "price per unit",
+					task.hasPrice() ? String.format("%.1f", task.price()) : "");
 			case CONFIRM_BUY -> confirm(BazaarSlots.CONFIRM_BUY_ORDER, menu, "confirm the order");
 			case CONFIRM_SELL -> confirm(BazaarSlots.CONFIRM_SELL_OFFER, menu, "confirm the offer");
 			case UNKNOWN -> Optional.empty();
 		};
+	}
+
+	/**
+	 * One item's page.
+	 *
+	 * <p>Always the button that opens an order rather than the one that trades instantly. The whole
+	 * strategy is resting an order at a price the book has to come to; buying instantly pays the ask,
+	 * which is the price the plan was built to avoid.
+	 */
+	private static Optional<Step> onProduct(NpcWorklist.Task task, CapturedMenu menu) {
+		// The page has to be this row's item. Opening something else's page and being told to place
+		// an order on it is how the wrong item gets bought - and the title is the only thing on the
+		// page that says which item it is.
+		if (task.kind() == NpcWorklist.Kind.CLAIM
+				|| BazaarMenu.productPageFor(menu.title(), List.of(task.displayName())).isEmpty()) {
+			return Optional.empty();
+		}
+
+		return at(BazaarSlots.CREATE_BUY_ORDER.in(menu),
+				slot -> Step.of(slot, Click.LEFT, "buy order"));
+	}
+
+	/**
+	 * A page whose button opens a sign, with the number to type on it.
+	 *
+	 * <p>The amount page offers 1x, 16x, a stack and a custom amount, and the plan's size is almost
+	 * never one of the first three - so it is the sign every time. A step with nothing to type is no
+	 * step: pointing at a sign without saying what goes on it is the state the player was already in.
+	 */
+	private static Optional<Step> sign(BazaarSlots.Button button, CapturedMenu menu, String label,
+			String type) {
+		if (type.isEmpty() || "0".equals(type)) {
+			return Optional.empty();
+		}
+
+		return at(button.in(menu), slot -> new Step(slot, Click.LEFT, label, type));
 	}
 
 	/**

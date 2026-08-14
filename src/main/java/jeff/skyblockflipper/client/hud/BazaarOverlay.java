@@ -11,6 +11,7 @@ import jeff.skyblockflipper.core.strategy.BazaarStep;
 import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.track.BazaarMenu;
+import jeff.skyblockflipper.core.track.BazaarSlots;
 import jeff.skyblockflipper.core.track.CapturedMenu;
 
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
@@ -131,10 +132,23 @@ public final class BazaarOverlay {
 	/**
 	 * How long the panel keeps following after the bazaar menu closes.
 	 *
-	 * <p>Long enough to cover a sign opening in the place of the menu it came from, short enough
-	 * that a sign opened for something else is not decorated with a shopping list.
+	 * <p>Was eight seconds, which is how long it takes to read a sign and start typing: the number
+	 * vanished from under the player mid-order, and again whenever a keypress put another screen in
+	 * front of the sign for a moment. Ninety seconds covers a whole order typed slowly, and the
+	 * window is refreshed by every screen in the bazaar's own chain - the product page, the amount
+	 * page, the sign - so it only runs down once the player has actually left.
 	 */
-	private static final long FOLLOW_MILLIS = 8_000L;
+	private static final long FOLLOW_MILLIS = 90_000L;
+
+	/**
+	 * Pixels of text one line of a sign holds, which is {@code SignBlockEntity.getMaxTextLineWidth}.
+	 *
+	 * <p>The sign screen drops any keystroke or paste that would take a line past this, so a long
+	 * item name cannot be pasted into the search at all - measured live on "Transmission Tuner". The
+	 * bazaar searches on a prefix, so the panel offers the longest prefix that fits and the search
+	 * still lands on the item.
+	 */
+	private static final int SIGN_LINE_WIDTH = 90;
 
 	/** How long "copied" stays under the list before the hint comes back. */
 	private static final long COPIED_MILLIS = 2_000L;
@@ -200,32 +214,45 @@ public final class BazaarOverlay {
 
 		String title = screen.getTitle().getString();
 		Font font = Minecraft.getInstance().font;
-		Board board = board(worklist, title, note, font);
 
-		// The bazaar's own menus by title, plus the product page of anything in the list, which is
-		// only recognisable as the name of a line - see BazaarMenu for why, and where those titles
-		// were measured. The layout accessor is checked rather than cast outright: a panel that
-		// quietly does not appear beats a ClassCastException on every menu the player opens.
+		// Half the bazaar does not name itself. Browsing and the orders are titled unmistakably; a
+		// product page is titled "Item Upgrades ➜ Transmission Tuner" and the amount page "How many
+		// do you want?", so those are recognised by the buttons on them - which is what the panel
+		// failed to do, leaving the two screens an order is actually placed on with nothing on them.
+		// The layout accessor is checked rather than cast outright: a panel that quietly does not
+		// appear beats a ClassCastException on every menu the player opens.
 		if (screen instanceof ContainerScreenLayout layout
-				&& screen instanceof AbstractContainerScreen<?> container
-				&& (BazaarMenu.isBazaar(title) || !board.openProduct().isEmpty())) {
-			leftBazaarAt = System.currentTimeMillis();
+				&& screen instanceof AbstractContainerScreen<?> container) {
+			boolean flow = Guidance.update(container, worklist);
+			Board board = board(worklist, title, note, font);
 
-			// Before the panel, because the panel scales the pose and this draws in real screen
-			// pixels, on Hypixel's menu rather than beside it.
-			Guidance.draw(graphics, container, layout, worklist);
+			if (flow || BazaarMenu.isBazaar(title) || !board.openProduct().isEmpty()) {
+				leftBazaarAt = System.currentTimeMillis();
 
-			drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
+				// Before the panel, because the panel scales the pose and this draws in real screen
+				// pixels, on Hypixel's menu rather than beside it.
+				Guidance.draw(graphics, container, layout);
+
+				drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
+				return;
+			}
+
+			Guidance.clear();
+			Hit.clear();
 			return;
 		}
 
-		Guidance.clear();
+		Guidance.leftTheMenu();
+
+		// On a sign, the panel says the one thing the screen is asking for rather than the whole
+		// list: the number or the name to type into it.
+		Board board = board(worklist, title, Guidance.typing() ? Guidance.typeNote() : note, font);
 
 		// Typing a price or an amount happens on a sign, which is not a container menu and carries
 		// no title worth matching - and it is the moment the numbers are actually needed. So the
-		// panel follows for a few seconds after the bazaar menu it was opened from. A sign opened
-		// on your island a minute later is outside the window and gets nothing.
-		if (!(screen instanceof AbstractContainerScreen<?>) && !(screen instanceof FlipScreen)
+		// panel follows the bazaar menu it was opened from. A sign opened on your island long
+		// afterwards is outside the window and gets nothing.
+		if (!(screen instanceof FlipScreen)
 				&& System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
 			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
 			return;
@@ -589,6 +616,14 @@ public final class BazaarOverlay {
 		/** Green, at the strength of vanilla's own slot hover but coloured. */
 		private static final int BOX = 0x9932CD32;
 
+		/**
+		 * A brighter edge around it.
+		 *
+		 * <p>A search page fills its empty slots with green glass, so a green box on its own is one
+		 * green square among forty. The outline is what makes it findable there.
+		 */
+		private static final int BOX_EDGE = 0xFF7CFC00;
+
 		/** One vanilla slot, and the pixel of padding either side that vanilla's hover box uses. */
 		private static final int SLOT = 16;
 		private static final int MARGIN = 1;
@@ -613,11 +648,39 @@ public final class BazaarOverlay {
 		/** Which row of the panel the box is serving, or -1. */
 		private static int row = -1;
 
+		/**
+		 * What the sign that is about to open wants typed into it, and what that number is.
+		 *
+		 * <p>Kept after the menu closes, because the sign replaces the menu that named it: by the time
+		 * the box is on screen there is nothing left to ask what it is for. Cleared only by a later
+		 * step that opens a different sign, or by the follow window running out.
+		 */
+		private static String typeValue = "";
+		private static String typeLabel = "";
+
+		/** Whether a sign is what is in front of the player now. */
+		private static boolean onASign;
+
 		private Guidance() {
 		}
 
 		static int row() {
 			return row;
+		}
+
+		static boolean typing() {
+			return onASign && !typeValue.isEmpty();
+		}
+
+		/** The line the panel shows in place of its own note while a sign is open. */
+		static String typeNote() {
+			return "type " + typeLabel + ": " + typeValue;
+		}
+
+		/** The menu closed, so whatever is on screen now is a sign until a menu says otherwise. */
+		static void leftTheMenu() {
+			onASign = true;
+			screen = new WeakReference<>(null);
 		}
 
 		static void clear() {
@@ -627,15 +690,8 @@ public final class BazaarOverlay {
 		}
 
 		static void draw(GuiGraphicsExtractor graphics, AbstractContainerScreen<?> container,
-				ContainerScreenLayout layout, NpcWorklist.Worklist list) {
-			if (!SkyblockFlipperClient.config().bazaarHighlightEnabled) {
-				clear();
-				return;
-			}
-
-			update(container, list);
-
-			if (step == null) {
+				ContainerScreenLayout layout) {
+			if (step == null || !SkyblockFlipperClient.config().bazaarHighlightEnabled) {
 				return;
 			}
 
@@ -650,17 +706,32 @@ public final class BazaarOverlay {
 				int x = layout.flipper$leftPos() + slot.x;
 				int y = layout.flipper$topPos() + slot.y;
 
-				graphics.fill(x - MARGIN, y - MARGIN, x + SLOT + MARGIN, y + SLOT + MARGIN, BOX);
+				int left = x - MARGIN;
+				int top = y - MARGIN;
+				int right = x + SLOT + MARGIN;
+				int bottom = y + SLOT + MARGIN;
+
+				graphics.fill(left, top, right, bottom, BOX);
+				graphics.fill(left, top, right, top + 1, BOX_EDGE);
+				graphics.fill(left, bottom - 1, right, bottom, BOX_EDGE);
+				graphics.fill(left, top, left + 1, bottom, BOX_EDGE);
+				graphics.fill(right - 1, top, right, bottom, BOX_EDGE);
 				return;
 			}
 		}
 
-		/** Re-reads the menu and re-picks the row, at most every {@link #REREAD_MILLIS}. */
-		private static void update(AbstractContainerScreen<?> container, NpcWorklist.Worklist list) {
+		/**
+		 * Re-reads the menu and re-picks the row, at most every {@link #REREAD_MILLIS}.
+		 *
+		 * @return whether this menu belongs to the bazaar at all, which is what decides if the panel
+		 *         is drawn over it. Read from the menu's contents, so it holds for the two screens
+		 *         whose titles say nothing about the bazaar
+		 */
+		static boolean update(AbstractContainerScreen<?> container, NpcWorklist.Worklist list) {
 			long now = System.currentTimeMillis();
 
 			if (screen.get() == container && list == worklist && now - readAt < REREAD_MILLIS) {
-				return;
+				return bazaarFlow;
 			}
 
 			screen = new WeakReference<>(container);
@@ -668,8 +739,11 @@ public final class BazaarOverlay {
 			readAt = now;
 			step = null;
 			row = -1;
+			onASign = false;
 
 			CapturedMenu menu = MenuReader.describe(container, now);
+			bazaarFlow = BazaarSlots.isBazaarFlow(menu);
+
 			List<NpcWorklist.Task> tasks = list.pending();
 
 			for (int i = 0; i < tasks.size(); i++) {
@@ -680,9 +754,34 @@ public final class BazaarOverlay {
 				if (found.isPresent()) {
 					step = found.get();
 					row = i;
-					return;
+
+					// Remembered now, while the menu that named it is still open. The sign this
+					// click opens replaces the menu and says nothing about what it wants.
+					if (step.opensASign()) {
+						typeValue = fitting(step.type());
+						typeLabel = step.label();
+					}
+
+					return bazaarFlow;
 				}
 			}
+
+			return bazaarFlow;
+		}
+
+		/** Whether the menu last read is part of the bazaar. */
+		private static boolean bazaarFlow;
+
+		/**
+		 * The longest prefix of {@code value} that a sign will accept.
+		 *
+		 * <p>An item name is often too long to type or paste into the search sign at all, which is
+		 * where "Transmission Tuner" gets stuck at "Transmission Tun". The bazaar searches on a
+		 * prefix, so the shortened form finds the same item, and offering the full name offers
+		 * something the screen will not take.
+		 */
+		private static String fitting(String value) {
+			return Minecraft.getInstance().font.plainSubstrByWidth(value, SIGN_LINE_WIDTH);
 		}
 
 		/**
@@ -846,7 +945,9 @@ public final class BazaarOverlay {
 			boolean onNumbers = panelY >= rowTop && panelY < rowTop + lineHeight;
 
 			if (!onNumbers || row.price().isEmpty()) {
-				put(row.task().displayName(), "name");
+				// Shortened to what the search sign will take: the full name of a long item cannot
+				// be pasted into it at all, and the bazaar searches on a prefix anyway.
+				put(Guidance.fitting(row.task().displayName()), "name");
 				return;
 			}
 

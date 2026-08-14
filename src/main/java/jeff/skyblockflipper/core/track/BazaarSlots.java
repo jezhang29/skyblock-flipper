@@ -47,12 +47,25 @@ public final class BazaarSlots {
 		CONFIRM_SELL,
 
 		/**
-		 * Anything else, including the three screens an order is actually placed on.
+		 * One item's page: buy instantly, sell instantly, and the two that open an order.
 		 *
-		 * <p>A product page and the amount and price pages behind it are titled with the item's own
-		 * name, so no title match can find them, and the capture file contains none of them - see
-		 * {@link CaptureFilter#keepMenu(String, long, long)}, which was widened to record them. Until
-		 * a session has them, they are {@code UNKNOWN} and nothing is highlighted there.
+		 * <p>Its title is {@code Item Upgrades ➜ Transmission Tuner} - the sub-category it was
+		 * reached through and then the item - so it is not {@code Bazaar ➜ …} and nothing in it is
+		 * fixed enough to match on. Recognised by the buttons it carries instead.
+		 */
+		PRODUCT,
+
+		/** {@code How many do you want?}, which is the sign that takes the order size. */
+		AMOUNT,
+
+		/** The page behind it that takes the price. */
+		PRICE,
+
+		/**
+		 * Anything else.
+		 *
+		 * <p>Nothing is highlighted here. Every screen that has been seen is above, and a screen
+		 * whose buttons have been renamed lands here rather than being guessed at.
 		 */
 		UNKNOWN
 	}
@@ -80,18 +93,53 @@ public final class BazaarSlots {
 	public static final Button CONFIRM_BUY_ORDER = new Button("Buy Order", Button.UNANCHORED);
 	public static final Button CONFIRM_SELL_OFFER = new Button("Sell Offer", Button.UNANCHORED);
 
+	/**
+	 * The product page's own buttons, and the sign buttons behind them.
+	 *
+	 * <p><b>These names are read off screenshots, not off a capture.</b> {@code Custom Amount} is
+	 * exact - it was photographed with its tooltip open, {@code Buy Order Quantity / Buy up to 256x. /
+	 * Click to specify!} - and the rest are the wording the game uses in front of the player. Each
+	 * carries its alternatives, because a button that answers to none of its names highlights
+	 * nothing, and this is the one part of the mod not written from measured text. {@code /flip menu}
+	 * prints the names of the last menu you opened, which is how they get confirmed.
+	 */
+	public static final Button CREATE_BUY_ORDER =
+			new Button(List.of("Create Buy Order", "Buy Order"), Button.UNANCHORED);
+	public static final Button CREATE_SELL_OFFER =
+			new Button(List.of("Create Sell Offer", "Sell Offer"), Button.UNANCHORED);
+	public static final Button CUSTOM_AMOUNT =
+			new Button(List.of("Custom Amount", "Custom amount"), Button.UNANCHORED);
+	public static final Button CUSTOM_PRICE =
+			new Button(List.of("Custom Price", "Custom price", "Custom Amount Price"),
+					Button.UNANCHORED);
+
 	private BazaarSlots() {
 	}
 
 	/**
 	 * One named button, and where in the last row it was measured.
 	 *
-	 * @param name    the display name, matched case-insensitively and exactly - a button named
-	 *                {@code Cancel Buy Order} must not answer to {@code Buy Order}
+	 * @param names   the display names it answers to, matched case-insensitively and whole - a button
+	 *                named {@code Cancel Buy Order} must not answer to {@code Buy Order}. More than
+	 *                one only where the wording was read off a screenshot rather than a capture, and
+	 *                they are tried in order
 	 * @param fromEnd its slot counted back from the size of the menu, or {@link #UNANCHORED}
 	 */
-	public record Button(String name, int fromEnd) {
+	public record Button(List<String> names, int fromEnd) {
 		public static final int UNANCHORED = -1;
+
+		public Button {
+			names = List.copyOf(names);
+		}
+
+		public Button(String name, int fromEnd) {
+			this(List.of(name), fromEnd);
+		}
+
+		/** The first name, which is what a message about this button should say. */
+		public String name() {
+			return names.getFirst();
+		}
 
 		/**
 		 * The slot this button is in, or empty if the menu has no slot with this name.
@@ -105,6 +153,18 @@ public final class BazaarSlots {
 				return OptionalInt.empty();
 			}
 
+			for (String name : names) {
+				OptionalInt found = named(menu, name);
+
+				if (found.isPresent()) {
+					return found;
+				}
+			}
+
+			return OptionalInt.empty();
+		}
+
+		private OptionalInt named(CapturedMenu menu, String name) {
 			List<Integer> matches = new ArrayList<>();
 
 			for (CapturedSlot slot : menu.slots()) {
@@ -124,13 +184,23 @@ public final class BazaarSlots {
 			int anchor = size(menu) - fromEnd;
 			return matches.contains(anchor) ? OptionalInt.of(anchor) : OptionalInt.empty();
 		}
+
+		/** Whether this menu carries the button at all, which is how a screen is recognised. */
+		public boolean on(CapturedMenu menu) {
+			return in(menu).isPresent();
+		}
 	}
 
 	/**
-	 * Which bazaar screen this is.
+	 * Which bazaar screen this is, from its title where the title says anything and from its buttons
+	 * where it does not.
 	 *
-	 * <p>Titles only, and the same ones {@link BazaarMenu} matches on, because the title is all a
-	 * closed menu offers. The contents are what {@link Button} then checks against.
+	 * <p>Half the bazaar names itself and half does not. Browsing, the orders, the options and both
+	 * confirmations are titled unmistakably. A product page is titled
+	 * {@code Item Upgrades ➜ Transmission Tuner}, which is a sub-category nobody can enumerate
+	 * followed by an item name; the amount page is titled {@code How many do you want?}, which says
+	 * nothing about the bazaar at all. Those two are recognised by the buttons on them, which is the
+	 * same evidence a click needs anyway.
 	 */
 	public static Screen screenOf(CapturedMenu menu) {
 		if (menu == null) {
@@ -143,12 +213,35 @@ public final class BazaarSlots {
 			return Screen.ORDERS;
 		}
 
-		return switch (lower) {
+		Screen titled = switch (lower) {
 			case "order options" -> Screen.ORDER_OPTIONS;
 			case "confirm buy order" -> Screen.CONFIRM_BUY;
 			case "confirm sell offer" -> Screen.CONFIRM_SELL;
 			default -> lower.startsWith("bazaar") ? Screen.BROWSE : Screen.UNKNOWN;
 		};
+
+		if (titled != Screen.UNKNOWN) {
+			return titled;
+		}
+
+		// The price is asked about first so that a page carrying both buttons reads as the price
+		// page, which is the later of the two steps and so the one still to do.
+		if (CUSTOM_PRICE.on(menu)) {
+			return Screen.PRICE;
+		}
+
+		if (CUSTOM_AMOUNT.on(menu)) {
+			return Screen.AMOUNT;
+		}
+
+		return CREATE_BUY_ORDER.on(menu) || CREATE_SELL_OFFER.on(menu)
+				? Screen.PRODUCT
+				: Screen.UNKNOWN;
+	}
+
+	/** Whether this menu is part of the bazaar at all, by title or by what is on it. */
+	public static boolean isBazaarFlow(CapturedMenu menu) {
+		return screenOf(menu) != Screen.UNKNOWN;
 	}
 
 	/**
