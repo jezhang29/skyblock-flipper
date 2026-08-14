@@ -65,4 +65,40 @@ class BazaarMenuTest {
 		assertEquals("", BazaarMenu.productPageFor("Jungle Heart", List.of()));
 		assertEquals("", BazaarMenu.productPageFor(null, basket));
 	}
+
+	@Test
+	void readsTheItemOutOfAPathTitle() {
+		// Photographed live 2026-08-13: a product page is titled with the sub-category it was reached
+		// through and then the item. Matching the bare name left the product page with no panel.
+		List<String> basket = List.of("Transmission Tuner", "Jungle Heart");
+
+		assertEquals("Transmission Tuner",
+				BazaarMenu.productPageFor("Item Upgrades ➜ Transmission Tuner", basket));
+		assertEquals("Jungle Heart", BazaarMenu.productPageFor("Farming ➜ Jungle Heart", basket));
+		assertEquals("", BazaarMenu.productPageFor("Item Upgrades ➜ Ender Monocle", basket));
+	}
+
+	@Test
+	void acceptsAPrefixOnlyFromATitleHypixelCutOff() {
+		// Titles stop at 32 characters, so a long item's page can only be matched on what survived.
+		String cut = "Item Upgrades ➜ Transmission Tun";
+
+		assertEquals(32, cut.length());
+		assertEquals("Transmission Tuner",
+				BazaarMenu.productPageFor(cut, List.of("Transmission Tuner")));
+
+		// With room left in the title there was no truncation, so a prefix is a different item.
+		// "Enchanted Melon" is ENCHANTED_MELON_BLOCK and "Enchanted Melon Slice" is ENCHANTED_MELON.
+		assertEquals("", BazaarMenu.productPageFor("Farming ➜ Enchanted Melon",
+				List.of("Enchanted Melon Slice")));
+	}
+
+	@Test
+	void namesNothingWhenTwoBasketItemsShareTheSurvivingPrefix() {
+		String cut = "Enchantments ➜ Feather Falling V";
+
+		assertEquals(32, cut.length());
+		assertEquals("", BazaarMenu.productPageFor(cut,
+				List.of("Feather Falling VI", "Feather Falling VII")));
+	}
 }

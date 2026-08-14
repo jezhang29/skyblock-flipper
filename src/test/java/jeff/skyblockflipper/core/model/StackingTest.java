@@ -97,4 +97,18 @@ class StackingTest {
 		assertFalse(Stacking.stackable(null, null));
 		assertEquals(256L, Stacking.unitsPerOrder(null, null));
 	}
+
+	@Test
+	void readsBackTheOrderThatGoesInTheBoxNow() {
+		// The amount box takes one number, and it is never the count of boxes: "3 x 256 + 112" is
+		// three orders of 256 and then one of 112.
+		assertEquals(256L, Stacking.firstOrder(Stacking.orderSplit(880L, 256L)));
+		assertEquals(112L, Stacking.firstOrder(Stacking.orderSplit(112L, 256L)));
+		assertEquals(256L, Stacking.firstOrder(Stacking.orderSplit(512L, 256L)));
+		assertEquals(71_680L, Stacking.firstOrder(Stacking.orderSplit(100_000L, 71_680L)));
+
+		assertEquals(0L, Stacking.firstOrder(""));
+		assertEquals(0L, Stacking.firstOrder(null));
+		assertEquals(0L, Stacking.firstOrder("some words"));
+	}
 }

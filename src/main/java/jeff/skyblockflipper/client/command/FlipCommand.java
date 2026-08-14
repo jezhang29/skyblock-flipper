@@ -16,6 +16,7 @@ import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.client.gui.Settings;
 import jeff.skyblockflipper.client.track.CaptureService;
+import jeff.skyblockflipper.client.track.MenuMemory;
 import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
@@ -29,7 +30,10 @@ import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
+import jeff.skyblockflipper.core.track.BazaarSlots;
 import jeff.skyblockflipper.core.track.CaptureLog;
+import jeff.skyblockflipper.core.track.CapturedMenu;
+import jeff.skyblockflipper.core.track.CapturedSlot;
 import jeff.skyblockflipper.core.track.TradeTracker;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -47,6 +51,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
@@ -170,6 +175,11 @@ public final class FlipCommand {
 				.then(ClientCommands.literal("track")
 						.executes(ctx -> {
 							toggleAutoTrack(ctx.getSource());
+							return 1;
+						}))
+				.then(ClientCommands.literal("menu")
+						.executes(ctx -> {
+							describeLastMenu(ctx.getSource());
 							return 1;
 						}))
 				.then(ClientCommands.literal("sync")
@@ -552,6 +562,54 @@ public final class FlipCommand {
 		worker.setDaemon(true);
 		worker.start();
 	}
+
+	/**
+	 * Print the named slots of the last menu that was open.
+	 *
+	 * <p>The slot detector matches buttons by name, and the names of the screens an order is placed
+	 * on were read off screenshots rather than a capture. This is how one gets confirmed without a
+	 * play session: open the screen, close it, run the command, and every button on it is listed with
+	 * the slot it sat in.
+	 */
+	private static void describeLastMenu(FabricClientCommandSource source) {
+		Optional<CapturedMenu> menu = MenuMemory.last();
+
+		if (menu.isEmpty()) {
+			source.sendError(Component.literal(
+					"No menu seen yet. Open one, close it, then run this."));
+			return;
+		}
+
+		CapturedMenu last = menu.get();
+		BazaarSlots.Screen screen = BazaarSlots.screenOf(last);
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				last.title() + " - " + BazaarSlots.size(last) + " slots, read as " + screen)
+				.withStyle(ChatFormatting.GOLD)));
+
+		int shown = 0;
+
+		for (CapturedSlot slot : last.slots()) {
+			// The filler glass has no name and there is a lot of it. Everything a button could be
+			// matched on is in the name.
+			if (slot.name().isBlank()) {
+				continue;
+			}
+
+			if (++shown > MENU_LINES) {
+				source.sendFeedback(Component.literal("  ... and more")
+						.withStyle(ChatFormatting.DARK_GRAY));
+				return;
+			}
+
+			source.sendFeedback(Component.literal("  " + slot.index() + "  " + slot.name()
+					+ (slot.itemId().isEmpty() ? "" : "  [" + slot.itemId() + "]"))
+					.withStyle(ChatFormatting.GRAY));
+		}
+	}
+
+	/** Chat holds about this many lines at once, and a full bazaar menu has fewer buttons than this. */
+	private static final int MENU_LINES = 40;
 
 	private static void toggleCapture(FabricClientCommandSource source) {
 		FlipperConfig config = SkyblockFlipperClient.config();

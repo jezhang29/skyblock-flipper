@@ -85,4 +85,31 @@ public final class Stacking {
 
 		return remainder == 0L ? whole : whole + " + " + remainder;
 	}
+
+	/**
+	 * The first of those orders, which is the number that goes in the amount box now.
+	 *
+	 * <p>{@code 3 x 256 + 112} is three boxes of 256 and then one of 112, and the box in front of the
+	 * player takes one number. Read back off the same string rather than carried alongside it,
+	 * because the split is what every renderer already holds and a second field saying 256 could
+	 * disagree with the text beside it.
+	 *
+	 * @return the units to type, or 0 for a string this did not write
+	 */
+	public static long firstOrder(String split) {
+		if (split == null || split.isBlank()) {
+			return 0L;
+		}
+
+		// "3 x 256 + 112" -> 256, "256 + 112" -> 256, "112" -> 112. The multiplier is never the
+		// answer: it counts the boxes, it does not go in one.
+		String head = split.split("\\+")[0].trim();
+		String units = head.contains(" x ") ? head.substring(head.indexOf(" x ") + 3).trim() : head;
+
+		try {
+			return Long.parseLong(units);
+		} catch (NumberFormatException e) {
+			return 0L;
+		}
+	}
 }

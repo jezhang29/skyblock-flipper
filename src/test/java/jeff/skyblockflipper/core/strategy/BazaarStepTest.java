@@ -140,15 +140,93 @@ class BazaarStepTest {
 				menu("Confirm Sell Offer")).orElseThrow().slot());
 	}
 
+	/**
+	 * The product page as photographed on 2026-08-13: titled with the sub-category it was reached
+	 * through and then the item, which is why it is recognised by its buttons instead.
+	 */
+	private static CapturedMenu productPage() {
+		return new CapturedMenu(0L, "Item Upgrades ➜ Transmission Tuner", List.of(
+				new CapturedSlot(10, "Buy Instantly", List.of(), "", 1, ""),
+				new CapturedSlot(11, "Create Buy Order", List.of(), "", 1, ""),
+				new CapturedSlot(13, "Sell Instantly", List.of(), "", 1, ""),
+				new CapturedSlot(15, "Create Sell Offer", List.of(), "", 1, ""),
+				new CapturedSlot(31, "Close", List.of(), "", 1, "")));
+	}
+
+	/** The amount page, with the tooltip that was photographed with it. */
+	private static CapturedMenu amountPage() {
+		return new CapturedMenu(0L, "How many do you want?", List.of(
+				new CapturedSlot(10, "1x", List.of(), "", 1, ""),
+				new CapturedSlot(12, "16x", List.of(), "", 1, ""),
+				new CapturedSlot(14, "32x", List.of(), "", 32, ""),
+				new CapturedSlot(16, "Custom Amount",
+						List.of("Buy Order Quantity", "", "Buy up to 256x.", "", "Click to specify!"),
+						"", 1, ""),
+				new CapturedSlot(31, "Close", List.of(), "", 1, "")));
+	}
+
+	@Test
+	void pointsAtCreateBuyOrderOnTheProductPage() {
+		// Never Buy Instantly: that pays the ask, which is the price the whole plan exists to avoid.
+		Optional<BazaarStep.Step> step = BazaarStep.next(
+				task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER", "Transmission Tuner"), 0.0d,
+				productPage());
+
+		assertTrue(step.isPresent());
+		assertEquals(11, step.get().slot());
+	}
+
+	@Test
+	void pointsAtTheAmountSignAndSaysWhatToTypeOnIt() {
+		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
+				"Transmission Tuner", 100.0d, 880L, "3 x 256 + 112", 0.0d, 0L, "");
+
+		Optional<BazaarStep.Step> step = BazaarStep.next(task, 0.0d, amountPage());
+
+		assertTrue(step.isPresent());
+		assertEquals(16, step.get().slot());
+		assertTrue(step.get().opensASign());
+
+		// One order, not the whole line: 880 typed into a box that takes 256 is rejected.
+		assertEquals("256", step.get().type());
+	}
+
+	@Test
+	void quotesThePriceToATenthOnThePriceSign() {
+		CapturedMenu pricePage = new CapturedMenu(0L, "At what price are you buying?", List.of(
+				new CapturedSlot(13, "Best Offer", List.of(), "", 1, ""),
+				new CapturedSlot(16, "Custom Price", List.of("Click to specify!"), "", 1, "")));
+
+		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
+				"Transmission Tuner", 84_999.94d, 256L, "256", 0.0d, 0L, "");
+
+		Optional<BazaarStep.Step> step = BazaarStep.next(task, 0.0d, pricePage);
+
+		assertTrue(step.isPresent());
+		assertEquals(16, step.get().slot());
+
+		// A tenth of a coin, which is the precision the bazaar's own box takes.
+		assertEquals("84999.9", step.get().type());
+	}
+
 	@Test
 	void saysNothingAboutAScreenNobodyHasMeasured() {
-		// A product page, which is titled with the item's own name. Until a capture session records
-		// one, this is the state that has to stay silent rather than guess a slot.
-		CapturedMenu product = new CapturedMenu(0L, "Enchanted Feather", List.of(
-				new CapturedSlot(10, "Buy Instantly", List.of(), "", 1, "")));
+		// A menu with none of the bazaar's buttons on it. The wording of the place flow was read off
+		// screenshots, so a rename is the likely way this arrives - and the answer is silence.
+		CapturedMenu unknown = new CapturedMenu(0L, "Item Upgrades ➜ Transmission Tuner", List.of(
+				new CapturedSlot(10, "Buy It Now", List.of(), "", 1, ""),
+				new CapturedSlot(11, "Place An Order", List.of(), "", 1, "")));
 
-		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
-				product).isEmpty());
+		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.PLACE, "", "Transmission Tuner"), 0.0d,
+				unknown).isEmpty());
+	}
+
+	@Test
+	void saysNothingOnTheAmountSignWithNoSizeToType() {
+		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "X", "Thing", 1.0d, 0L,
+				"", 0.0d, 0L, "");
+
+		assertTrue(BazaarStep.next(task, 0.0d, amountPage()).isEmpty());
 	}
 
 	@Test

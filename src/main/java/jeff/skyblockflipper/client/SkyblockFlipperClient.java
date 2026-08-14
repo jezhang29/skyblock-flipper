@@ -6,6 +6,7 @@ import jeff.skyblockflipper.client.gui.FlipKeybinds;
 import jeff.skyblockflipper.client.hud.BazaarOverlay;
 import jeff.skyblockflipper.client.hud.FlipHud;
 import jeff.skyblockflipper.client.track.CaptureService;
+import jeff.skyblockflipper.client.track.MenuMemory;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -60,6 +61,7 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 		BazaarOverlay.register();
 		FlipKeybinds.register();
 		CaptureService.register();
+		MenuMemory.register();
 		NpcCheckInService.register();
 		MarketDataService.start();
 

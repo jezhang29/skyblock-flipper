@@ -59,18 +59,71 @@ public final class BazaarMenu {
 	 * to draw at all, the other to highlight that row.
 	 */
 	public static String productPageFor(String title, List<String> names) {
+		String item = itemOf(title);
+
+		if (item.isEmpty()) {
+			return "";
+		}
+
+		boolean cut = title.trim().length() >= TITLE_CAP;
+		String found = "";
+		int matches = 0;
+
+		for (String name : names) {
+			if (name != null && matches(item, name, cut)) {
+				found = name;
+				matches++;
+			}
+		}
+
+		// Two basket items sharing the prefix a cut title left behind is a page nothing can name.
+		return matches == 1 ? found : "";
+	}
+
+	/**
+	 * The item a product page's title names, or empty.
+	 *
+	 * <p><b>A product page is titled {@code Item Upgrades ➜ Transmission Tuner}</b> - the
+	 * sub-category it was reached through, then the item - which is what a bare-name match missed,
+	 * leaving the product page with no panel on it at all. Photographed live 2026-08-13.
+	 *
+	 * <p>The bare name is still accepted, because nothing rules out a page that has no path in front
+	 * of it and the cost of accepting one is a panel on a renamed chest.
+	 */
+	public static String itemOf(String title) {
 		if (title == null || title.isBlank()) {
 			return "";
 		}
 
 		String trimmed = title.trim();
+		int arrow = trimmed.lastIndexOf(ARROW);
 
-		for (String name : names) {
-			if (name != null && name.equalsIgnoreCase(trimmed)) {
-				return name;
-			}
-		}
-
-		return "";
+		return arrow < 0 ? trimmed : trimmed.substring(arrow + ARROW.length()).trim();
 	}
+
+	/**
+	 * Whether a title's item and a basket name are the same item.
+	 *
+	 * <p>Equality, except on a title that was cut off. <b>Hypixel's menu titles stop at 32
+	 * characters</b> - measured across 850 captured menus, where the longest is exactly 32 and
+	 * {@code Bazaar ➜ "Enchanted Cooked Mutt} is cut mid-word - so a long item's page can only ever
+	 * be matched on the prefix that survived.
+	 *
+	 * <p><b>The prefix is only allowed on a title that hit the cap.</b> Item names are prefixes of one
+	 * another constantly - 187 of 5,549 of them - and "Enchanted Melon" is a whole item as well as the
+	 * start of "Enchanted Melon Slice". Accepting a prefix from a title with room to spare would put
+	 * the box on the wrong item's page, which is an order for the wrong item.
+	 */
+	private static boolean matches(String item, String name, boolean cut) {
+		String left = item.toLowerCase(Locale.ROOT);
+		String right = name.toLowerCase(Locale.ROOT);
+
+		return cut ? right.startsWith(left) : left.equals(right);
+	}
+
+	/** The path separator Hypixel puts between a category and what is under it. */
+	private static final String ARROW = "➜";
+
+	/** Characters a Hypixel menu title holds before it is cut, measured over 850 of them. */
+	private static final int TITLE_CAP = 32;
 }

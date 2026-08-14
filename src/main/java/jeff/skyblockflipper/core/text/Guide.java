@@ -122,6 +122,10 @@ public final class Guide {
 			new Term("/flip capture", "Toggles recording Hypixel's raw trade messages to a file. A "
 					+ "development tool - the parser it was collected for is written, so leave it "
 					+ "off unless something stops being read correctly"),
+			new Term("/flip menu", "Prints the buttons of the last menu you had open, with the slot "
+					+ "each one is in. Chat cannot be typed into over a menu, so open the screen, "
+					+ "close it, then run this. It is how a button the green box has stopped finding "
+					+ "gets identified"),
 			new Term("/flip guide <section>", "This guide, one section at a time")));
 
 	private static final Section COLUMNS = new Section("columns", "Columns", List.of(
@@ -330,14 +334,23 @@ public final class Guide {
 						+ "clicked, filled in or placed for you, and a click that lands on the panel "
 						+ "never reaches the menu behind it"),
 						new Term("The green box in the menu", "With Highlight the slot to click on, the "
-							+ "slot the top row of the panel needs next has a green box behind it: the "
-							+ "search button, then the item's own tile in the results, then the row of "
-							+ "a resting order, then the confirm button. Where the row has filled, the "
-							+ "box means a left click to claim it and a right click to open its "
-							+ "options, which is what that row's own tooltip says. It is worked out "
-							+ "from the menu in front of you and nothing is drawn where that cannot be "
-							+ "done - two orders on one item at different prices, or a screen that "
-							+ "has never been measured. Nothing is clicked for you"),
+							+ "slot the top row of the panel needs next has a green box behind it, the "
+							+ "whole way through an order: Search, the item's own tile in the results, "
+							+ "Create Buy Order, the amount sign, the price sign, then confirm. On the "
+							+ "resting orders it lands on the row itself - left click to claim a row "
+							+ "that has filled, right click to open its options, which is what that "
+							+ "row's own tooltip says. It is worked out from the menu in front of you "
+							+ "and nothing is drawn where that cannot be done: two orders on one item "
+							+ "at different prices, a page for a different item, a button Hypixel has "
+							+ "renamed. Nothing is clicked for you"),
+						new Term("What to type on the sign", "The amount and the price are typed on a "
+							+ "sign, which replaces the menu that asked for them. So the panel keeps "
+							+ "the number on screen for a minute and a half after the menu closes and "
+							+ "says which box it is for - and the window is refreshed by every screen "
+							+ "in the order, so taking your time no longer loses it. An item name is "
+							+ "offered shortened, because a sign holds about ninety pixels of text and "
+							+ "a long name cannot be typed or pasted into it at all; the bazaar "
+							+ "searches on the start of a name, so the short form finds the same item"),
 					new Term("Which side it sits on", "Basket panel side: LEFT, RIGHT or AUTO. AUTO "
 						+ "takes whichever side of Hypixel's menu has more room, which is the widest "
 						+ "panel and a moving one - Hypixel's menus differ in width, so it changes "

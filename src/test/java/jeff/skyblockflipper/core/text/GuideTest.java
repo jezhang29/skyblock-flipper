@@ -31,7 +31,7 @@ class GuideTest {
 			"", "bazaar", "npc", "npc plan", "npc reprice", "snipe", "guide", "status", "config",
 			"config edit", "take", "close", "abandon", "ledger", "ledger forget", "ledger clear",
 			"ledger clear confirm", "ledger clear unquoted", "ledger clear unquoted confirm", "hud",
-			"capture", "track", "sync", "gui", "reload");
+			"capture", "track", "menu", "sync", "gui", "reload");
 
 	/** The first word of each, which is all a mention buried in a sentence can be checked against. */
 	private static final Set<String> SUBCOMMANDS = COMMANDS.stream()

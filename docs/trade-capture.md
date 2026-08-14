@@ -65,6 +65,19 @@ recorded none of the 850 menus it wrote. They are exactly the screens a slot det
 So while capturing, **every** menu opened within 30 seconds of a bazaar menu is recorded, whatever
 it is called. The tracker is not fed those extra menus; only the file gets them.
 
+### Reading one menu instead
+
+For a single question — "what is that button actually called?" — a whole session is too much.
+`/flip menu` prints the title, the size and every named slot of the **last menu you had open**. Chat
+cannot be typed into while a menu is up, so open the screen, close it, then run the command.
+
+That is how the wording of the place flow gets confirmed. `BazaarSlots` matches buttons by name, and
+the names on the product page and the amount and price pages were read off screenshots rather than a
+capture — each answers to more than one wording, and a screen whose buttons match none of them is
+highlighted not at all rather than wrongly.
+
+### A full session
+
 That trail is what a slot-detection session is for:
 
 1. `/flip capture`.
