@@ -2,8 +2,10 @@ package jeff.skyblockflipper.core.track;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -129,6 +131,39 @@ public final class TradeTracker {
 				if (!id.isEmpty()) {
 					items.add(id);
 				}
+			}
+		}
+
+		return items;
+	}
+
+	/**
+	 * When each item's orders were last taken off the book by you, for cancels since {@code at}.
+	 *
+	 * <p>The other half of {@link #filledSince}. Both answer the same question - why is nothing of
+	 * this item resting - and they answer it for the two cases that are not a reprice in progress.
+	 * A reprice is itself a cancel followed by a re-post, so this cannot say on its own that a row is
+	 * finished; what it gives {@code NpcRound} is the moment to start counting from. A re-post lands
+	 * within a couple of minutes and a clear-out never lands at all.
+	 *
+	 * <p>The latest cancel per item, because an item's units are spread over several orders and the
+	 * last one off the book is when its position actually emptied.
+	 *
+	 * @param at epoch millis to count from, which is the round's own open time
+	 */
+	public Map<String, Long> cancelledSince(long at) {
+		Map<String, Long> items = new LinkedHashMap<>();
+
+		for (TrackedOrder order : orders) {
+			if (order.side() != TradeEvent.Side.BUY || order.status() != TrackedOrder.Status.CANCELLED
+					|| order.finishedAt() < at) {
+				continue;
+			}
+
+			String id = order.itemId().isEmpty() ? names.idFor(order.displayName()) : order.itemId();
+
+			if (!id.isEmpty()) {
+				items.merge(id, order.finishedAt(), Math::max);
 			}
 		}
 

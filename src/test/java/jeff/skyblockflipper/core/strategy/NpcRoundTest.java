@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -310,6 +311,53 @@ class NpcRoundTest {
 
 		// Something else filling says nothing about this row.
 		assertFalse(round.complete(List.of(), Set.of("OTHER")));
+	}
+
+	/**
+	 * A book the player cleared by hand is not a reprice that will finish.
+	 *
+	 * <p>Reported live 2026-08-14: every bazaar order cancelled, and {@code /flip npc plan} went on
+	 * asking to reprice them - with their slots and their coins reserved out of the basket - because
+	 * a row with nothing resting was read as a cancel waiting for its re-post. Both states show the
+	 * same empty book position and only elapsed time separates them, so the row is held exactly as
+	 * long as a re-post could plausibly still be on its way.
+	 */
+	@Test
+	void retiresARowWhoseOrderWasCancelledAndNeverRePosted() {
+		NpcRound round = round();
+		long cancelled = NOW + 60_000L;
+		Map<String, Long> at = Map.of("ITEM", cancelled);
+		long grace = NpcRound.REPOST_GRACE.toMillis();
+
+		// Inside the grace the re-post is still expected, and dropping the row here would delete the
+		// price the player cancelled in order to type.
+		assertEquals(1, round.outstanding(List.of(), Set.of(), at, cancelled + grace - 1L).size());
+		assertTrue(round.outstanding(List.of(), Set.of(), at, cancelled + grace).isEmpty());
+
+		// The clock runs from the cancel, not from the round: a cancel late in a round still gets a
+		// whole grace to be re-posted in.
+		assertEquals(1, round.outstanding(List.of(), Set.of(), at, NOW + grace + 1L).size());
+	}
+
+	/**
+	 * With no cancel seen, the row is counted from the round instead.
+	 *
+	 * <p>The round was frozen off orders that were resting, so its own open time is the last moment
+	 * they are known to have been on the book. That covers a cancel whose chat line was missed.
+	 */
+	@Test
+	void countsFromTheRoundWhenNoCancelWasSeen() {
+		NpcRound round = round();
+		long grace = NpcRound.REPOST_GRACE.toMillis();
+
+		assertEquals(1, round.outstanding(List.of(), Set.of(), Map.of(), NOW + grace - 1L).size());
+		assertTrue(round.outstanding(List.of(), Set.of(), Map.of(), NOW + grace).isEmpty());
+	}
+
+	/** A caller with no clock keeps the old behaviour: the row is held for the whole interval. */
+	@Test
+	void holdsAnEmptyRowForACallerThatTracksNoClock() {
+		assertEquals(1, round().outstanding(List.of()).size());
 	}
 
 	/** Orders on other items say nothing about whether this row was worked. */

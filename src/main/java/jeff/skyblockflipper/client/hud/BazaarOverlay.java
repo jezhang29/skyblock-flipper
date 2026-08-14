@@ -8,7 +8,6 @@ import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
 import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.core.config.OverlaySide;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
-import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.track.BazaarMenu;
 import jeff.skyblockflipper.core.track.BazaarSlots;
@@ -749,7 +748,7 @@ public final class BazaarOverlay {
 			for (int i = 0; i < tasks.size(); i++) {
 				NpcWorklist.Task task = tasks.get(i);
 				Optional<BazaarStep.Step> found =
-						BazaarStep.next(task, restingPrice(list, task), menu);
+						BazaarStep.next(task, list.restingPriceFor(task), menu);
 
 				if (found.isPresent()) {
 					step = found.get();
@@ -785,32 +784,6 @@ public final class BazaarOverlay {
 			return Minecraft.getInstance().font.plainSubstrByWidth(value, SIGN_LINE_WIDTH);
 		}
 
-		/**
-		 * What the order behind this row is resting at, or 0 if there is none.
-		 *
-		 * <p>Two offers on one item are told apart by their price, and the advice the worklist was
-		 * built from is the only thing that holds the resting one - the row itself carries the price
-		 * being moved to, which is a different number.
-		 *
-		 * <p>With two orders resting on one item there are two advices under one id and nothing here
-		 * says which of them this row is. Taking the first would point the box at a coin flip, so
-		 * this returns 0 instead, and 0 makes the lookup insist on the item having a single row -
-		 * which it does not, so nothing is drawn. That is the right answer: the player has two
-		 * orders on that item and only they know which one the row means.
-		 */
-		private static double restingPrice(NpcWorklist.Worklist list, NpcWorklist.Task task) {
-			double price = 0.0d;
-			int matches = 0;
-
-			for (NpcReprice.Advice advice : list.advice()) {
-				if (advice.order().itemId().equals(task.itemId())) {
-					price = advice.order().unitPrice();
-					matches++;
-				}
-			}
-
-			return matches == 1 ? price : 0.0d;
-		}
 	}
 
 	/**

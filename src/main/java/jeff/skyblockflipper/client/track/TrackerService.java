@@ -23,6 +23,7 @@ import net.minecraft.network.chat.Component;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -156,6 +157,17 @@ public final class TrackerService {
 	 */
 	public static Set<String> filledSince(long at) {
 		return tracker().filledSince(at);
+	}
+
+	/**
+	 * When each item's buy orders were last cancelled since {@code at}, for the same rows.
+	 *
+	 * <p>The third reading of an empty book position, beside {@link #restingBuyOrders()} and
+	 * {@link #filledSince}: pulled off by you rather than bought out. It cannot retire a row on its
+	 * own - a reprice is a cancel too - so what the round does with it is start a clock.
+	 */
+	public static Map<String, Long> cancelledSince(long at) {
+		return tracker().cancelledSince(at);
 	}
 
 	/**

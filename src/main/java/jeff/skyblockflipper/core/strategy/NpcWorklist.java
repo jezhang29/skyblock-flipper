@@ -241,6 +241,59 @@ public final class NpcWorklist {
 			return (int) tasks.stream().filter(task -> task.kind() == kind).count();
 		}
 
+		/**
+		 * What the order this row's next click is about is resting at, or 0 where nothing says.
+		 *
+		 * <p>The orders menu shows one row per order and the worklist shows one row per item, so a
+		 * renderer pointing at a row has to choose between an item's orders. The price is the only
+		 * thing that separates two rows on one item - {@code OrderMenuParser.slotOf} matches on it -
+		 * and the row itself carries the price being moved <i>to</i>, which is a different number.
+		 *
+		 * <p><b>The choice is made among the orders that need this same click, and the cheapest wins.</b>
+		 * Reported live 2026-08-14: with two {@code BRONZE_BOWL} orders resting, the panel highlighted
+		 * neither, because the old rule refused to choose and a refusal is indistinguishable from a
+		 * mod that has stopped working. Refusing was the wrong reading of the risk. Every order under
+		 * one reprice row is outbid and every one of them is to be moved to the same price, so any of
+		 * them is a correct click and there is no coin flip to lose - the cheapest is simply the
+		 * furthest behind the book, so it is the one worth moving first. The same holds for a cancel.
+		 *
+		 * <p>An order that does not need the click is never offered, which is what keeps this from
+		 * pointing at the healthy half of a position: a player who has already moved one of two orders
+		 * leaves exactly one {@code REPRICE} advice behind, and that is the one this returns.
+		 */
+		public double restingPriceFor(Task task) {
+			if (task == null) {
+				return 0.0d;
+			}
+
+			double lowest = 0.0d;
+
+			for (NpcReprice.Advice entry : advice) {
+				if (!entry.order().itemId().equals(task.itemId()) || !about(entry, task.kind())) {
+					continue;
+				}
+
+				double price = entry.order().unitPrice();
+
+				// A price the escrow line could not produce is no help in telling two rows apart.
+				if (price > 0.0d && (lowest <= 0.0d || price < lowest)) {
+					lowest = price;
+				}
+			}
+
+			return lowest;
+		}
+
+		/** Whether this advice is about the click {@code kind} names. */
+		private static boolean about(NpcReprice.Advice entry, Kind kind) {
+			return switch (kind) {
+				case CLAIM -> entry.hasUnclaimed();
+				case CANCEL -> entry.isCancel();
+				case REPRICE -> entry.action() == NpcReprice.Action.REPRICE;
+				case PLACE, HOLD -> false;
+			};
+		}
+
 		/** Orders that are exactly where you left them, which is a count and never a list. */
 		public int holding() {
 			return count(Kind.HOLD);
@@ -328,6 +381,20 @@ public final class NpcWorklist {
 	 */
 	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
 			NpcRound round, Set<String> filled) {
+		return of(resting, context, now, round, filled, Map.of());
+	}
+
+	/**
+	 * The same trip, told when each item was last cancelled.
+	 *
+	 * <p>The one thing that separates a reprice half done from a book the player has cleared by hand.
+	 * See {@link NpcRound#outstanding(List, Set, Map, long)}.
+	 *
+	 * @param cancelledAt when each item's last buy order came off the book, from
+	 *                    {@code TradeTracker.cancelledSince}. Empty is the old behaviour
+	 */
+	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
+			NpcRound round, Set<String> filled, Map<String, Long> cancelledAt) {
 		// A reprice is only worth what it fills before the next trip, so a round part way through
 		// values its rows over what is left of it. Null is a full interval, not no time at all.
 		Duration horizon = round == null ? null : round.remaining(now);
@@ -337,7 +404,7 @@ public final class NpcWorklist {
 		// missing from this snapshot - is not an NPC position, so charging the basket a slot for it
 		// would shrink the plan on the strength of a spread flip.
 		List<NpcReprice.Order> recognised = advice.stream().map(NpcReprice.Advice::order).toList();
-		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, filled);
+		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, filled, cancelledAt, now);
 		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, rows, advice));
 
 		List<Task> tasks = new ArrayList<>();
@@ -361,7 +428,8 @@ public final class NpcWorklist {
 	 * leaving the row in would be telling the player to cancel it and put it back.
 	 */
 	private static List<NpcRound.Row> rowsToWork(NpcRound round, List<NpcReprice.Order> recognised,
-			List<NpcReprice.Advice> advice, Set<String> filled) {
+			List<NpcReprice.Advice> advice, Set<String> filled, Map<String, Long> cancelledAt,
+			long now) {
 		if (round == null) {
 			return List.of();
 		}
@@ -374,7 +442,7 @@ public final class NpcWorklist {
 			}
 		}
 
-		return round.outstanding(recognised, filled).stream()
+		return round.outstanding(recognised, filled, cancelledAt, now).stream()
 				.filter(row -> !dead.contains(row.itemId()))
 				.toList();
 	}

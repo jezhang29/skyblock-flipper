@@ -514,4 +514,44 @@ class NpcWorklistTest {
 		assertEquals("", worklist.waitingNote(NOW));
 		assertEquals("", worklist.roundNote(NOW));
 	}
+
+	// Which of an item's resting orders a row's next click is about.
+
+	/** The same order at a stated price, for telling two rows on one item apart. */
+	private static NpcReprice.Order restingAt(String id, double unitPrice, long remaining) {
+		return new NpcReprice.Order(id, id, unitPrice, remaining, remaining, 0L,
+				NOW - NpcContext.DEFAULT_CHECK_IN.toMillis());
+	}
+
+	/**
+	 * Two orders on one item, and the cheaper one is the one to move.
+	 *
+	 * <p>Reported live 2026-08-14 on two Bronze Bowl orders: the panel highlighted neither, because
+	 * the rule refused to choose between them. Both are outbid and both move to the same price, so
+	 * either click is correct and the cheaper one is simply the furthest behind the book.
+	 */
+	@Test
+	void namesTheCheapestOrderThatNeedsTheSameClick() {
+		List<NpcReprice.Order> resting =
+				List.of(restingAt("ITEM_0", 620.0d, 500L), restingAt("ITEM_0", 600.0d, 500L));
+		NpcWorklist.Worklist worklist = NpcWorklist.of(resting, context(10, 5), NOW);
+
+		List<NpcWorklist.Task> reprices = of(worklist, NpcWorklist.Kind.REPRICE);
+
+		assertFalse(reprices.isEmpty());
+		assertEquals(600.0d, worklist.restingPriceFor(reprices.getFirst()), 1e-9d);
+	}
+
+	/** A place has no order behind it, so there is nothing for the price to point at. */
+	@Test
+	void namesNoOrderForARowThatIsNotAboutOne() {
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(List.of(), context(10, 5), NOW);
+
+		List<NpcWorklist.Task> places = of(worklist, NpcWorklist.Kind.PLACE);
+
+		assertFalse(places.isEmpty());
+		assertEquals(0.0d, worklist.restingPriceFor(places.getFirst()), 1e-9d);
+		assertEquals(0.0d, worklist.restingPriceFor(null), 1e-9d);
+	}
 }
