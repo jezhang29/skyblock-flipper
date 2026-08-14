@@ -333,6 +333,16 @@ public final class FlipperConfig {
 	 */
 	public String bazaarOverlaySide = OverlaySide.LEFT.name();
 
+	/**
+	 * Put a green box behind the slot the top row of the basket is asking you to click.
+	 *
+	 * <p>Same rule as the panel it belongs to: nothing is clicked, nothing is typed, nothing is sent.
+	 * The box is drawn behind Hypixel's own item so the item is still readable, and it appears only
+	 * where the slot was worked out from the menu in front of you - see {@code BazaarSlots}, which
+	 * shows nothing rather than guess.
+	 */
+	public boolean bazaarHighlightEnabled = true;
+
 	/** How many candidates the HUD lists. Kept short; the full list is what {@code /flip} is for. */
 	public int hudLines = 3;
 

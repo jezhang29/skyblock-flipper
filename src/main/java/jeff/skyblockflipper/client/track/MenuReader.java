@@ -23,7 +23,7 @@ import java.util.List;
  * {@link ItemStack}. That is the same rule the rest of the mod runs on, and it is what keeps the
  * capture records loadable by a test with no Minecraft on the classpath.
  */
-final class MenuReader {
+public final class MenuReader {
 	/**
 	 * Long enough for the biggest custom-data compound Hypixel sends and short enough that one
 	 * pathological stack cannot fill the capture file by itself.
@@ -34,6 +34,21 @@ final class MenuReader {
 	}
 
 	static CapturedMenu read(AbstractContainerScreen<?> screen, long at) {
+		return read(screen, at, true);
+	}
+
+	/**
+	 * The same menu without the raw NBT, for a caller that only wants to know what is where.
+	 *
+	 * <p>{@link #snbt} stringifies a compound per slot, which is worth doing once when a menu is
+	 * written to the capture file and not worth doing for fifty-four slots on the way to deciding
+	 * which one to draw a box behind. Everything a slot is matched on - name, lore, item id - is kept.
+	 */
+	public static CapturedMenu describe(AbstractContainerScreen<?> screen, long at) {
+		return read(screen, at, false);
+	}
+
+	private static CapturedMenu read(AbstractContainerScreen<?> screen, long at, boolean withNbt) {
 		List<CapturedSlot> slots = new ArrayList<>();
 
 		for (Slot slot : screen.getMenu().slots) {
@@ -49,18 +64,18 @@ final class MenuReader {
 				continue;
 			}
 
-			slots.add(toCaptured(slot.index, stack));
+			slots.add(toCaptured(slot.index, stack, withNbt));
 		}
 
 		return new CapturedMenu(at, plain(screen.getTitle()), slots);
 	}
 
-	private static CapturedSlot toCaptured(int index, ItemStack stack) {
+	private static CapturedSlot toCaptured(int index, ItemStack stack, boolean withNbt) {
 		CustomData data = stack.get(DataComponents.CUSTOM_DATA);
 		CompoundTag tag = data == null ? new CompoundTag() : data.copyTag();
 
 		return new CapturedSlot(index, plain(stack.getHoverName()), lore(stack), itemId(tag),
-				stack.getCount(), snbt(tag));
+				stack.getCount(), withNbt ? snbt(tag) : "");
 	}
 
 	/**
