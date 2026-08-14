@@ -26,6 +26,15 @@ public final class CaptureFilter {
 	private static final List<String> MENU_KEYWORDS = List.of(
 			"bazaar", "auction", "order", "bid", "offer");
 
+	/**
+	 * How long after a bazaar menu every other menu is recorded too.
+	 *
+	 * <p>Long enough to cover walking a whole order through - product page, amount, price, confirm -
+	 * at the speed a sign is typed on, and short enough that a chest opened on your island a minute
+	 * later is not snapshotted into the file.
+	 */
+	private static final long TRAIL_MILLIS = 30_000L;
+
 	private CaptureFilter() {
 	}
 
@@ -45,6 +54,26 @@ public final class CaptureFilter {
 
 	public static boolean keepMenu(String title) {
 		return title != null && !title.isBlank() && matches(title, MENU_KEYWORDS);
+	}
+
+	/**
+	 * The same question, for a menu opened {@code lastBazaarAt} milliseconds after a bazaar screen.
+	 *
+	 * <p>The keyword list cannot see the three screens an order is actually placed on. A product page
+	 * is titled with the item's own name, and so are the amount and price pages behind it, so
+	 * {@code Enchanted Melon} matches nothing in the list and 850 menu records from the 2026-08-09
+	 * session contain not one of them. They are the screens a slot detector most needs measured.
+	 *
+	 * <p>So proximity stands in for a title nothing can match on: everything opened within
+	 * {@link #TRAIL_MILLIS} of a bazaar menu is recorded, whatever it is called. It over-records by
+	 * design, like the chat side - a menu nobody thought of is cheap now and unrecoverable later.
+	 */
+	public static boolean keepMenu(String title, long at, long lastBazaarAt) {
+		if (title == null || title.isBlank()) {
+			return false;
+		}
+
+		return keepMenu(title) || at - lastBazaarAt <= TRAIL_MILLIS;
 	}
 
 	private static boolean matches(String text, List<String> keywords) {
