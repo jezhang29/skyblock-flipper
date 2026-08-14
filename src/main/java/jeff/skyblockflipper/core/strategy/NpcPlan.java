@@ -53,6 +53,25 @@ public record NpcPlan(
 		return unitNetProfit * unitsPerLoad;
 	}
 
+	/**
+	 * The other ranking key: coins of profit one bazaar order slot of this item carries.
+	 *
+	 * <p>Order slots are the resource that actually runs out - every sweep in
+	 * {@code docs/npc-flipping.md} came back {@code SLOTS} - so this is profit per unit of the binding
+	 * budget, which is what a greedy allocator should rank on. Measured on the live book on
+	 * 2026-08-14 at the user's settings it is worth 65.5M a cycle against 47.3M.
+	 *
+	 * <p>Bounded by {@link #maxUnits()} rather than left at the order's capacity, because an item
+	 * worth 300 units does not carry a slot's worth of 71,680 and ranking it as though it did would
+	 * put the whole stackable half of the book above the whole unstackable half on paper alone.
+	 *
+	 * <p>It is not the default. The 65.5M costs 363 inventory loads against 114, and hauling is paid
+	 * in clicks rather than coins - see {@code NpcRanking}.
+	 */
+	public double profitPerOrder() {
+		return unitNetProfit * Math.min(maxUnits, unitsPerOrder);
+	}
+
 	/** Margin as a share of the NPC price, after the chase charge. */
 	public double marginRatio() {
 		return npcPrice <= 0.0d ? 0.0d : unitNetProfit / npcPrice;

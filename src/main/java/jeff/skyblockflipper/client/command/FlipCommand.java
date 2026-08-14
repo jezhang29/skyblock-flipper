@@ -11,6 +11,7 @@ import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.NpcCheckInService;
+import jeff.skyblockflipper.client.NpcProbeService;
 import jeff.skyblockflipper.client.TapeSyncService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
@@ -21,11 +22,13 @@ import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
+import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
+import jeff.skyblockflipper.core.strategy.NpcProbe;
 import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
@@ -35,6 +38,7 @@ import jeff.skyblockflipper.core.track.CaptureLog;
 import jeff.skyblockflipper.core.track.CapturedMenu;
 import jeff.skyblockflipper.core.track.CapturedSlot;
 import jeff.skyblockflipper.core.track.TradeTracker;
+import jeff.skyblockflipper.core.valuation.NpcEdge;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import java.io.IOException;
@@ -52,6 +56,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.function.Predicate;
 
 /**
@@ -102,7 +107,19 @@ public final class FlipCommand {
 								.executes(ctx -> {
 									showReprice(ctx.getSource());
 									return 1;
-								})))
+								}))
+						// The one question the tape cannot answer, because every sample in it was
+						// taken from a book with none of your own orders in it. See NpcProbe.
+						.then(ClientCommands.literal("probe")
+								.executes(ctx -> {
+									showProbe(ctx.getSource());
+									return 1;
+								})
+								.then(ClientCommands.literal("stop")
+										.executes(ctx -> stopProbe(ctx.getSource())))
+								.then(ClientCommands.argument("id", StringArgumentType.word())
+										.executes(ctx -> startProbe(ctx.getSource(),
+												StringArgumentType.getString(ctx, "id"))))))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
@@ -291,6 +308,114 @@ public final class FlipCommand {
 		}
 
 		NpcRenderer.renderResting(source, CandidateFeed.worklist());
+	}
+
+	/**
+	 * Quotes the premium price for one item and starts watching what happens to an order there.
+	 *
+	 * <p>Settles the one assumption behind {@code npcDriftPremium} that no amount of tape can:
+	 * every sample on the tape came from a book with none of the player's orders in it, so whether
+	 * competitors re-post above whatever is on top is unobservable from outside. One order and one
+	 * session answers it. See {@link NpcProbe}.
+	 */
+	private static int startProbe(FabricClientCommandSource source, String id) {
+		if (!marketReady(source)) {
+			return 0;
+		}
+
+		String itemId = id.toUpperCase(Locale.ROOT);
+		MarketData data = MarketDataService.data();
+		Optional<BazaarProduct> product = data.bazaar().product(itemId);
+
+		if (product.isEmpty()) {
+			source.sendError(Component.literal("No bazaar product called " + itemId + ".")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		OptionalDouble outbid = product.get().outbidBuyOrder();
+
+		if (outbid.isEmpty()) {
+			source.sendError(Component.literal(itemId + " has no buy orders to sit above.")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		FlipperConfig config = SkyblockFlipperClient.config();
+		NpcEdge edge = data.npcEdges().edgeFor(itemId).orElse(null);
+
+		if (edge == null) {
+			source.sendError(Component.literal(
+					"Nothing on the tape has watched " + itemId + " long enough to measure its drift, "
+							+ "so there is no premium to probe with.").withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		// The premium the settings ask for, or a quarter of the drift where they ask for none - which
+		// is the measured peak, and the number somebody probing before turning the setting on wants.
+		double multiple = config.npcDriftPremium > 0.0d ? config.npcDriftPremium : DEFAULT_PROBE_PREMIUM;
+		double premium = multiple * edge.bidDriftPerHour() * config.npcRestingHours;
+		double price = outbid.getAsDouble() + premium;
+
+		if (premium <= 0.0d) {
+			source.sendError(Component.literal(
+					"The tape has " + itemId + " drifting upward by nothing at all, so there is no "
+							+ "premium to pay and nothing to find out.").withStyle(ChatFormatting.RED));
+			return 0;
+		}
+
+		String name = data.catalog().displayName(itemId);
+		NpcProbeService.open(itemId, name, price, premium);
+
+		source.sendFeedback(Chat.prefixed(Component.literal("Probing " + name)
+				.withStyle(ChatFormatting.GREEN)));
+		line(source, "post one buy order at", String.format("%.1f", price));
+		line(source, "which is", String.format("%.1f above the book, %.2gx the %.1fh drift",
+				premium, multiple, config.npcRestingHours));
+		line(source, "then", "leave it. /flip npc probe says whether anything outbid it.");
+		source.sendFeedback(Component.literal(
+						"  Memory only - a restart forgets it. Nothing is placed for you.")
+				.withStyle(ChatFormatting.GRAY));
+
+		return 1;
+	}
+
+	/**
+	 * The premium to probe with when the setting is still off.
+	 *
+	 * <p>A whole window's drift, which is the setting worth turning on: the shipped fill model is
+	 * conservative about a premium and its own arithmetic peaks there. See
+	 * {@code FlipperConfig.npcDriftPremium}.
+	 */
+	private static final double DEFAULT_PROBE_PREMIUM = 1.0d;
+
+	private static void showProbe(FabricClientCommandSource source) {
+		Optional<NpcProbe> probe = NpcProbeService.current();
+
+		if (probe.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+							"No probe running. /flip npc probe <ITEM_ID> starts one.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(probe.get().report(System.currentTimeMillis()))
+				.withStyle(probe.get().everOutbid() ? ChatFormatting.YELLOW : ChatFormatting.GREEN)));
+	}
+
+	private static int stopProbe(FabricClientCommandSource source) {
+		Optional<NpcProbe> ended = NpcProbeService.stop();
+
+		if (ended.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal("No probe was running.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 0;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Probe ended. " + ended.get().report(System.currentTimeMillis()))
+				.withStyle(ChatFormatting.GREEN)));
+		return 1;
 	}
 
 	/** Whether there is a book to answer with, with the reason there is not if there is not. */

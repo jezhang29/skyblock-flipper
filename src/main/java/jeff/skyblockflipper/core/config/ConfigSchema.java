@@ -193,6 +193,28 @@ public final class ConfigSchema {
 							+ "Bazaar Flipper level allows changes nothing.",
 					0, Fees.MAX_BAZAAR_ORDER_SLOTS, 1,
 					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v),
+			new Entry.Ratio("npcDriftPremium", "Pay the chase up front",
+					"How much of a resting window's measured upward drift to add to the price you "
+							+ "post at, so the order holds the top of the book without you coming "
+							+ "back. The coins are the same ones repricing would have spent. "
+							+ "Measured over four days of tape: an order at the plain outbid price "
+							+ "spends 63% of an 8-hour window on top and one a whole drift above it "
+							+ "spends 97%. 1.0 is the setting to use - the basket plans 50.0M a "
+							+ "cycle there and the tape backs all of it, against 47.3M planned at 0 "
+							+ "of which the tape backs 24.7M unless you really do reprice sixteen "
+							+ "times. 0 is the old behaviour. Set it with a long check-in interval "
+							+ "for a cycle you can leave alone.",
+					0.0d, 2.0d, 0.05d,
+					c -> c.npcDriftPremium, (c, v) -> c.npcDriftPremium = v),
+			new Entry.Choice("npcRankingKey", "Rank the basket by",
+					"Which budget the basket spends first when it has to choose. LOAD ranks on "
+							+ "profit per inventory load, which is the shipped behaviour and the one "
+							+ "that minimises carrying items to the NPC. ORDER_SLOT ranks on the "
+							+ "resource that actually runs out and is worth about a third more "
+							+ "coins - 65.5M a cycle against 47.3M on the live book - at three "
+							+ "times the hauling, 363 loads against 114.",
+					NpcRanking.names(),
+					c -> c.npcRanking().name(), (c, v) -> c.npcRankingKey = v),
 			new Entry.Flag("npcRepriceReminder", "Remind me to reprice",
 					"Say so in chat when your resting NPC buy orders have been outbid, once per "
 							+ "reprice round. An order only fills while it is the best bid, and a "

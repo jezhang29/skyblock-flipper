@@ -391,8 +391,109 @@ Claims and dead-trade cancels bypass the round entirely: a claim is coins alread
 the item from leaving the order, and a `CANCEL` past the chase stop or an `EXPIRED` past the resting
 window is a trade that is over with the capital stranded in it. Neither improves by waiting.
 
+**A row survives its own cancel, but not forever.** Reported live 2026-08-14: every bazaar order
+cancelled by hand, and `/flip npc plan` went on asking to reprice orders that no longer existed —
+with their slots and their coins reserved out of the basket — while `/flip npc reprice` correctly
+said there were no orders, because it reads the book. `NpcRound.done` read "nothing of this item is
+resting" as the middle of a reprice unless the item had filled, and a book cleared by hand looks
+exactly like that. Only elapsed time separates them, so a row with nothing resting is now held for
+`NpcRound.REPOST_GRACE` — five minutes, counted from the item's last cancel where `TradeTracker` saw
+one and from the round's own open time where it did not. A re-post is six clicks and two signs;
+a clear-out never arrives. `/flip reload` was the workaround, since it drops the open round.
+
+**Two orders on one item are now told apart by the cheapest one that needs the click.** Reported live
+2026-08-14 on two `BRONZE_BOWL` orders: the panel highlighted neither. A round row is per item and
+the orders menu is per order, so something has to choose, and the old rule refused to — it returned
+no price, and no price makes `OrderMenuParser.slotOf` insist on a unique row. Refusing was the wrong
+reading of the risk: every order under one reprice row is outbid and every one moves to the same
+price, so any of them is a correct click. `NpcWorklist.Worklist.restingPriceFor` picks the cheapest
+order whose own advice asks for that same click, which is the furthest behind the book, and never
+offers one that does not — so a player who has already moved one of two is pointed at the other.
+
 **Open:** `NpcSettingsSweepTest` for a max-orders-per-item cap (1, 2, unlimited). An unstackable line
 costs four times the clicks of a stackable one; the profit cost of capping it is not yet measured.
+
+### Paying the chase up front, so a cycle needs two visits instead of seventeen
+
+Asked for in play 2026-08-14: run 4 to 8 hours unattended, claim everything at once, sell at once.
+The reprice curve above prices that at 11.5M a cycle against 59.7M, which reads as a 5x penalty for
+not being there. **It is not, and the reason is already in this document.**
+
+The chase cost is charged against every candidate's margin — `NpcEdge.chaseCostRatio` over the
+resting window — and the mod then expects the player to *spend* those coins sixteen times over. Pay
+the identical coins into the posted price instead and the order starts above the book, so nothing
+displaces it until the book has climbed the premium. Same margin, same unit cost, no trips.
+
+**Measured 2026-08-14** over the four most recent days of the user's tape, 1,966 eight-hour windows
+across 153 candidates that clear the live filters. Share of a window an order spends at or above the
+live top bid:
+
+| posted at | share of an 8h window at the top | `BEADY_EYES` |
+| --- | --- | --- |
+| top + 0.1 | 62.6% | 38.5% |
+| top + 0.5x the window's drift | 93.2% | 99.0% |
+| top + 1.0x | **96.7%** | 99.0% |
+
+Run through the allocator at the user's live settings (21 slots, 0.20 floor, 800M, 500M cap), one
+8-hour cycle, against the same reprice regime measured the same way:
+
+| regime | profit/cycle | reprice trips |
+| --- | --- | --- |
+| reprice every 30 min, FillModel's own arithmetic | 47.3M | 16 |
+| reprice every 30 min, measured on the tape | 58.9M | 16 |
+| post once at top + 0.1, walk away | 37.5M | 0 |
+| **post once at top + 0.25x drift** | **69.9M** | **0** |
+| post once at top + 1.0x drift | 65.7M | 0 |
+
+**The market peaks at a quarter of the drift. The mod peaks at all of it, and that is not a
+contradiction.** `FillModel` never lets a displaced order return to the front of the book, while on
+the tape the top bid falls back below a posted price constantly — the order above it fills, or is
+pulled. So the model credits a premium with far less fill than the tape shows, and the gap narrows
+as the premium grows. Running the shipped allocator and then re-scoring the very same basket against
+what the tape says an order at that price collects:
+
+| premium | the basket the mod plans | what the tape backs |
+| --- | --- | --- |
+| 0.00x | 47.3M | **24.7M** |
+| 0.25x | 36.1M | 36.1M |
+| 0.50x | 40.3M | 40.3M |
+| 1.00x | **50.0M** | **50.0M** |
+
+Two readings. Every premium is **fully backed** — the mod plans less than the tape says it collects,
+which is the direction to be wrong in. And the shipped zero-premium row is the one that is **not**:
+it quotes 47.3M on the assumption of sixteen reprice rounds and collects 24.7M without them.
+
+So `npcDriftPremium` ships at 0 and the setting worth using is **1.0**, paired with a long
+`npcCheckInMinutes` so the reminder does not ask you back. The premium is capped at the chase stop
+in `NpcFlipStrategy`, because the floor is also a ceiling on the price typed and charging the cost is
+not the same test as checking the price once the two have been separated.
+
+**The one thing the tape cannot check.** Every sample in it came from a book with none of the
+player's orders in it. If an item's competition re-posts one increment above whatever is on top, the
+premium buys one poll rather than eight hours. The drift on the quiet items argues against that
+(`LOG:2` at 0.14 coins an hour is nobody jumping anything) and `CLIPPED_WINGS` at 76.8 argues it is
+a real question. `/flip npc probe <ITEM_ID>` settles it per item: it quotes the premium price, then
+watches the top bid — which now *includes* your own order — and reports how long you held it.
+Memory only, one session, nothing placed for you.
+
+### The ranking key, revisited: it is a choice between two budgets
+
+`Ranking key: profit per slot-load, not cap efficiency` above is still right about what it rejected.
+It is incomplete about what it chose. Profit per inventory load ranks on **hauling**, and hauling is
+the one budget every sweep here reports as slack — 34 of 864 loads. Order slots are what every sweep
+reports as binding.
+
+Measured on the live book 2026-08-14 at the user's settings:
+
+| ranking key | profit/cycle | inventory loads |
+| --- | --- | --- |
+| profit per inventory load (shipped) | 47.3M | 114 |
+| profit per order slot | **65.5M** | **363** |
+
+**Neither is wrong, and that is why it is a setting rather than a fix.** A load is 36 inventory
+slots carried to a shop by hand, so the extra 18M costs roughly 9,000 clicks — a price no model in
+this repo has ever quoted, because it is not paid in coins. `npcRankingKey` defaults to `LOAD`, on
+the grounds that clicking is what a player runs out of first.
 
 ### Rejected: any guard on book depth
 
