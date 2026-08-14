@@ -3,6 +3,7 @@ package jeff.skyblockflipper.core.track;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -73,6 +74,58 @@ public final class OrderMenuParser {
 
 		return List.copyOf(orders);
 	}
+
+	/**
+	 * The slot holding one particular resting order, for something that has to point at it.
+	 *
+	 * <p>Separate from {@link #parse} because {@link OrderSnapshot} deliberately carries no slot
+	 * index: where a row sits is a fact about the menu that was open, and an order outlives the menu.
+	 * The tracker never needs it. A green box drawn behind the row does.
+	 *
+	 * <p><b>The item is not enough to identify an order.</b> The capture holds menus with two
+	 * {@code SELL Diamante's Handle} rows at once, resting at 811,618.4 and 811,605.1, so the price
+	 * is what separates them. It is matched to a tenth of a coin, which is the precision the menu
+	 * prints and the precision the bazaar's own price box accepts. With no row inside that tolerance,
+	 * or with two, this is empty.
+	 *
+	 * @param unitPrice the price the order rests at, as the ledger recorded it when it was placed, or
+	 *                  0 for a caller that does not know it - the row is then found only when the
+	 *                  item has exactly one on this side, which is the common case
+	 */
+	public static OptionalInt slotOf(CapturedMenu menu, TradeEvent.Side side, String displayName,
+			double unitPrice) {
+		if (!isOrdersMenu(menu) || displayName == null || displayName.isBlank()) {
+			return OptionalInt.empty();
+		}
+
+		String wanted = (side == TradeEvent.Side.BUY ? "BUY " : "SELL ") + displayName;
+		int found = -1;
+		int matches = 0;
+
+		for (CapturedSlot slot : menu.slots()) {
+			if (!slot.name().equalsIgnoreCase(wanted)) {
+				continue;
+			}
+
+			Optional<OrderSnapshot> order = read(menu.at(), slot);
+
+			if (order.isPresent() && (unitPrice <= 0.0d
+					|| Math.abs(order.get().unitPrice() - unitPrice) <= PRICE_EPSILON)) {
+				found = slot.index();
+				matches++;
+			}
+		}
+
+		return matches == 1 ? OptionalInt.of(found) : OptionalInt.empty();
+	}
+
+	/**
+	 * How far two prices may differ and still be the same order.
+	 *
+	 * <p>Half of the last digit the menu prints. Two orders on one item are separated by whatever
+	 * their owners typed, and the closest pair in the capture is 13.3 coins apart on an 811k offer.
+	 */
+	private static final double PRICE_EPSILON = 0.05d;
 
 	/**
 	 * The subset placed by one player.

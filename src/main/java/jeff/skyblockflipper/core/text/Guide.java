@@ -329,6 +329,15 @@ public final class Guide {
 						+ "instead. The Basket tab has the same three as buttons. Nothing is ever "
 						+ "clicked, filled in or placed for you, and a click that lands on the panel "
 						+ "never reaches the menu behind it"),
+						new Term("The green box in the menu", "With Highlight the slot to click on, the "
+							+ "slot the top row of the panel needs next has a green box behind it: the "
+							+ "search button, then the item's own tile in the results, then the row of "
+							+ "a resting order, then the confirm button. Where the row has filled, the "
+							+ "box means a left click to claim it and a right click to open its "
+							+ "options, which is what that row's own tooltip says. It is worked out "
+							+ "from the menu in front of you and nothing is drawn where that cannot be "
+							+ "done - two orders on one item at different prices, or a screen that "
+							+ "has never been measured. Nothing is clicked for you"),
 					new Term("Which side it sits on", "Basket panel side: LEFT, RIGHT or AUTO. AUTO "
 						+ "takes whichever side of Hypixel's menu has more room, which is the widest "
 						+ "panel and a moving one - Hypixel's menus differ in width, so it changes "

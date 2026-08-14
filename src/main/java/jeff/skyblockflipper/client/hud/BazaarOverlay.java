@@ -5,9 +5,13 @@ import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipScreen;
 import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
+import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.core.config.OverlaySide;
+import jeff.skyblockflipper.core.strategy.BazaarStep;
+import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.track.BazaarMenu;
+import jeff.skyblockflipper.core.track.CapturedMenu;
 
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
@@ -19,10 +23,13 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.Slot;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The NPC worklist, drawn beside Hypixel's own bazaar menu.
@@ -200,11 +207,19 @@ public final class BazaarOverlay {
 		// were measured. The layout accessor is checked rather than cast outright: a panel that
 		// quietly does not appear beats a ClassCastException on every menu the player opens.
 		if (screen instanceof ContainerScreenLayout layout
+				&& screen instanceof AbstractContainerScreen<?> container
 				&& (BazaarMenu.isBazaar(title) || !board.openProduct().isEmpty())) {
 			leftBazaarAt = System.currentTimeMillis();
+
+			// Before the panel, because the panel scales the pose and this draws in real screen
+			// pixels, on Hypixel's menu rather than beside it.
+			Guidance.draw(graphics, container, layout, worklist);
+
 			drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
 			return;
 		}
+
+		Guidance.clear();
 
 		// Typing a price or an amount happens on a sign, which is not a container menu and carries
 		// no title worth matching - and it is the moment the numbers are actually needed. So the
@@ -466,10 +481,11 @@ public final class BazaarOverlay {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_STRIPE);
 				}
 
-				// The row for the product page actually open, so a list of twenty does not have to
-				// be read through to find the one in front of you.
-				if (!openProduct.isEmpty()
-						&& row.task().displayName().equalsIgnoreCase(openProduct)) {
+				// The row for the product page actually open, and the row the green box in the menu
+				// is serving, so a list of twenty does not have to be read through to find the one
+				// in front of you.
+				if (i == Guidance.row() || (!openProduct.isEmpty()
+						&& row.task().displayName().equalsIgnoreCase(openProduct))) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_OPEN);
 				} else if (i == hovered) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_HOVER);
@@ -550,6 +566,150 @@ public final class BazaarOverlay {
 			return holding > 0
 					? "click to copy - " + holding + " resting fine"
 					: "click a name or a number to copy";
+		}
+	}
+
+	/**
+	 * The green box behind the slot the basket needs clicked next.
+	 *
+	 * <p>The panel says what to do and this says where. {@link BazaarStep} works the slot out from
+	 * the menu that is open, and everything it knows was measured off a live bazaar - see
+	 * {@code BazaarSlots}. A screen it cannot read, a row it cannot find, two rows it cannot choose
+	 * between: all of them draw nothing. A box behind the wrong slot would be clicked.
+	 *
+	 * <p><b>Which row it serves.</b> The first pending row this screen can serve, top down, which is
+	 * the order the panel already lists them in. So the box follows the list rather than jumping
+	 * about: on the orders menu it lands on the first claim, and on a search page on the first item
+	 * being placed.
+	 *
+	 * <p><b>It draws before the items.</b> {@code afterBackground} runs after Hypixel's menu art and
+	 * before the stacks in it, so the box is a background and the item stays readable on top.
+	 */
+	private static final class Guidance {
+		/** Green, at the strength of vanilla's own slot hover but coloured. */
+		private static final int BOX = 0x9932CD32;
+
+		/** One vanilla slot, and the pixel of padding either side that vanilla's hover box uses. */
+		private static final int SLOT = 16;
+		private static final int MARGIN = 1;
+
+		/**
+		 * How often the open menu is re-read.
+		 *
+		 * <p>Reading fifty-four slots to decide one box is not worth doing sixty times a second, and
+		 * a menu that has just changed is worth pointing at within a frame or two of settling. The
+		 * cache is dropped outright when the screen or the worklist changes, so this is only about
+		 * the menu's contents moving under a screen that stayed open - an order filling, a page
+		 * turning.
+		 */
+		private static final long REREAD_MILLIS = 250L;
+
+		private static WeakReference<Screen> screen = new WeakReference<>(null);
+		private static NpcWorklist.Worklist worklist;
+		private static long readAt;
+
+		private static BazaarStep.Step step;
+
+		/** Which row of the panel the box is serving, or -1. */
+		private static int row = -1;
+
+		private Guidance() {
+		}
+
+		static int row() {
+			return row;
+		}
+
+		static void clear() {
+			step = null;
+			row = -1;
+			screen = new WeakReference<>(null);
+		}
+
+		static void draw(GuiGraphicsExtractor graphics, AbstractContainerScreen<?> container,
+				ContainerScreenLayout layout, NpcWorklist.Worklist list) {
+			if (!SkyblockFlipperClient.config().bazaarHighlightEnabled) {
+				clear();
+				return;
+			}
+
+			update(container, list);
+
+			if (step == null) {
+				return;
+			}
+
+			for (Slot slot : container.getMenu().slots) {
+				// Slot.index is the index within the slot's own container, which is what MenuReader
+				// recorded and so what the step is expressed in. The player's own inventory shares
+				// those numbers and is never what a bazaar step means.
+				if (slot.index != step.slot() || slot.container instanceof Inventory) {
+					continue;
+				}
+
+				int x = layout.flipper$leftPos() + slot.x;
+				int y = layout.flipper$topPos() + slot.y;
+
+				graphics.fill(x - MARGIN, y - MARGIN, x + SLOT + MARGIN, y + SLOT + MARGIN, BOX);
+				return;
+			}
+		}
+
+		/** Re-reads the menu and re-picks the row, at most every {@link #REREAD_MILLIS}. */
+		private static void update(AbstractContainerScreen<?> container, NpcWorklist.Worklist list) {
+			long now = System.currentTimeMillis();
+
+			if (screen.get() == container && list == worklist && now - readAt < REREAD_MILLIS) {
+				return;
+			}
+
+			screen = new WeakReference<>(container);
+			worklist = list;
+			readAt = now;
+			step = null;
+			row = -1;
+
+			CapturedMenu menu = MenuReader.describe(container, now);
+			List<NpcWorklist.Task> tasks = list.pending();
+
+			for (int i = 0; i < tasks.size(); i++) {
+				NpcWorklist.Task task = tasks.get(i);
+				Optional<BazaarStep.Step> found =
+						BazaarStep.next(task, restingPrice(list, task), menu);
+
+				if (found.isPresent()) {
+					step = found.get();
+					row = i;
+					return;
+				}
+			}
+		}
+
+		/**
+		 * What the order behind this row is resting at, or 0 if there is none.
+		 *
+		 * <p>Two offers on one item are told apart by their price, and the advice the worklist was
+		 * built from is the only thing that holds the resting one - the row itself carries the price
+		 * being moved to, which is a different number.
+		 *
+		 * <p>With two orders resting on one item there are two advices under one id and nothing here
+		 * says which of them this row is. Taking the first would point the box at a coin flip, so
+		 * this returns 0 instead, and 0 makes the lookup insist on the item having a single row -
+		 * which it does not, so nothing is drawn. That is the right answer: the player has two
+		 * orders on that item and only they know which one the row means.
+		 */
+		private static double restingPrice(NpcWorklist.Worklist list, NpcWorklist.Task task) {
+			double price = 0.0d;
+			int matches = 0;
+
+			for (NpcReprice.Advice advice : list.advice()) {
+				if (advice.order().itemId().equals(task.itemId())) {
+					price = advice.order().unitPrice();
+					matches++;
+				}
+			}
+
+			return matches == 1 ? price : 0.0d;
 		}
 	}
 

@@ -259,6 +259,13 @@ public final class ConfigSchema {
 							+ "row for whichever product page you have open. Nothing is clicked or "
 							+ "filled in for you.",
 					c -> c.bazaarOverlayEnabled, (c, v) -> c.bazaarOverlayEnabled = v),
+			new Entry.Flag("bazaarHighlightEnabled", "Highlight the slot to click",
+					"Draw a green box behind the slot in Hypixel's menu that the top row of the "
+							+ "basket needs next - the search button, the item's tile, the row of a "
+							+ "resting order, the confirm button. It is worked out from the menu in "
+							+ "front of you, and where that cannot be done nothing is drawn rather "
+							+ "than a guess. Still nothing is clicked for you.",
+					c -> c.bazaarHighlightEnabled, (c, v) -> c.bazaarHighlightEnabled = v),
 			new Entry.Choice("bazaarOverlaySide", "Basket panel side",
 					"Which side of Hypixel's menu that panel sits on. AUTO takes whichever side has "
 							+ "more room, which is the widest panel and a moving target: Hypixel's "
