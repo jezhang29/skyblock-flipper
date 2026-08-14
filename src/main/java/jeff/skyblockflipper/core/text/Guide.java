@@ -343,6 +343,14 @@ public final class Guide {
 							+ "and nothing is drawn where that cannot be done: two orders on one item "
 							+ "at different prices, a page for a different item, a button Hypixel has "
 							+ "renamed. Nothing is clicked for you"),
+						new Term("Top Order +0.1 or the price sign", "On the price page the box goes on "
+							+ "Hypixel's own \"Top Order +0.1\" button whenever the price it offers is "
+							+ "the plan's price or less. That button reads the live book with no poll "
+							+ "in front of it, so it cannot be behind, and it is one click instead of "
+							+ "a sign. Where it offers more than the plan, the book has moved up since "
+							+ "the price was worked out and the box goes on Custom Price instead: "
+							+ "chasing past the planned price spends the margin the flip is made of, "
+							+ "so type the number and let the order rest until the book comes back"),
 						new Term("What to type on the sign", "The amount and the price are typed on a "
 							+ "sign, which replaces the menu that asked for them. So the panel keeps "
 							+ "the number on screen for a minute and a half after the menu closes and "

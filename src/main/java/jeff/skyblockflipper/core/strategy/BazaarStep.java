@@ -10,6 +10,7 @@ import jeff.skyblockflipper.core.track.TradeEvent;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.function.IntFunction;
 
@@ -92,8 +93,7 @@ public final class BazaarStep {
 			case PRODUCT -> onProduct(task, menu);
 			case AMOUNT -> sign(BazaarSlots.CUSTOM_AMOUNT, menu, "how many",
 					String.valueOf(Stacking.firstOrder(task.orderSplit())));
-			case PRICE -> sign(BazaarSlots.CUSTOM_PRICE, menu, "price per unit",
-					task.hasPrice() ? String.format("%.1f", task.price()) : "");
+			case PRICE -> onPrice(task, menu);
 			case CONFIRM_BUY -> confirm(BazaarSlots.CONFIRM_BUY_ORDER, menu, "confirm the order");
 			case CONFIRM_SELL -> confirm(BazaarSlots.CONFIRM_SELL_OFFER, menu, "confirm the offer");
 			case UNKNOWN -> Optional.empty();
@@ -119,6 +119,51 @@ public final class BazaarStep {
 		return at(BazaarSlots.CREATE_BUY_ORDER.in(menu),
 				slot -> Step.of(slot, Click.LEFT, "buy order"));
 	}
+
+	/**
+	 * The page that takes the price: Hypixel's own button where it agrees with the plan, the sign
+	 * otherwise.
+	 *
+	 * <p><b>The button is the better click when it offers the plan's price or less.</b> It posts one
+	 * increment above the top of the book, read off the book with no poll between - the same
+	 * computation the plan's own price is, and always the fresher of the two. Where it comes out at or
+	 * under what the plan quoted, pressing it costs one click instead of a sign, and it cannot be
+	 * beaten on queue position by the number the plan wants typed.
+	 *
+	 * <p><b>Above the plan's price it is the wrong click.</b> The book has moved up since the plan was
+	 * priced, and the button would post over the ceiling the margin was worked out against - so the
+	 * price gets typed, and the order rests behind the top until the book comes back to it. That is the
+	 * strategy: an NPC flip's profit is the gap to a fixed NPC price, and chasing past the plan's price
+	 * spends it.
+	 */
+	private static Optional<Step> onPrice(NpcWorklist.Task task, CapturedMenu menu) {
+		if (!task.hasPrice()) {
+			return Optional.empty();
+		}
+
+		OptionalInt button = BazaarSlots.TOP_ORDER_PLUS.in(menu);
+
+		if (button.isPresent()) {
+			OptionalDouble offered = BazaarSlots.offeredPrice(menu, button.getAsInt());
+
+			if (offered.isPresent() && offered.getAsDouble() <= task.price() + PRICE_EPSILON) {
+				return Optional.of(Step.of(button.getAsInt(), Click.LEFT,
+						String.format("+0.1, %.1f", offered.getAsDouble())));
+			}
+		}
+
+		return sign(BazaarSlots.CUSTOM_PRICE, menu, "price per unit",
+				String.format("%.1f", task.price()));
+	}
+
+	/**
+	 * Half of the bazaar's own price increment, which is the finest two prices can differ by.
+	 *
+	 * <p>The button's price and the plan's are computed the same way off two polls of one book, so
+	 * they land on the same tenth of a coin when the book has not moved. This is what stops a
+	 * rounding difference in the last digit reading as "the book moved up".
+	 */
+	private static final double PRICE_EPSILON = 0.05d;
 
 	/**
 	 * A page whose button opens a sign, with the number to type on it.

@@ -454,6 +454,49 @@ class NpcBasketTest {
 		assertFalse(basket.lines().isEmpty(), "the free slots should have gone somewhere");
 	}
 
+	/**
+	 * A line size that drifted by a unit is not a remainder to go and place.
+	 *
+	 * <p>{@code maxUnits} is recomputed off the live book every trip, so it moves a little between
+	 * them. A player who placed an order for its full size on 2026-08-14 was told on the next trip to
+	 * place another for 1 unit - an order slot and the whole six-click flow for one unit.
+	 */
+	@Test
+	void doesNotOfferATopUpThatIsOnlyTheLineSizeDrifting() {
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(5, 10_000_000_000L, npc, true);
+
+		NpcBasket.Line whole = NpcBasket.plan(context).lines().getFirst();
+		String best = whole.plan().itemId();
+
+		NpcBasket.Basket basket = NpcBasket.plan(context, new NpcBasket.Held(1, 0L,
+				Map.of(best, new NpcBasket.Position(1, whole.plan().maxUnits() - 1L, true))));
+
+		assertTrue(basket.lines().stream().noneMatch(line -> line.plan().itemId().equals(best)),
+				"1 unit short of the position is not an order worth a slot");
+	}
+
+	/** The floor is on drift and must not reach the last real order of a part-placed line. */
+	@Test
+	void stillOffersTheRemainderOfAPositionThatIsMostlyPlaced() {
+		NpcContext npc = npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
+		StrategyContext context = manyItems(5, 10_000_000_000L, npc, true);
+
+		NpcBasket.Line whole = NpcBasket.plan(context).lines().getFirst();
+		String best = whole.plan().itemId();
+		long placed = whole.plan().maxUnits() - whole.plan().maxUnits() / 4L;
+
+		NpcBasket.Basket basket = NpcBasket.plan(context, new NpcBasket.Held(1, 0L,
+				Map.of(best, new NpcBasket.Position(1, placed, true))));
+
+		// A quarter of the position is still to place, which is more than the slots left can hold -
+		// so the line is offered and sized on the slots, exactly as an untouched position would be.
+		assertEquals(256L * 13L, basket.lines().stream()
+				.filter(line -> line.plan().itemId().equals(best))
+				.mapToLong(NpcBasket.Line::units)
+				.sum());
+	}
+
 	/** A per-item order cap counts the orders already resting, not just the ones being added. */
 	@Test
 	void countsRestingOrdersAgainstThePerItemCap() {
