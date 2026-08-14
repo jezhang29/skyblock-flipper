@@ -43,4 +43,27 @@ class CaptureFilterTest {
 		assertFalse(CaptureFilter.keepMenu(""));
 		assertFalse(CaptureFilter.keepMenu(null));
 	}
+
+	@Test
+	void keepsAnyMenuOpenedJustAfterTheBazaar() {
+		// The screens an order is placed on are titled with the item's own name, so the keyword list
+		// cannot see them and 850 menu records from 2026-08-09 contain none. Proximity is the only
+		// handle there is on them.
+		long bazaarAt = 1_000_000L;
+
+		assertTrue(CaptureFilter.keepMenu("Enchanted Melon", bazaarAt + 2_000L, bazaarAt));
+		assertTrue(CaptureFilter.keepMenu("Enchanted Melon", bazaarAt + 30_000L, bazaarAt));
+	}
+
+	@Test
+	void dropsAMenuOpenedLongAfterTheBazaar() {
+		long bazaarAt = 1_000_000L;
+
+		assertFalse(CaptureFilter.keepMenu("Large Chest", bazaarAt + 31_000L, bazaarAt));
+
+		// No bazaar menu this session at all, which is the state the trail starts in.
+		assertFalse(CaptureFilter.keepMenu("Large Chest", bazaarAt, 0L));
+		assertFalse(CaptureFilter.keepMenu("", bazaarAt, bazaarAt));
+		assertFalse(CaptureFilter.keepMenu(null, bazaarAt, bazaarAt));
+	}
 }

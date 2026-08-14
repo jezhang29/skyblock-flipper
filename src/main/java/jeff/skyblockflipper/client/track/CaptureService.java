@@ -2,6 +2,7 @@ package jeff.skyblockflipper.client.track;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
+import jeff.skyblockflipper.core.track.BazaarMenu;
 import jeff.skyblockflipper.core.track.CaptureFilter;
 import jeff.skyblockflipper.core.track.CaptureLog;
 import jeff.skyblockflipper.core.track.CapturedChat;
@@ -88,12 +89,35 @@ public final class CaptureService {
 		});
 
 		ScreenEvents.AFTER_INIT.register((client, screen, width, height) -> {
-			if (screen instanceof AbstractContainerScreen<?> container
-					&& CaptureFilter.keepMenu(screen.getTitle().getString())) {
+			if (!(screen instanceof AbstractContainerScreen<?> container)) {
+				return;
+			}
+
+			String title = screen.getTitle().getString();
+			long now = System.currentTimeMillis();
+
+			if (BazaarMenu.isBazaar(title)) {
+				lastBazaarAt = now;
+			}
+
+			// The trail is offered to the capture file only. Widening what the tracker is fed is a
+			// separate question with its own answer - it would start learning item names off every
+			// chest opened near the bazaar - and this change is about measuring screens nobody has
+			// measured yet.
+			if (CaptureFilter.keepMenu(title)
+					|| (capturing() && CaptureFilter.keepMenu(title, now, lastBazaarAt))) {
 				MenuWatcher.attach(container);
 			}
 		});
 	}
+
+	/**
+	 * When a bazaar menu was last opened, which is what the capture trail runs from.
+	 *
+	 * <p>Written on the render thread from {@code AFTER_INIT} and read there, so it needs no
+	 * synchronisation of its own.
+	 */
+	private static long lastBazaarAt;
 
 	/** Whether either consumer wants records, which is what decides if the hooks do any work. */
 	private static boolean active() {
@@ -195,7 +219,9 @@ public final class CaptureService {
 				write(() -> LOG.append(menu));
 			}
 
-			if (TrackerService.enabled()) {
+			// Only the menus the keyword list picked, whatever the capture trail attached this
+			// watcher for. The tracker's input is unchanged by the widening.
+			if (TrackerService.enabled() && CaptureFilter.keepMenu(menu.title())) {
 				TrackerService.accept(menu);
 			}
 		}

@@ -55,6 +55,29 @@ change, so a page of orders filling in over several ticks records once rather th
 Capture stops at 32MB rather than rotating: the early part of a session is worth more than the late
 part, and rotation would discard the wrong half. `/flip capture` says if it hit the cap.
 
+## The bazaar trail
+
+Menus are normally kept on their title (`bazaar`, `auction`, `order`, `bid`, `offer`). The three
+screens an order is actually placed on — the product page and the amount and price pages behind it —
+are titled with the item's own name, so that list cannot see them, and the 2026-08-09 session
+recorded none of the 850 menus it wrote. They are exactly the screens a slot detector needs.
+
+So while capturing, **every** menu opened within 30 seconds of a bazaar menu is recorded, whatever
+it is called. The tracker is not fed those extra menus; only the file gets them.
+
+That trail is what a slot-detection session is for:
+
+1. `/flip capture`.
+2. Open the bazaar, click **Search**, and search an item by name.
+3. Open the item's page from the results, and go all the way through a **buy order** using
+   **custom amount** and **custom price**, ending at Confirm.
+4. Do the same for a **sell offer**.
+5. Open **Manage Orders**, click one order, and look at its options page.
+6. `/flip capture` to stop.
+
+Five minutes of play. Without step 3 and step 4 the mod cannot know which slot on those pages is the
+button, and it will highlight nothing there rather than guess.
+
 ## After a session
 
 The file becomes a fixture under `src/test/resources` and the parser gets written against it. Trim
