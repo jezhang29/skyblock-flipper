@@ -756,16 +756,17 @@ public final class BazaarOverlay {
 					row = i;
 
 					// Remembered now, while the menu that named it is still open. The sign this
-					// click opens replaces the menu and says nothing about what it wants.
-					if (step.opensASign()) {
-						typeValue = fitting(step.type());
-						typeLabel = step.label();
-					}
+					// click opens replaces the menu and says nothing about what it wants. A click
+					// that opens no sign clears it, so a screen opened later cannot be handed the
+					// number the step before last wanted.
+					typeValue = step.opensASign() ? fitting(step.type()) : "";
+					typeLabel = step.label();
 
 					return bazaarFlow;
 				}
 			}
 
+			typeValue = "";
 			return bazaarFlow;
 		}
 

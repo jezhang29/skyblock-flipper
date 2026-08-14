@@ -284,6 +284,13 @@ The row says what is already up (`256 of the 1024 this item is worth are already
 the remaining 3 x 256`), because the units on a top-up row are only ever the remainder and `768` on
 its own reads as a fresh plan for 768.
 
+**A shortfall under a twentieth of the position is drift and is dropped.** `maxUnits` is recomputed
+off the live book every trip, out of flows that move between one trip and the next, so it wanders by
+a percent or two while the position sits still. Reported live 2026-08-14: an order placed for its
+full size came back on the next trip as `place 1` — an order slot and the whole six-click place flow
+for one unit. The floor cannot swallow a real order: fourteen order slots is the account maximum, so
+one order is never less than a fourteenth of a position, which is above a twentieth for every item.
+
 ### Two states the advice had nothing to say about
 
 **Partial fills.** A buy order that fills part way announces nothing in chat - the notification only
@@ -371,6 +378,14 @@ Three things the round is measured or reasoned into, rather than chosen:
   then a re-post, and the cancel deletes the order the price came from. Rows are held until the item
   is resting at the frozen price again, and while pinned they reserve their slot and their capital so
   the basket cannot spend what the re-post needs.
+
+**On the price page the mod points at that button rather than at the sign** — but only while the
+button offers the plan's price or less. It reads the book with no poll in front of it, so it is never
+the staler of the two numbers, and pressing it costs one click instead of a sign. When it offers
+more, the book has moved up since the price was worked out, and following it would post over the
+ceiling the margin was computed against: the box goes on Custom Price, the planned number gets typed,
+and the order rests behind the top until the book comes back. `BazaarStep.onPrice` reads the offer
+out of the button's own `Unit price:` line and falls back to the sign whenever that line is missing.
 
 Claims and dead-trade cancels bypass the round entirely: a claim is coins already earned and blocks
 the item from leaving the order, and a `CANCEL` past the chase stop or an `EXPIRED` past the resting

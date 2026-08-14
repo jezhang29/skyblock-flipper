@@ -76,6 +76,14 @@ the names on the product page and the amount and price pages were read off scree
 capture — each answers to more than one wording, and a screen whose buttons match none of them is
 highlighted not at all rather than wrongly.
 
+**A menu title is cut on rendered width, not on a character count.** Over the 850 captured menus and
+two photographed product pages: `Bazaar ➜ "Enchanted Nether Wart"` survives whole at 32 characters,
+while `Bazaar ➜ "Enchanted Cooked Mutt` and `Revenant Horror ➜ Revenant Cata` are both cut at 31 and
+`Item Upgrades ➜ Transmission Tun` at 32. `core` holds no font and cannot measure the width, so
+`BazaarMenu` matches a title exactly first and only falls back to a prefix from 30 characters up —
+the shortest cut ever seen, less one. A rule that required 32 left the Revenant Catalyst page with no
+box on it, photographed live 2026-08-14.
+
 ### A full session
 
 That trail is what a slot-detection session is for:

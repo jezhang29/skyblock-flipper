@@ -373,6 +373,13 @@ public final class NpcBasket {
 			// with 256 of its 1,024 already resting is worth 768 more and not another 1,024.
 			long room = Math.max(0L, plan.maxUnits() - position.units());
 
+			// What is left of the position is drift rather than a remainder, so it is not offered.
+			// See minimumTopUp: an order slot and a six-click place flow for one unit is a worse
+			// trip than the one unit is worth.
+			if (position.units() > 0L && room < minimumTopUp(plan.maxUnits())) {
+				continue;
+			}
+
 			// The cap bounds this line's slots, never the basket's: what it does not spend here is
 			// left for the next item down the list, which is the whole point of capping one. The
 			// orders already resting count against it, for the same reason the units do.
@@ -462,6 +469,27 @@ public final class NpcBasket {
 		}
 
 		return shortOfCoins || (coinsLeft <= 0L && taken < offered) ? Bound.CAPITAL : Bound.CANDIDATES;
+	}
+
+	/**
+	 * The smallest shortfall worth an order slot: a twentieth of what the position is worth in total.
+	 *
+	 * <p><b>{@code maxUnits} is recomputed off the live book every trip</b>, out of flows that move
+	 * between one trip and the next, so it drifts by a percent or two even when nothing about the
+	 * position changed. Without a floor the difference comes back as a line of its own: measured live
+	 * 2026-08-14, an order placed for its full size returned on the next trip as "place 1", which
+	 * spends an order slot and the whole six-click place flow on one unit.
+	 *
+	 * <p><b>A twentieth cannot swallow a whole order.</b> An account has at most fourteen order slots,
+	 * so a position is at most fourteen orders and one of them is never smaller than a fourteenth of
+	 * it - which is above this floor whatever the item. What the floor removes is the part-order left
+	 * over from the arithmetic moving, never an order the player still has to type.
+	 *
+	 * <p>The floor is at least one unit, so a position small enough that one unit is a twentieth of it
+	 * is never blocked by this.
+	 */
+	private static long minimumTopUp(long maxUnits) {
+		return Math.max(1L, maxUnits / 20L);
 	}
 
 	private static long affordableUnits(long coins, double unitCost) {

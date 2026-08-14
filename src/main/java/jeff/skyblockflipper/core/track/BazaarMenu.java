@@ -65,12 +65,23 @@ public final class BazaarMenu {
 			return "";
 		}
 
-		boolean cut = title.trim().length() >= TITLE_CAP;
+		String exact = only(item, names, false);
+
+		if (!exact.isEmpty()) {
+			return exact;
+		}
+
+		// A title with room left in it was not cut, so a prefix of it is a different item.
+		return title.trim().length() >= MAY_BE_CUT ? only(item, names, true) : "";
+	}
+
+	/** The one name in {@code names} this title's item is, or empty where it is none or several. */
+	private static String only(String item, List<String> names, boolean prefix) {
 		String found = "";
 		int matches = 0;
 
 		for (String name : names) {
-			if (name != null && matches(item, name, cut)) {
+			if (name != null && matches(item, name, prefix)) {
 				found = name;
 				matches++;
 			}
@@ -96,34 +107,55 @@ public final class BazaarMenu {
 		}
 
 		String trimmed = title.trim();
-		int arrow = trimmed.lastIndexOf(ARROW);
+		int after = -1;
 
-		return arrow < 0 ? trimmed : trimmed.substring(arrow + ARROW.length()).trim();
+		for (String arrow : ARROWS) {
+			int at = trimmed.lastIndexOf(arrow);
+
+			if (at >= 0) {
+				after = Math.max(after, at + arrow.length());
+			}
+		}
+
+		return after < 0 ? trimmed : trimmed.substring(after).trim();
 	}
 
 	/**
 	 * Whether a title's item and a basket name are the same item.
 	 *
-	 * <p>Equality, except on a title that was cut off. <b>Hypixel's menu titles stop at 32
-	 * characters</b> - measured across 850 captured menus, where the longest is exactly 32 and
-	 * {@code Bazaar ➜ "Enchanted Cooked Mutt} is cut mid-word - so a long item's page can only ever
-	 * be matched on the prefix that survived.
+	 * <p>Equality, except on a title that was cut off. <b>An exact match is always tried first</b>, so
+	 * a page that names its item in full is never decided by a prefix.
 	 *
-	 * <p><b>The prefix is only allowed on a title that hit the cap.</b> Item names are prefixes of one
-	 * another constantly - 187 of 5,549 of them - and "Enchanted Melon" is a whole item as well as the
-	 * start of "Enchanted Melon Slice". Accepting a prefix from a title with room to spare would put
+	 * <p><b>The prefix is only allowed on a title long enough to have been cut.</b> Item names are
+	 * prefixes of one another constantly - 187 of 5,549 of them - and "Enchanted Melon" is a whole item
+	 * as well as the start of "Enchanted Melon Slice". Accepting a prefix from a short title would put
 	 * the box on the wrong item's page, which is an order for the wrong item.
 	 */
-	private static boolean matches(String item, String name, boolean cut) {
+	private static boolean matches(String item, String name, boolean prefix) {
 		String left = item.toLowerCase(Locale.ROOT);
 		String right = name.toLowerCase(Locale.ROOT);
 
-		return cut ? right.startsWith(left) : left.equals(right);
+		return prefix ? right.startsWith(left) : left.equals(right);
 	}
 
-	/** The path separator Hypixel puts between a category and what is under it. */
-	private static final String ARROW = "➜";
+	/**
+	 * The path separators Hypixel puts between a category and what is under it.
+	 *
+	 * <p>{@code ➜} is the one in all 316 arrowed titles of the capture. The others cost nothing to
+	 * accept and cover a page that uses a different glyph, which no item name contains.
+	 */
+	private static final List<String> ARROWS = List.of("➜", "➔", "→", "»");
 
-	/** Characters a Hypixel menu title holds before it is cut, measured over 850 of them. */
-	private static final int TITLE_CAP = 32;
+	/**
+	 * Characters past which a title may have been cut, and so may be a prefix of its real item.
+	 *
+	 * <p><b>The cut is not at a fixed character count.</b> Measured over the 850 captured menus and
+	 * two photographed product pages: {@code Bazaar ➜ "Enchanted Nether Wart"} survives whole at 32
+	 * characters, while {@code Bazaar ➜ "Enchanted Cooked Mutt} and
+	 * {@code Revenant Horror ➜ Revenant Cata} were both cut at 31 and
+	 * {@code Item Upgrades ➜ Transmission Tun} at 32. That is a limit on rendered width, which
+	 * {@code core} cannot measure - it holds no font - so this is the shortest title ever seen cut,
+	 * less one. Below it, matching is exact.
+	 */
+	private static final int MAY_BE_CUT = 30;
 }

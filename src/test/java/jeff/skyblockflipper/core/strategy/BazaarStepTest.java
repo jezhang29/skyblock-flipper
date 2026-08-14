@@ -177,6 +177,24 @@ class BazaarStepTest {
 	}
 
 	@Test
+	void pointsAtCreateBuyOrderOnAProductPageHypixelCutTheTitleOf() {
+		// Photographed live 2026-08-14 with no box on it. The title is 31 characters, and the rule
+		// that let a prefix match only at 32 left this page unmatched and so unhighlighted.
+		CapturedMenu page = new CapturedMenu(0L, "Revenant Horror ➜ Revenant Cata", List.of(
+				new CapturedSlot(10, "Buy Instantly", List.of(), "", 1, ""),
+				new CapturedSlot(11, "Create Buy Order", List.of("Click to setup Buy Order!"),
+						"minecraft:filled_map", 1, "")));
+
+		assertEquals(31, page.title().length());
+
+		Optional<BazaarStep.Step> step = BazaarStep.next(
+				task(NpcWorklist.Kind.PLACE, "REVENANT_CATALYST", "Revenant Catalyst"), 0.0d, page);
+
+		assertTrue(step.isPresent());
+		assertEquals(11, step.get().slot());
+	}
+
+	@Test
 	void pointsAtTheAmountSignAndSaysWhatToTypeOnIt() {
 		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
 				"Transmission Tuner", 100.0d, 880L, "3 x 256 + 112", 0.0d, 0L, "");
@@ -207,6 +225,68 @@ class BazaarStepTest {
 
 		// A tenth of a coin, which is the precision the bazaar's own box takes.
 		assertEquals("84999.9", step.get().type());
+	}
+
+	/**
+	 * The price page as photographed 2026-08-14, both buttons with the lore they carried.
+	 *
+	 * @param offered what the Top Order +0.1 button says it will post at
+	 */
+	private static CapturedMenu pricePage(String offered) {
+		return new CapturedMenu(0L, "How much do you want to pay?", List.of(
+				new CapturedSlot(11, "Top Order +0.1", List.of("Buy Order Setup", "",
+						"Beat the price of the top order so", "yours is filled first.", "",
+						"Ordering: 256x", "Unit price: " + offered + " coins", "",
+						"Click to proceed!"), "", 1, ""),
+				new CapturedSlot(15, "Custom Price", List.of("Buy Order Setup", "",
+						"Set the price per unit you're willing", "to pay.", "", "Ordering: 256x", "",
+						"Click to specify!"), "", 1, ""),
+				new CapturedSlot(31, "Close", List.of(), "", 1, "")));
+	}
+
+	private static NpcWorklist.Task placeAt(double price) {
+		return new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
+				"Transmission Tuner", price, 256L, "256", 0.0d, 0L, "");
+	}
+
+	@Test
+	void pressesHypixelsOwnButtonWhereItOffersThePlansPrice() {
+		// Photographed together: the plan said 30808.0 and the button offered 30,808.0, because both
+		// are top bid plus one increment off the same book. One click beats typing seven characters.
+		Optional<BazaarStep.Step> step =
+				BazaarStep.next(placeAt(30_808.0d), 0.0d, pricePage("30,808.0"));
+
+		assertTrue(step.isPresent());
+		assertEquals(11, step.get().slot());
+		assertFalse(step.get().opensASign());
+	}
+
+	@Test
+	void takesTheButtonWhenTheBookHasFallenSinceThePlanWasPriced() {
+		// Cheaper than planned and still the top of the book: strictly the better order.
+		assertEquals(11, BazaarStep.next(placeAt(30_808.0d), 0.0d, pricePage("30,102.4"))
+				.orElseThrow().slot());
+	}
+
+	@Test
+	void typesThePriceWhereTheButtonWouldPostOverThePlan() {
+		// The book moved up while the player walked to the menu. Following it spends the margin the
+		// plan was built on, so the planned price gets typed and the order rests behind the top.
+		Optional<BazaarStep.Step> step =
+				BazaarStep.next(placeAt(30_808.0d), 0.0d, pricePage("31,400.0"));
+
+		assertTrue(step.isPresent());
+		assertEquals(15, step.get().slot());
+		assertEquals("30808.0", step.get().type());
+	}
+
+	@Test
+	void typesThePriceWhenTheButtonDoesNotSayWhatItWouldPostAt() {
+		CapturedMenu reworded = new CapturedMenu(0L, "How much do you want to pay?", List.of(
+				new CapturedSlot(11, "Top Order +0.1", List.of("Click to proceed!"), "", 1, ""),
+				new CapturedSlot(15, "Custom Price", List.of("Click to specify!"), "", 1, "")));
+
+		assertEquals(15, BazaarStep.next(placeAt(30_808.0d), 0.0d, reworded).orElseThrow().slot());
 	}
 
 	@Test

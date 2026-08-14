@@ -3,7 +3,10 @@ package jeff.skyblockflipper.core.track;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.OptionalDouble;
 import java.util.OptionalInt;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Which slot of an open bazaar menu is the one to click.
@@ -113,7 +116,58 @@ public final class BazaarSlots {
 			new Button(List.of("Custom Price", "Custom price", "Custom Amount Price"),
 					Button.UNANCHORED);
 
+	/**
+	 * The price page's other button, which posts one increment above the top of the book.
+	 *
+	 * <p>Photographed live 2026-08-14: {@code Top Order +0.1 / Buy Order Setup / Beat the price of the
+	 * top order so yours is filled first. / Ordering: 256x / Unit price: 30,808.0 coins}. It is the
+	 * same computation {@code BazaarProduct.outbidBuyOrder} performs, off a book with no poll delay in
+	 * front of it, and it needs no sign - so where it offers the plan's price or less it is the button
+	 * to press.
+	 *
+	 * <p><b>Buy wordings only.</b> A sell offer's equivalent undercuts instead of outbidding, and the
+	 * rule that decides whether to use this one - "at or under the price the plan quoted" - is upside
+	 * down there. Nothing in the NPC worklist sells on the bazaar, so the sell button is left unmatched
+	 * rather than matched and mishandled.
+	 */
+	public static final Button TOP_ORDER_PLUS =
+			new Button(List.of("Top Order +0.1", "Best Order +0.1", "Top Order +0.1 coins"),
+					Button.UNANCHORED);
+
+	/** The line that button carries the price on, and the only number on it worth reading. */
+	private static final Pattern OFFERED_PRICE =
+			Pattern.compile("^Unit price: ([\\d,]+(?:\\.\\d+)?) coins$");
+
 	private BazaarSlots() {
+	}
+
+	/**
+	 * What the button in {@code index} says it will post at, or empty if it does not say.
+	 *
+	 * <p>Empty is a real answer and the caller falls back to typing the price on the sign. A button
+	 * whose lore has been reworded says nothing about its price, and posting at a price read out of a
+	 * line that no longer means what it did is worse than typing the number.
+	 */
+	public static OptionalDouble offeredPrice(CapturedMenu menu, int index) {
+		if (menu == null) {
+			return OptionalDouble.empty();
+		}
+
+		for (CapturedSlot slot : menu.slots()) {
+			if (slot.index() != index) {
+				continue;
+			}
+
+			for (String line : slot.lore()) {
+				Matcher matcher = OFFERED_PRICE.matcher(line.trim());
+
+				if (matcher.matches()) {
+					return OptionalDouble.of(Double.parseDouble(matcher.group(1).replace(",", "")));
+				}
+			}
+		}
+
+		return OptionalDouble.empty();
 	}
 
 	/**

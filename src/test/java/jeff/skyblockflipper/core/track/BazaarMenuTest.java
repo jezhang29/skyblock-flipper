@@ -80,7 +80,7 @@ class BazaarMenuTest {
 
 	@Test
 	void acceptsAPrefixOnlyFromATitleHypixelCutOff() {
-		// Titles stop at 32 characters, so a long item's page can only be matched on what survived.
+		// A long item's page can only ever be matched on the part of the title that survived the cut.
 		String cut = "Item Upgrades ➜ Transmission Tun";
 
 		assertEquals(32, cut.length());
@@ -91,6 +91,30 @@ class BazaarMenuTest {
 		// "Enchanted Melon" is ENCHANTED_MELON_BLOCK and "Enchanted Melon Slice" is ENCHANTED_MELON.
 		assertEquals("", BazaarMenu.productPageFor("Farming ➜ Enchanted Melon",
 				List.of("Enchanted Melon Slice")));
+	}
+
+	@Test
+	void acceptsAPrefixFromAThirtyOneCharacterTitleToo() {
+		// The cut is on rendered width, not on a character count: this one and
+		// Bazaar ➜ "Enchanted Cooked Mutt were both cut at 31, while
+		// Bazaar ➜ "Enchanted Nether Wart" survived whole at 32. Photographed live 2026-08-14 with
+		// no highlight on it, because the rule required 32.
+		String cut = "Revenant Horror ➜ Revenant Cata";
+
+		assertEquals(31, cut.length());
+		assertEquals("Revenant Catalyst",
+				BazaarMenu.productPageFor(cut, List.of("Revenant Catalyst", "Jungle Heart")));
+	}
+
+	@Test
+	void prefersTheItemNamedInFullOverOneItIsThePrefixOf() {
+		// Both are in the basket and the title names the shorter outright. Counting it as a match for
+		// each would name neither, and the page in front of the player is the one it spells.
+		String title = "Farming ➜ Enchanted Melon Slice";
+
+		assertEquals(31, title.length());
+		assertEquals("Enchanted Melon Slice", BazaarMenu.productPageFor(title,
+				List.of("Enchanted Melon Slice", "Enchanted Melon Slice Cake")));
 	}
 
 	@Test
