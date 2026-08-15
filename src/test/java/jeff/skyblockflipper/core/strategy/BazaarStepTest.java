@@ -88,7 +88,7 @@ class BazaarStepTest {
 	}
 
 	@Test
-	void rightClicksTheSameRowToCancelIt() {
+	void claimsAFilledRowBeforeCancellingIt() {
 		CapturedMenu orders = withAClaimableRow();
 		CapturedSlot claimable = orders.slots().stream()
 				.filter(s -> s.lore().contains("Click to claim!")).findFirst().orElseThrow();
@@ -99,7 +99,26 @@ class BazaarStepTest {
 
 		assertTrue(step.isPresent());
 		assertEquals(claimable.index(), step.get().slot());
-		assertEquals(BazaarStep.Click.RIGHT, step.get().click());
+		assertEquals(BazaarStep.Click.LEFT, step.get().click());
+		assertTrue(step.get().label().startsWith("claim first"), step.get().label());
+	}
+
+	@Test
+	void claimsAFilledRowBeforeRepricingIt() {
+		// Reported live: the reprice pointed at the options menu, but clicking the row claims every
+		// filled unit, and the order cannot be repriced until they are out of it.
+		CapturedMenu orders = withAClaimableRow();
+		CapturedSlot claimable = orders.slots().stream()
+				.filter(s -> s.lore().contains("Click to claim!")).findFirst().orElseThrow();
+		String name = claimable.name().replaceFirst("^(BUY|SELL) ", "");
+
+		Optional<BazaarStep.Step> step = BazaarStep.next(
+				task(NpcWorklist.Kind.REPRICE, "", name), 0.0d, orders);
+
+		assertTrue(step.isPresent());
+		assertEquals(claimable.index(), step.get().slot());
+		assertEquals(BazaarStep.Click.LEFT, step.get().click());
+		assertEquals("claim first, then reprice", step.get().label());
 	}
 
 	@Test

@@ -28,9 +28,9 @@ import java.util.function.IntFunction;
  *
  * <p><b>Left or right is measured, not assumed.</b> An orders row that has filled says
  * {@code Click to claim!} and {@code Right-Click for options!} in its own lore, and one that has not
- * says {@code Click to view options!} - 494 rows against 2,493 in the capture. So claiming is a left
- * click on a filled row and cancelling one is a right click on the same row, and the lore of the row
- * in front of the player decides which.
+ * says {@code Click to view options!} - 494 rows against 2,493 in the capture. So the lore of the row
+ * in front of the player decides the click: options are a left click on an unfilled row, and a filled
+ * row is claimed with a left click before anything else is done to it.
  *
  * <p><b>The place flow runs the whole way.</b> Search, the item's tile, Create Buy Order, the amount
  * sign, the price sign, confirm. The three middle screens are recognised by their buttons rather
@@ -210,9 +210,21 @@ public final class BazaarStep {
 					: Optional.empty();
 		}
 
-		// A filled row hands its left click to claiming, so options move to the right button. The row
-		// itself says which of the two it is.
-		return Optional.of(Step.of(slot.getAsInt(), claimable ? Click.RIGHT : Click.LEFT,
+		// A row with items waiting is claimed before it is anything else. Reported live 2026-08-14 on
+		// a Flaming Heart reprice: the filled units have to come out of the order first, and clicking
+		// the row claims all of them, so the claim is not a step the player can skip past on the way
+		// to the options menu. The worklist emits its own CLAIM row for this whenever the tracker
+		// knows about the fill; where it does not - filled with the client closed, or an order it
+		// never saw opened - the row's own lore is the only thing that says so, and this is where it
+		// is read.
+		if (claimable) {
+			return Optional.of(Step.of(slot.getAsInt(), Click.LEFT,
+					task.kind() == NpcWorklist.Kind.CANCEL
+							? "claim first, then cancel"
+							: "claim first, then reprice"));
+		}
+
+		return Optional.of(Step.of(slot.getAsInt(), Click.LEFT,
 				task.kind() == NpcWorklist.Kind.CANCEL ? "open, then cancel" : "open, then reprice"));
 	}
 

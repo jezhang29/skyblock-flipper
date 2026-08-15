@@ -224,7 +224,13 @@ public final class BazaarOverlay {
 		if (screen instanceof ContainerScreenLayout layout
 				&& screen instanceof AbstractContainerScreen<?> container) {
 			boolean flow = Guidance.update(container, worklist);
-			Board board = board(worklist, title, note, font);
+
+			// What the box under the cursor is for, in place of the countdown, because the box is the
+			// one thing on screen the player is about to act on. It is how a claim-before-reprice is
+			// said at all: the row above says "reprice", and the click the menu actually wants first
+			// is the claim on the same row.
+			String stepNote = Guidance.stepNote();
+			Board board = board(worklist, title, stepNote.isEmpty() ? note : stepNote, font);
 
 			if (flow || BazaarMenu.isBazaar(title) || !board.openProduct().isEmpty()) {
 				leftBazaarAt = System.currentTimeMillis();
@@ -673,6 +679,23 @@ public final class BazaarOverlay {
 
 		static boolean typing() {
 			return onASign && !typeValue.isEmpty();
+		}
+
+		/**
+		 * What the highlighted slot is for, or empty where nothing is highlighted.
+		 *
+		 * <p>A right click is named and a left one is not. Left is what every other step in the bazaar
+		 * asks for, and the note is drawn in a panel about seventy pixels wide, so the words are spent
+		 * on the one case where the wrong button does something else.
+		 */
+		static String stepNote() {
+			if (step == null || !SkyblockFlipperClient.config().bazaarHighlightEnabled) {
+				return "";
+			}
+
+			return step.click() == BazaarStep.Click.RIGHT
+					? "right-click: " + step.label()
+					: step.label();
 		}
 
 		/** The line the panel shows in place of its own note while a sign is open. */
