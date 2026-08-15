@@ -5,6 +5,9 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
@@ -24,6 +27,7 @@ import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
@@ -57,6 +61,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 
 /**
@@ -117,7 +122,10 @@ public final class FlipCommand {
 								})
 								.then(ClientCommands.literal("stop")
 										.executes(ctx -> stopProbe(ctx.getSource())))
-								.then(ClientCommands.argument("id", StringArgumentType.word())
+								// Greedy, because the way in is the name off the screen and names have
+								// spaces in them.
+								.then(ClientCommands.argument("id", StringArgumentType.greedyString())
+										.suggests(FlipCommand::suggestBazaarItems)
 										.executes(ctx -> startProbe(ctx.getSource(),
 												StringArgumentType.getString(ctx, "id"))))))
 				.then(ClientCommands.literal("snipe")
@@ -150,6 +158,7 @@ public final class FlipCommand {
 								.executes(ctx -> take(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "rank")))))
 				.then(ClientCommands.literal("close")
 						.then(ClientCommands.argument("id", StringArgumentType.word())
+								.suggests((ctx, builder) -> suggestLedger(builder, true))
 								.then(ClientCommands.argument("units", LongArgumentType.longArg(0))
 										.then(ClientCommands.argument("price", DoubleArgumentType.doubleArg(0))
 												.executes(ctx -> close(
@@ -159,6 +168,7 @@ public final class FlipCommand {
 														DoubleArgumentType.getDouble(ctx, "price")))))))
 				.then(ClientCommands.literal("abandon")
 						.then(ClientCommands.argument("id", StringArgumentType.word())
+								.suggests((ctx, builder) -> suggestLedger(builder, true))
 								.executes(ctx -> abandon(ctx.getSource(), StringArgumentType.getString(ctx, "id")))))
 				.then(ClientCommands.literal("ledger")
 						.executes(ctx -> {
@@ -167,6 +177,7 @@ public final class FlipCommand {
 						})
 						.then(ClientCommands.literal("forget")
 								.then(ClientCommands.argument("id", StringArgumentType.word())
+										.suggests((ctx, builder) -> suggestLedger(builder, false))
 										.executes(ctx -> forget(ctx.getSource(),
 												StringArgumentType.getString(ctx, "id")))))
 						// Deleting history cannot be undone, so the first call only counts what it
@@ -323,7 +334,12 @@ public final class FlipCommand {
 			return 0;
 		}
 
-		String itemId = id.toUpperCase(Locale.ROOT);
+		String itemId = resolveBazaarItem(source, id);
+
+		if (itemId == null) {
+			return 0;
+		}
+
 		MarketData data = MarketDataService.data();
 		Optional<BazaarProduct> product = data.bazaar().product(itemId);
 
@@ -378,6 +394,88 @@ public final class FlipCommand {
 				.withStyle(ChatFormatting.GRAY));
 
 		return 1;
+	}
+
+	/**
+	 * The bazaar item the player meant, or null after telling them why nothing was picked.
+	 *
+	 * <p>Ids are not guessable from names - Nether Wart Distillate is {@code NETHER_STALK_DISTILLATE}
+	 * - so every command that takes an item accepts the name off the screen too, and says what it
+	 * could have meant rather than failing blank. Restricted to what the bazaar actually trades,
+	 * because an item the bazaar has never listed is no use to any of these commands.
+	 */
+	private static String resolveBazaarItem(FabricClientCommandSource source, String query) {
+		MarketData data = MarketDataService.data();
+		ItemCatalog.Lookup found = data.catalog().find(query, data.bazaar().products().keySet());
+
+		if (found.only().isPresent()) {
+			return found.only().get();
+		}
+
+		if (found.isEmpty()) {
+			source.sendError(Component.literal("Nothing in the bazaar matches \"" + query + "\".")
+					.withStyle(ChatFormatting.RED));
+			return null;
+		}
+
+		source.sendError(Component.literal("\"" + query + "\" could mean " + found.candidates().size()
+				+ " bazaar items. Did you want:").withStyle(ChatFormatting.RED));
+
+		for (String candidate : found.candidates().stream().limit(AMBIGUITY_SHOWN).toList()) {
+			line(source, data.catalog().displayName(candidate), candidate);
+		}
+
+		return null;
+	}
+
+	/** How many of an ambiguous query's matches are worth printing before the chat is a wall. */
+	private static final int AMBIGUITY_SHOWN = 8;
+
+	/**
+	 * Tab completion for a ledger entry argument.
+	 *
+	 * <p>A ledger id is generated rather than spelled, so unlike an item there is no name to type
+	 * instead and completion is the only way to get one right without reading it off {@code /flip
+	 * ledger} first.
+	 *
+	 * @param openOnly true for the commands that can only act on a position still open
+	 */
+	private static CompletableFuture<Suggestions> suggestLedger(SuggestionsBuilder builder,
+			boolean openOnly) {
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+		List<LedgerEntry> entries = openOnly
+				? LedgerService.ledger().openEntries()
+				: LedgerService.ledger().all();
+
+		for (LedgerEntry entry : entries) {
+			if (entry.id().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(entry.id(), Component.literal(
+						entry.displayName() + " x" + entry.units()));
+			}
+		}
+
+		return builder.buildFuture();
+	}
+
+	/** Tab completion for an item argument, over the names and ids the bazaar is trading now. */
+	private static CompletableFuture<Suggestions> suggestBazaarItems(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		MarketData data = MarketDataService.data();
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+
+		for (String id : data.bazaar().products().keySet()) {
+			String name = data.catalog().displayName(id);
+
+			// Offering the id and the name separately is what makes both spellings tab-completable,
+			// and the name is the one a player has actually seen.
+			if (name.toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(name, Component.literal(id));
+			} else if (id.toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(id, Component.literal(name));
+			}
+		}
+
+		return builder.buildFuture();
 	}
 
 	/**
