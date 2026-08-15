@@ -6,6 +6,7 @@ import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
 import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.core.config.OverlaySide;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.track.BazaarMenu;
@@ -961,8 +962,11 @@ public final class BazaarOverlay {
 
 			if (mouseX >= unitsLeft) {
 				// The units of one order rather than the whole line: it is what goes in the amount
-				// box, and a split line's total would be rejected by the bazaar.
-				put(row.units(), "size");
+				// box, and neither the line total nor the split text itself is a number the box
+				// takes - "2 x 256 + 30" pasted whole is not an amount at all.
+				long first = Stacking.firstOrder(row.units());
+
+				put(first > 0L ? String.valueOf(first) : row.units(), "size");
 			} else {
 				put(row.price(), "price");
 			}
