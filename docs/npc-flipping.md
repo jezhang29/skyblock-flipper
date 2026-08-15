@@ -476,6 +476,52 @@ a real question. `/flip npc probe <ITEM_ID>` settles it per item: it quotes the 
 watches the top bid — which now *includes* your own order — and reports how long you held it.
 Memory only, one session, nothing placed for you.
 
+### What the +0.1 button actually does, and why a premium is still worth paying
+
+The obvious objection to paying a premium: the bazaar has a button that posts one increment above
+the highest offer, so whatever you post, somebody presses it and you are outbid anyway. You cannot
+pre-empt a rule that is defined relative to you.
+
+The objection is right about the mechanism and wrong about the size. Every upward move in the top
+bid, three days of tape, 2026-08-12 to 2026-08-14, split by how big it was:
+
+| item | +0.1 moves | coins from them | bigger moves | coins from them |
+| --- | --- | --- | --- | --- |
+| `BEADY_EYES` | 95 (78%) | 9.5 | 27 | 4,478.0 |
+| `BRONZE_BOWL` | 187 (71%) | 18.7 | 78 | 753.4 |
+| `REVENANT_CATALYST` | 52 (80%) | 5.2 | 13 | 2,591.3 |
+| `TRANSMISSION_TUNER` | 234 (68%) | 23.4 | 109 | 15,905.4 |
+
+**Two-thirds to four-fifths of all bidding is the button, and it carries under 1% of the drift.**
+Revenant Catalyst's bid climbed 2,596 coins in three days and the button supplied 5 of them. The
+premium is not paid to stop the button, which is impossible; it is paid to sit above the dozen real
+repricings that move the price, which is the rest of the column.
+
+The button is also slow. Revenant Catalyst took 65 upward moves in 72 hours — fewer than one an
+hour. An order is not being nudged continuously; it is being nudged occasionally, by somebody who
+then fills and leaves.
+
+What the premium buys, measured directly by replaying every sample as an entry point and counting
+the share of the following 8 hours the book stayed at or below a posted price:
+
+| item | post +0.1 | +0.5% | +1% | +2% | +5% |
+| --- | --- | --- | --- | --- | --- |
+| `BEADY_EYES` | 31.5% | 88.4% | 88.4% | 88.4% | 99.9% |
+| `BRONZE_BOWL` | 9.9% | 83.9% | 83.9% | 83.9% | 91.9% |
+| `REVENANT_CATALYST` | 36.9% | 76.8% | 76.8% | 84.4% | 89.2% |
+| `TRANSMISSION_TUNER` | 10.5% | 81.1% | 81.1% | 84.9% | 99.8% |
+
+Posting one increment above the book — the shipped zero-premium behaviour — holds the top for a
+tenth to a third of an unattended window. Half a percent above it holds the top for four fifths.
+That gap is the whole case for `npcDriftPremium`, and it is why the setting pays for itself despite
+the button.
+
+**Still not answered by any of this**: these samples contain none of your own orders, so a
+competitor who presses +0.1 *at you specifically* is invisible here. That is what `NpcProbe` now
+separates. It records the largest amount anything ever outbid the probe by, and reports an overbid
+of a coin or less as the button and anything larger as a real reprice — plus how many times the
+order took the top back, which is what tells you the nudge was given up rather than held.
+
 ### The ranking key, revisited: it is a choice between two budgets
 
 `Ranking key: profit per slot-load, not cap efficiency` above is still right about what it rejected.

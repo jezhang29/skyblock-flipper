@@ -390,6 +390,10 @@ public final class FlipCommand {
 				premium, multiple, config.npcRestingHours));
 		line(source, "then", "leave it. /flip npc probe says whether anything outbid it.");
 		source.sendFeedback(Component.literal(
+						"  Being outbid by 0.1 is the increment button and is expected - watch for an "
+								+ "outbid far bigger than that, which is the thing the premium is paid to sit above.")
+				.withStyle(ChatFormatting.GRAY));
+		source.sendFeedback(Component.literal(
 						"  Memory only - a restart forgets it. Nothing is placed for you.")
 				.withStyle(ChatFormatting.GRAY));
 
@@ -497,8 +501,14 @@ public final class FlipCommand {
 			return;
 		}
 
-		source.sendFeedback(Chat.prefixed(Component.literal(probe.get().report(System.currentTimeMillis()))
-				.withStyle(probe.get().everOutbid() ? ChatFormatting.YELLOW : ChatFormatting.GREEN)));
+		// Green for a probe nothing has repriced over, which includes one that keeps being nudged by
+		// the increment button and keeps taking the top back: that is the premium working, not
+		// failing. Yellow is reserved for a competitor bidding past it on purpose.
+		NpcProbe found = probe.get();
+		boolean good = !found.everOutbid() || found.nudgedOnly();
+
+		source.sendFeedback(Chat.prefixed(Component.literal(found.report(System.currentTimeMillis()))
+				.withStyle(good ? ChatFormatting.GREEN : ChatFormatting.YELLOW)));
 	}
 
 	private static int stopProbe(FabricClientCommandSource source) {
