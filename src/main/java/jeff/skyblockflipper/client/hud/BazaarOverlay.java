@@ -3,7 +3,6 @@ package jeff.skyblockflipper.client.hud;
 import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
-import jeff.skyblockflipper.client.gui.FlipScreen;
 import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
 import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.core.config.OverlaySide;
@@ -22,6 +21,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
@@ -62,9 +62,10 @@ import java.util.Optional;
  *
  * <p><b>It follows the sign.</b> An amount or a price is typed on a sign, which is not a container
  * menu, carries no title worth matching, and is the exact moment the numbers are needed. So for a
- * few seconds after the bazaar menu it came from, the panel stays on screen against the left edge.
- * That window will also catch a chat box or a pause menu opened straight after leaving the bazaar,
- * which is a small price for covering the one screen the plan is actually typed into.
+ * few seconds after the bazaar menu it came from, the panel stays on screen against the left edge -
+ * <b>on a sign and nowhere else</b>. It used to draw on any screen at all inside that window, which
+ * put it over chat, the pause menu and the mod's own settings screen, where its clicks are swallowed
+ * and copy an item name instead of pressing the button underneath.
  */
 public final class BazaarOverlay {
 	private static final int PANEL = 0xE0080A0D;
@@ -241,7 +242,9 @@ public final class BazaarOverlay {
 			return;
 		}
 
-		Guidance.leftTheMenu();
+		boolean onASign = screen instanceof AbstractSignEditScreen;
+
+		Guidance.leftTheMenu(onASign);
 
 		// On a sign, the panel says the one thing the screen is asking for rather than the whole
 		// list: the number or the name to type into it.
@@ -250,9 +253,10 @@ public final class BazaarOverlay {
 		// Typing a price or an amount happens on a sign, which is not a container menu and carries
 		// no title worth matching - and it is the moment the numbers are actually needed. So the
 		// panel follows the bazaar menu it was opened from. A sign opened on your island long
-		// afterwards is outside the window and gets nothing.
-		if (!(screen instanceof FlipScreen)
-				&& System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
+		// afterwards is outside the window and gets nothing, and a screen that is not a sign gets
+		// nothing at any time: chat, the pause menu and the settings screen all have their own
+		// clicks, and this panel eats every click that lands on it.
+		if (onASign && System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
 			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
 			return;
 		}
@@ -676,9 +680,12 @@ public final class BazaarOverlay {
 			return "type " + typeLabel + ": " + typeValue;
 		}
 
-		/** The menu closed, so whatever is on screen now is a sign until a menu says otherwise. */
-		static void leftTheMenu() {
-			onASign = true;
+		/**
+		 * The menu closed. {@code sign} says whether what replaced it is a sign, which is the only
+		 * screen the typing note - or the panel itself - belongs on once the menu has gone.
+		 */
+		static void leftTheMenu(boolean sign) {
+			onASign = sign;
 			screen = new WeakReference<>(null);
 		}
 
