@@ -130,4 +130,52 @@ class NpcProbeTest {
 		assertTrue(clean.contains("still on top"), clean);
 		assertFalse(clean.contains("outbid by"), clean);
 	}
+
+	/**
+	 * The failure this fixes reported success. A filled order leaves the book, so the top bid falls
+	 * back under the probe's price and stays there - an order that filled in three minutes would
+	 * otherwise read as one that held the top all night.
+	 */
+	@Test
+	void aFillStopsTheProbeCountingTheBookItIsNoLongerIn() {
+		NpcProbe after = probe()
+				.sample(4900.0d, START + MINUTE)
+				.filled(START + 3 * MINUTE)
+				.sample(4000.0d, START + 60 * MINUTE)
+				.sample(4000.0d, START + 120 * MINUTE);
+
+		assertTrue(after.isFilled());
+		assertEquals(1, after.samples(), "polls after the fill are not evidence about the order");
+		assertEquals(3 * MINUTE, after.heldFor(START + 500 * MINUTE).toMillis());
+		assertEquals(3 * MINUTE, after.age(START + 500 * MINUTE).toMillis());
+	}
+
+	@Test
+	void aFillIsReportedAsTheOutcomeItIs() {
+		String report = probe()
+				.sample(4900.0d, START + MINUTE)
+				.filled(START + 3 * MINUTE)
+				.report(START + 90 * MINUTE);
+
+		assertTrue(report.contains("FILLED"), report);
+		assertTrue(report.contains("3m"), report);
+	}
+
+	@Test
+	void anOrderOutbidFirstAndFilledLaterStillReportsTheFill() {
+		String report = probe()
+				.sample(5000.1d, START + MINUTE)
+				.filled(START + 30 * MINUTE)
+				.report(START + 90 * MINUTE);
+
+		assertTrue(report.contains("the +0.1 button"), report);
+		assertTrue(report.contains("then FILLED"), report);
+	}
+
+	@Test
+	void theFirstFillIsTheOneKept() {
+		NpcProbe after = probe().filled(START + MINUTE).filled(START + 50 * MINUTE);
+
+		assertEquals(MINUTE, after.age(START + 100 * MINUTE).toMillis());
+	}
 }

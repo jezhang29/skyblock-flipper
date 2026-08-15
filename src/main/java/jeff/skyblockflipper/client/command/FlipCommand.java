@@ -121,7 +121,11 @@ public final class FlipCommand {
 									return 1;
 								})
 								.then(ClientCommands.literal("stop")
-										.executes(ctx -> stopProbe(ctx.getSource())))
+										.executes(ctx -> stopProbe(ctx.getSource()))
+										.then(ClientCommands.argument("id", StringArgumentType.greedyString())
+												.suggests(FlipCommand::suggestProbedItems)
+												.executes(ctx -> stopProbe(ctx.getSource(),
+														StringArgumentType.getString(ctx, "id")))))
 								// Greedy, because the way in is the name off the screen and names have
 								// spaces in them.
 								.then(ClientCommands.argument("id", StringArgumentType.greedyString())
@@ -394,7 +398,10 @@ public final class FlipCommand {
 								+ "outbid far bigger than that, which is the thing the premium is paid to sit above.")
 				.withStyle(ChatFormatting.GRAY));
 		source.sendFeedback(Component.literal(
-						"  Memory only - a restart forgets it. Nothing is placed for you.")
+						"  Memory only - a restart forgets it, so the game must stay open. Nothing is "
+								+ "placed for you. Probe as many items at once as you like, one order each; "
+								+ "do not probe an item you are also trading, since any fill on it ends "
+								+ "the probe.")
 				.withStyle(ChatFormatting.GRAY));
 
 		return 1;
@@ -434,6 +441,22 @@ public final class FlipCommand {
 
 	/** How many of an ambiguous query's matches are worth printing before the chat is a wall. */
 	private static final int AMBIGUITY_SHOWN = 8;
+
+	/** Tab completion over the items a probe is actually running on, for stopping one of them. */
+	private static CompletableFuture<Suggestions> suggestProbedItems(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+
+		for (NpcProbe probe : NpcProbeService.all()) {
+			if (probe.displayName().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(probe.displayName(), Component.literal(probe.itemId()));
+			} else if (probe.itemId().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(probe.itemId(), Component.literal(probe.displayName()));
+			}
+		}
+
+		return builder.buildFuture();
+	}
 
 	/**
 	 * Tab completion for a ledger entry argument.
@@ -492,37 +515,85 @@ public final class FlipCommand {
 	private static final double DEFAULT_PROBE_PREMIUM = 1.0d;
 
 	private static void showProbe(FabricClientCommandSource source) {
-		Optional<NpcProbe> probe = NpcProbeService.current();
+		List<NpcProbe> probes = NpcProbeService.all();
 
-		if (probe.isEmpty()) {
+		if (probes.isEmpty()) {
 			source.sendFeedback(Chat.prefixed(Component.literal(
-							"No probe running. /flip npc probe <ITEM_ID> starts one.")
+							"No probes running. /flip npc probe <item> starts one.")
 					.withStyle(ChatFormatting.YELLOW)));
 			return;
 		}
 
-		// Green for a probe nothing has repriced over, which includes one that keeps being nudged by
-		// the increment button and keeps taking the top back: that is the premium working, not
-		// failing. Yellow is reserved for a competitor bidding past it on purpose.
-		NpcProbe found = probe.get();
-		boolean good = !found.everOutbid() || found.nudgedOnly();
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				probes.size() + (probes.size() == 1 ? " probe" : " probes") + " running")
+				.withStyle(ChatFormatting.WHITE)));
 
-		source.sendFeedback(Chat.prefixed(Component.literal(found.report(System.currentTimeMillis()))
-				.withStyle(good ? ChatFormatting.GREEN : ChatFormatting.YELLOW)));
+		long now = System.currentTimeMillis();
+
+		for (NpcProbe probe : probes) {
+			source.sendFeedback(Component.literal("  " + probe.report(now)).withStyle(verdict(probe)));
+		}
+
+		if (!TrackerService.enabled()) {
+			source.sendFeedback(Component.literal(
+							"  Tracking is off, so a filled order cannot be told from an unbeatable one. "
+									+ "Turn on autoTrackEnabled before trusting these.")
+					.withStyle(ChatFormatting.RED));
+		}
+	}
+
+	/**
+	 * The colour a probe's finding deserves.
+	 *
+	 * <p>Green covers a fill and an order nothing has repriced over, which includes one nudged by the
+	 * increment button that keeps taking the top back - that is the premium working, not failing.
+	 * Yellow is reserved for a competitor bidding past it on purpose, which is the only outcome that
+	 * argues against paying a premium on that item.
+	 */
+	private static ChatFormatting verdict(NpcProbe probe) {
+		return !probe.everOutbid() || probe.nudgedOnly() ? ChatFormatting.GREEN : ChatFormatting.YELLOW;
 	}
 
 	private static int stopProbe(FabricClientCommandSource source) {
-		Optional<NpcProbe> ended = NpcProbeService.stop();
+		List<NpcProbe> ended = NpcProbeService.stopAll();
 
 		if (ended.isEmpty()) {
-			source.sendFeedback(Chat.prefixed(Component.literal("No probe was running.")
+			source.sendFeedback(Chat.prefixed(Component.literal("No probes were running.")
 					.withStyle(ChatFormatting.YELLOW)));
+			return 0;
+		}
+
+		long now = System.currentTimeMillis();
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Stopped " + ended.size() + (ended.size() == 1 ? " probe" : " probes"))
+				.withStyle(ChatFormatting.WHITE)));
+
+		for (NpcProbe probe : ended) {
+			source.sendFeedback(Component.literal("  " + probe.report(now)).withStyle(verdict(probe)));
+		}
+
+		return 1;
+	}
+
+	private static int stopProbe(FabricClientCommandSource source, String query) {
+		String itemId = resolveBazaarItem(source, query);
+
+		if (itemId == null) {
+			return 0;
+		}
+
+		Optional<NpcProbe> ended = NpcProbeService.stop(itemId);
+
+		if (ended.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"No probe was running on " + itemId + ".").withStyle(ChatFormatting.YELLOW)));
 			return 0;
 		}
 
 		source.sendFeedback(Chat.prefixed(Component.literal(
 				"Probe ended. " + ended.get().report(System.currentTimeMillis()))
-				.withStyle(ChatFormatting.GREEN)));
+				.withStyle(verdict(ended.get()))));
 		return 1;
 	}
 
