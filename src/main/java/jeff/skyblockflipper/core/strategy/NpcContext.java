@@ -151,6 +151,26 @@ public record NpcContext(
 	}
 
 	/**
+	 * Whether a premium is asked for that nothing measured can price.
+	 *
+	 * <p>The premium is a multiple of {@link NpcEdge#chaseCostRatio}, so with no measured drift
+	 * behind it there is nothing to take a multiple of and it comes out at zero. That is not a
+	 * smaller premium, it is the plain outbid price - the shipped behaviour of the setting turned
+	 * off - and a plan priced there while the setting says otherwise is a plan the player has no way
+	 * of recognising. <b>Measured live on 2026-08-15: a 111.5M basket placed 2m19s after launch went
+	 * in at top bid plus 0.1 on all thirteen items, with the premium at 1.0, and filled 11.2% of its
+	 * capital over ten hours.</b>
+	 *
+	 * <p>Covers both ways there can be nothing: the snapshot has not been published yet, which is
+	 * the first seconds of a session, and a client whose tape is too short for any product to clear
+	 * {@link NpcEdge#MIN_SAMPLES}, which is a fresh install. Both are temporary and neither is a
+	 * fact about the market, so the answer is to wait rather than to plan.
+	 */
+	public boolean driftUnmeasured() {
+		return paysThePremium() && edges.productsWithMeasuredEdge() == 0;
+	}
+
+	/**
 	 * How long a plan is actually left alone for, which is what its fill is worth measuring over.
 	 *
 	 * <p>Without a premium that is the check-in interval: the order is moved back to the front every

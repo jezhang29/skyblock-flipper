@@ -6,11 +6,13 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.valuation.NpcEdge;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,6 +61,26 @@ class NpcBasketTest {
 		return new NpcContext(NpcEdgeSnapshot.empty(), NpcContext.DEFAULT_MIN_MARGIN_RATIO,
 				NpcContext.DEFAULT_CHECK_IN, NpcContext.DEFAULT_RESTING_HOURS, maxOrderSlots,
 				capRemaining, maxOrdersPerItem);
+	}
+
+	/** The same defaults, plus a premium and whatever measured history it is meant to be priced off. */
+	private static NpcContext npcPaying(double driftPremium, NpcEdgeSnapshot edges) {
+		return new NpcContext(edges, NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN,
+				NpcContext.DEFAULT_RESTING_HOURS, NpcContext.ALL_ORDER_SLOTS,
+				NpcContext.CAP_UNLIMITED, NpcContext.UNLIMITED_ORDERS_PER_ITEM, driftPremium,
+				NpcRanking.LOAD);
+	}
+
+	/**
+	 * A snapshot with one product's drift measured, deep enough to clear {@link NpcEdge#MIN_SAMPLES}.
+	 *
+	 * <p>{@code persistence} is 1.0 so the gap is never the thing being tested here.
+	 */
+	private static NpcEdgeSnapshot edges(String id, double npcPrice, double bidDriftPerHour) {
+		return new NpcEdgeSnapshot(
+				Map.of(id, new NpcEdge(id, npcPrice, 1.0d, 0.3d, bidDriftPerHour, 72.0d, 1000,
+						NpcEdge.MIN_SAMPLES)),
+				Duration.ofDays(3), NpcEdge.MIN_SAMPLES, Instant.now());
 	}
 
 	private static StrategyContext context(Map<String, BazaarProduct> products,
@@ -590,5 +612,97 @@ class NpcBasketTest {
 		assertEquals("WIDE", NpcBasket.plan(
 						context(products, items, 100_000_000_000L, ranked(1, NpcRanking.ORDER_SLOT)))
 				.lines().getFirst().plan().itemId());
+	}
+
+	/**
+	 * The failure this fixes cost 43M of planned profit in one night.
+	 *
+	 * <p>{@code rebuildNpcEdges} runs on the maintenance thread and publishes nothing until it has
+	 * read three days of tape, so for the first seconds of a session every {@code NpcEdge} is absent
+	 * and {@code NpcFlipStrategy} prices the chase at zero. A premium is a multiple of that chase, so
+	 * it was zero too - and the plan posted at the plain outbid price while the settings said to post
+	 * above it. Measured live on 2026-08-15: 21 orders, 111.5M, placed 2m19s after launch at top bid
+	 * plus 0.1 on every item, 11.2% of the capital filled over ten hours.
+	 *
+	 * <p>Refusing is the only honest answer. The alternative is a plan that cannot be told apart from
+	 * a correct one by looking at it.
+	 */
+	@Test
+	void refusesToPlanAtAPremiumItCannotPrice() {
+		StrategyContext context = manyItems(20, BANKROLL,
+				npcPaying(1.0d, NpcEdgeSnapshot.empty()), false);
+
+		NpcBasket.Basket basket = NpcBasket.plan(context);
+
+		assertTrue(basket.isEmpty());
+		assertEquals(NpcBasket.Bound.DRIFT_UNMEASURED, basket.bound());
+		assertTrue(basket.boundExplanation().contains("Pay the chase up front"),
+				basket.boundExplanation());
+	}
+
+	@Test
+	void planningWithoutAPremiumNeedsNoMeasurement() {
+		// The shipped setting is 0, and at 0 there is nothing to price off a drift rate. A client
+		// with no tape at all has to keep working.
+		StrategyContext context = manyItems(20, BANKROLL,
+				npcPaying(0.0d, NpcEdgeSnapshot.empty()), false);
+
+		assertFalse(NpcBasket.plan(context).isEmpty());
+	}
+
+	@Test
+	void aMeasuredDriftIsEnoughToPlanOn() {
+		StrategyContext context = manyItems(20, BANKROLL,
+				npcPaying(1.0d, edges("ITEM_0", 1000.0d, 1.0d)), false);
+
+		NpcBasket.Basket basket = NpcBasket.plan(context);
+
+		assertFalse(basket.isEmpty());
+		assertFalse(basket.bound() == NpcBasket.Bound.DRIFT_UNMEASURED);
+	}
+
+	/**
+	 * A full account does not get to explain a wait.
+	 *
+	 * <p>{@code withHeld} promotes an empty basket to {@code SLOTS} when everything is already
+	 * resting, which is right when the basket is empty because nothing was worth placing. Here it is
+	 * empty because the mod refused, and that stays true whether or not a slot is free.
+	 */
+	@Test
+	void aHeldAccountDoesNotOverwriteTheRealReason() {
+		StrategyContext context = manyItems(20, BANKROLL,
+				npcPaying(1.0d, NpcEdgeSnapshot.empty()), false);
+
+		NpcBasket.Basket basket = NpcBasket.plan(context,
+				new NpcBasket.Held(14, 0L, Map.of()));
+
+		assertEquals(NpcBasket.Bound.DRIFT_UNMEASURED, basket.bound());
+	}
+
+	/**
+	 * What the premium is supposed to do to the posted price, which nothing pinned before.
+	 *
+	 * <p>Drift of 1 coin an hour over the default 8-hour resting window is 8 coins of chase, so a
+	 * premium of 1.0 posts 8 coins above the plain outbid and a premium of 0 posts at it. The unit
+	 * cost is the same either way - the premium moves where those coins are spent, not how many.
+	 */
+	@Test
+	void thePremiumIsPaidIntoThePostedPrice() {
+		NpcEdgeSnapshot measured = edges("ITEM_0", 1000.0d, 1.0d);
+
+		NpcPlan paying = onlyPlanFor("ITEM_0", manyItems(1, BANKROLL, npcPaying(1.0d, measured), false));
+		NpcPlan plain = onlyPlanFor("ITEM_0", manyItems(1, BANKROLL, npcPaying(0.0d, measured), false));
+
+		// ITEM_0's book bids 700.0, so the plain outbid is 700.1.
+		assertEquals(700.1d, plain.postPrice(), 1e-9);
+		assertEquals(708.1d, paying.postPrice(), 1e-9);
+		assertEquals(plain.unitCost(), paying.unitCost(), 1e-9);
+	}
+
+	private static NpcPlan onlyPlanFor(String itemId, StrategyContext context) {
+		return NpcFlipStrategy.restingPlans(context).stream()
+				.filter(plan -> plan.itemId().equals(itemId))
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("no plan for " + itemId));
 	}
 }

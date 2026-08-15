@@ -158,9 +158,15 @@ public final class MarketPoller implements AutoCloseable {
 		schedule(this::maintainBazaarTape, Duration.ofMinutes(2), PRUNE_INTERVAL);
 		// Also on the maintenance thread, and for the same reason: this re-reads three days of the
 		// bazaar tape, which is far too long to hold up a 45-second sales poll. It touches neither
-		// the price ring nor anything the poller writes - the tape is read-only from here. Delayed
-		// past the first item fetch, which is what supplies the NPC prices it measures against.
-		scheduleMaintenance(this::rebuildNpcEdges, Duration.ofMinutes(3), NPC_EDGE_INTERVAL);
+		// the price ring nor anything the poller writes - the tape is read-only from here.
+		//
+		// As early as the catalog allows, because until this has published a snapshot every NpcEdge
+		// is absent and NpcFlipStrategy prices the chase at zero - which is a premium of zero, on a
+		// plan the player is about to place. The item fetch is what supplies the NPC prices, and
+		// rebuildNpcEdges already returns without publishing while the catalog is empty, so the
+		// guard is what orders these two and not the delay. Measured live on 2026-08-15: a plan run
+		// 2m19s after launch posted at the plain outbid with the premium set to 1.0.
+		scheduleMaintenance(this::rebuildNpcEdges, Duration.ofSeconds(20), NPC_EDGE_INTERVAL);
 
 		// Replays yesterday's tape into the ring before the first live sample, so trends are
 		// available immediately on a client that has run before rather than three hours in.

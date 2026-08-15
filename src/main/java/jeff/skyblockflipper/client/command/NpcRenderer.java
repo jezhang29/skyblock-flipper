@@ -146,7 +146,10 @@ public final class NpcRenderer {
 
 		renderRound(source, worklist);
 
-		if (worklist.holding() == 0 && basket.isEmpty()) {
+		// Only when the market really is the answer. An empty basket the mod emptied itself has its
+		// own explanation, and printing this one over it would blame the book for a wait.
+		if (worklist.holding() == 0 && basket.isEmpty()
+				&& basket.bound() == NpcBasket.Bound.CANDIDATES) {
 			source.sendFeedback(Component.literal(
 							"  An item needs a standing gap under the NPC price and a margin over the floor.")
 					.withStyle(ChatFormatting.DARK_GRAY));

@@ -54,9 +54,13 @@ public final class MarketData {
 	}
 
 	/**
-	 * Bumped on every book replacement. Readers that cache derived work (the HUD ranks the whole
-	 * market) compare this instead of re-deriving on a timer: candidates cannot change while the
-	 * book has not, so a timer either recomputes identical results or shows stale ones.
+	 * Bumped whenever market state a ranking is derived from is replaced. Readers that cache derived
+	 * work (the HUD ranks the whole market) compare this instead of re-deriving on a timer:
+	 * candidates cannot change while their inputs have not, so a timer either recomputes identical
+	 * results or shows stale ones.
+	 *
+	 * <p>The book is what moves this most, and {@link #setNpcEdges} moves it too - see there for why
+	 * a snapshot arriving has to count as a change even though the book did not.
 	 */
 	public long bazaarRevision() {
 		return bazaarRevision.get();
@@ -104,8 +108,17 @@ public final class MarketData {
 		return npcEdges.get();
 	}
 
+	/**
+	 * Publishes a rebuilt snapshot, and counts it as a revision.
+	 *
+	 * <p>The first one of a session changes every NPC price the mod would quote - before it there is
+	 * no measured drift, so the chase costs nothing and a premium buys nothing. A cache keyed only on
+	 * the book would go on serving the plan it built without it until the next poll happened to
+	 * replace the book for some unrelated reason.
+	 */
 	public void setNpcEdges(NpcEdgeSnapshot snapshot) {
 		npcEdges.set(snapshot);
+		bazaarRevision.incrementAndGet();
 	}
 
 	/** Live listings found below fair value by the last sweep. */
