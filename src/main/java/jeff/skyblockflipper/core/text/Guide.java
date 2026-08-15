@@ -237,11 +237,24 @@ public final class Guide {
 					+ "every half hour. Set it with a long check-in interval and the cycle needs "
 					+ "one visit at each end. It is off by default because it rests on one thing "
 					+ "the tape cannot check - see Probe"),
-			new Term("Probe", "/flip npc probe <ITEM_ID> quotes a premium price for one item and "
+			new Term("Probe", "/flip npc probe <item> quotes a premium price for one item and "
 					+ "then watches whether anything outbids an order left there. Every price on "
 					+ "the tape was recorded from a book with none of your orders in it, so whether "
 					+ "the competition on an item re-posts above whatever is on top is the one "
-					+ "thing history cannot say. One order and one session settles it"),
+					+ "thing history cannot say. One order and one session settles it. Name the "
+					+ "item however you like - see Item names"),
+			new Term("Nudge", "Being outbid by the bazaar's own +0.1 button rather than by somebody "
+					+ "pricing the item for themselves. No premium can prevent one, and none needs "
+					+ "to: across three days of tape the button was two-thirds to four-fifths of "
+					+ "every upward move and carried under 1% of the drift - 5 coins out of 2,596 "
+					+ "on Revenant Catalyst. The probe reports an outbid of a coin or less as a "
+					+ "nudge, and counts how often the order took the top back afterwards"),
+			new Term("Item names", "Anywhere the mod asks for an item you may type the name you "
+					+ "read in game instead of the id, in any case and in any word order. Ids "
+					+ "cannot be guessed from names - Nether Wart Distillate is "
+					+ "NETHER_STALK_DISTILLATE - so guessing one is a lost command. Tab completes "
+					+ "both spellings, and a name matching several items lists them rather than "
+					+ "picking one"),
 			new Term("Rank the basket by", "Which budget the basket spends first. Ranking by load "
 					+ "picks the items that carry the most profit per inventory slot, which is what "
 					+ "keeps the carrying to the NPC down; ranking by order slot picks the most "
