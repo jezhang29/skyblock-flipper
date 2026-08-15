@@ -241,8 +241,11 @@ public final class Guide {
 					+ "then watches whether anything outbids an order left there. Every price on "
 					+ "the tape was recorded from a book with none of your orders in it, so whether "
 					+ "the competition on an item re-posts above whatever is on top is the one "
-					+ "thing history cannot say. One order and one session settles it. Name the "
-					+ "item however you like - see Item names"),
+					+ "thing history cannot say. Run one per item on as many items as you like and "
+					+ "/flip npc probe reports them all. A fill ends that item's probe, because a "
+					+ "filled order is out of the book and the book would report it as never having "
+					+ "been beaten. Memory only, so the game must stay open. Name the item however "
+					+ "you like - see Item names"),
 			new Term("Nudge", "Being outbid by the bazaar's own +0.1 button rather than by somebody "
 					+ "pricing the item for themselves. No premium can prevent one, and none needs "
 					+ "to: across three days of tape the button was two-thirds to four-fifths of "

@@ -46,6 +46,11 @@ import java.time.Duration;
  *                    does not, and this counts which happened
  * @param onTop       whether the last poll found it on top, kept only so {@code retakes} can tell a
  *                    return from a continuation
+ * @param filledAt    epoch millis the order was seen to fill, or 0 while it is still resting.
+ *                    <b>Without this the probe reports its best result for its worst reason.</b> A
+ *                    filled order leaves the book, so the top bid drops back below the probe's
+ *                    price and every later poll scores as "on top" - an order that filled in three
+ *                    minutes would read as one that held the top all night. Sampling stops here
  */
 public record NpcProbe(
 		String itemId,
@@ -59,7 +64,8 @@ public record NpcProbe(
 		long firstOutbid,
 		double worstOverbid,
 		int retakes,
-		boolean onTop
+		boolean onTop,
+		long filledAt
 ) {
 	/**
 	 * How far the top bid may exceed the probe's price and still be the probe itself.
@@ -75,7 +81,23 @@ public record NpcProbe(
 			long now) {
 		// Starts on top, because the order is posted above the book and nothing has looked at it yet.
 		// Starting it outbid would score the first outbid as a retake.
-		return new NpcProbe(itemId, displayName, price, premium, now, 0, 0, 0L, 0L, 0.0d, 0, true);
+		return new NpcProbe(itemId, displayName, price, premium, now, 0, 0, 0L, 0L, 0.0d, 0, true, 0L);
+	}
+
+	/**
+	 * This probe with the order recorded as filled, which ends the measurement.
+	 *
+	 * <p>A fill is the good outcome and the end of the evidence at the same time: the coins were
+	 * collected at the premium price, and there is no longer an order in the book to watch. Kept at
+	 * the first fill, so an item traded again later does not move the time the probe's order went.
+	 */
+	public NpcProbe filled(long now) {
+		return isFilled() ? this : new NpcProbe(itemId, displayName, price, premium, startedAt,
+				samples, atTop, lastSample, firstOutbid, worstOverbid, retakes, onTop, now);
+	}
+
+	public boolean isFilled() {
+		return filledAt > 0L;
 	}
 
 	/**
@@ -85,6 +107,12 @@ public record NpcProbe(
 	 * @param now    epoch millis of the poll
 	 */
 	public NpcProbe sample(double topBid, long now) {
+		// Once the order is gone the book says nothing about it, and what it says looks like success:
+		// no order of yours to outbid means the top bid is back under your price forever.
+		if (isFilled()) {
+			return this;
+		}
+
 		double over = topBid - price;
 		boolean top = over <= TOLERANCE;
 
@@ -96,7 +124,8 @@ public record NpcProbe(
 				firstOutbid == 0L && !top ? now : firstOutbid,
 				top ? worstOverbid : Math.max(worstOverbid, over),
 				retakes + (top && !onTop ? 1 : 0),
-				top);
+				top,
+				filledAt);
 	}
 
 	/**
@@ -131,14 +160,26 @@ public record NpcProbe(
 		return samples <= 0 ? 0.0d : (double) atTop / samples;
 	}
 
-	/** How long the probe has been open, which is the window {@link #topShare()} covers. */
+	/**
+	 * How long the probe has been open, which is the window {@link #topShare()} covers.
+	 *
+	 * <p>Ends at the fill once there is one. After that the clock is still running but the order is
+	 * not in the book, so counting the wait as observation would dilute every share it reports.
+	 */
 	public Duration age(long now) {
-		return Duration.ofMillis(Math.max(0L, now - startedAt));
+		return Duration.ofMillis(Math.max(0L, (isFilled() ? filledAt : now) - startedAt));
 	}
 
-	/** How long the order held the top before anything outbid it, or the whole age if nothing has. */
+	/**
+	 * How long the order held the top: until it was outbid, until it filled, or so far.
+	 *
+	 * <p>A fill ends this as surely as an outbid does, and for the opposite reason - the order left
+	 * the book because somebody sold into it, which is the whole point of posting one.
+	 */
 	public Duration heldFor(long now) {
-		return Duration.ofMillis(Math.max(0L, (everOutbid() ? firstOutbid : now) - startedAt));
+		long until = everOutbid() ? firstOutbid : isFilled() ? filledAt : now;
+
+		return Duration.ofMillis(Math.max(0L, until - startedAt));
 	}
 
 	/**
@@ -155,7 +196,9 @@ public record NpcProbe(
 
 		String held = everOutbid()
 				? "held the top " + Waits.format(heldFor(now)) + " before being outbid"
-				: "still on top after " + Waits.format(age(now));
+				: isFilled()
+						? "FILLED after " + Waits.format(heldFor(now)) + ", never outbid"
+						: "still on top after " + Waits.format(age(now));
 
 		String line = String.format("%s: %s, %.0f%% of %d polls, +%.1f premium",
 				displayName, held, topShare() * 100.0d, samples, premium);
@@ -166,8 +209,11 @@ public record NpcProbe(
 
 		// Which of the two things happened is the whole finding, so it goes on the line rather than
 		// being left for the player to work out from a raw coin figure.
-		return line + String.format(", outbid by %.1f at worst (%s), top retaken %d time%s",
+		return line + String.format(", outbid by %.1f at worst (%s), top retaken %d time%s%s",
 				worstOverbid, nudgedOnly() ? "the +0.1 button" : "a real reprice", retakes,
-				retakes == 1 ? "" : "s");
+				retakes == 1 ? "" : "s",
+				// An order outbid early and filled later still filled, and that is the outcome the
+				// premium is bought for. Saying only that it was outbid would report a failure.
+				isFilled() ? ", then FILLED at " + Waits.format(age(now)) : "");
 	}
 }
