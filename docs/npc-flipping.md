@@ -522,6 +522,58 @@ separates. It records the largest amount anything ever outbid the probe by, and 
 of a coin or less as the button and anything larger as a real reprice — plus how many times the
 order took the top back, which is what tells you the nudge was given up rather than held.
 
+### The premium held 3% in play, not the 88% the ownerless tape predicted
+
+Measured live, first unattended night 2026-08-16, two orders placed with a real premium and left
+11.6 hours. The tape now records the top bid *including* the user's own resting order, so the
+question line 519 left open — a competitor pressing +0.1 at you specifically — is finally in view.
+
+| item | posted premium | held top (of 145 samples) | worst outbid all night |
+| --- | --- | --- | --- |
+| `BEADY_EYES` | +659 (+3.9%) | 4/145 = 3% | +5.5 coins |
+| `OVERFLOWING_TRASH_CAN` | +277 (+11%) | 2/145 = 1% | +3.1 coins |
+
+The premium held for roughly ten minutes, then a competitor parked one or two coins above and
+stayed there the whole night — never out-pricing, just nudging. The +0.1 button table above
+(two-thirds of moves, under 1% of drift) describes the *market's* aggregate bidding; it does not
+describe what one competitor does to *your specific order* once it is the thing to beat. That
+second effect dominates, and it makes holding top offline impossible on any contested item. The
+88% hold at +0.5% is an artefact of a backtest that never contained the order it was pricing.
+
+The 7 units that did fill on `BEADY_EYES` filled during the ~10 minutes it was genuinely top, not
+from flow reaching a premium order. **The premium is worth paying only while you are present to
+reprice; unattended it buys about ten minutes.** Keep `npcDriftPremium` for check-in cycles; do
+not build any offline strategy on top of it.
+
+### Rejected: unattended sit-below-top ("catch the dumps")
+
+If you cannot hold the top offline, the opposite idea is to post *below* the churning top and let
+occasional dumps (instant-sell bursts that eat through the thin top-of-book) overshoot down to your
+order. Buying cheaper also widens the NPC margin. Measured across all 15 tape days
+(2026-08-02 to 2026-08-16), defining a reach-down dump as a ~5-min sample where `sv` rose and the
+top bid `b` fell ≥2%, joining `npc_sell_price` from the items resource, ranking by coins per
+35-slot load:
+
+| haul budget | reliable coins/day |
+| --- | --- |
+| 35 loads | 0.62M |
+| 100 loads | 1.4M |
+| 200 loads | 2.5M |
+
+"Reliable" = items that qualify (≥6 dumps/day at 2% depth **and** a positive NPC margin) on ≥13 of
+15 days. A single-day pull looked like 11M/day, but that rode entirely on `GILL_MEMBRANE` posting
+52 loads once; it qualifies on only 12 of 15 days and its median is 8 loads. The items that dump
+profitably *every* day are farm and mining raws (`RAW_FISH`, mushrooms, wheat, rough gems) at
+4–16k coins/load, so the total is small and flattens fast with more hauling. The high-margin
+names (`GILL_MEMBRANE` 108k/load, `MOOGMA_PELT` 111k/load) are the unreliable ones.
+
+**Not built.** Low-single-digit millions a day for tens of hauls is not worth a feature, and
+shipping it would invite grinding for a return the numbers argue against. The finding that matters
+for the whole strategy: bazaar-to-NPC resting orders do not produce large unattended income. The
+80M/day target needs presence — hold top on high-value items where a load is worth 1–2M, not 10k.
+Reproduce with the scripts referenced in `Reproducing the measurements`; the dump scan is
+`reach-down dump = sv up & b down ≥2% per sample`.
+
 ### The ranking key, revisited: it is a choice between two budgets
 
 `Ranking key: profit per slot-load, not cap efficiency` above is still right about what it rejected.
