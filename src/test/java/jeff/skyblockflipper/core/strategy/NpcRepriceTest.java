@@ -488,4 +488,65 @@ class NpcRepriceTest {
 		assertEquals(NpcReprice.RepriceValue.none(), only("ITEM", 800.0d, 860.0d).value());
 		assertEquals(NpcReprice.RepriceValue.none(), only("ITEM", 800.0d, null).value());
 	}
+
+	// The live reprice of a frozen round row, which is what the panel types into the price box.
+
+	/** A frozen row, priced at 700 when the round opened, worth 500 units to the NPC. */
+	private static NpcRound.Row row(double frozenPost, long units) {
+		return new NpcRound.Row("ITEM", "ITEM", frozenPost, units, 1, 0.0d, "");
+	}
+
+	/**
+	 * The price to type is the live book, not the number the round froze half an interval ago.
+	 *
+	 * <p>The whole point of the split: a player standing at Hypixel's "+0.1 coins" button sees the
+	 * live top bid, so the panel has to quote the same thing. The profit, though, is measured at the
+	 * frozen price the player acted on.
+	 */
+	@Test
+	void repriceNowQuotesTheLiveBookAndValuesAtTheFrozenPrice() {
+		// Frozen at 700, but the book has since walked up to a 760 top bid.
+		NpcReprice.LiveReprice live =
+				NpcReprice.repriceNow(row(700.0d, 500L), context("ITEM", 760.0d, NPC_PRICE))
+						.orElseThrow();
+
+		assertEquals(760.1d, live.price(), 1e-9d);
+		assertEquals(STOP, live.chaseStop(), 1e-9d);
+		assertFalse(live.pastStop());
+		// (1000 - 700) x 500, at the frozen post price rather than the live one.
+		assertEquals(300.0d * 500.0d, live.profitAtStake(), 1e-6d);
+	}
+
+	/** With no buy side in the snapshot the book has not been fetched, so the frozen price stands. */
+	@Test
+	void repriceNowFallsBackToTheFrozenPriceWhenTheBookIsAbsent() {
+		NpcReprice.LiveReprice live =
+				NpcReprice.repriceNow(row(730.0d, 500L), context("ITEM", null, NPC_PRICE))
+						.orElseThrow();
+
+		assertEquals(730.0d, live.price(), 1e-9d);
+		assertFalse(live.pastStop());
+	}
+
+	/** The book crossed the stop while the row was in hand, so the caller is told to drop it. */
+	@Test
+	void repriceNowFlagsARowTheBookHasChasedPastTheStop() {
+		// A 900 top bid posts at 900.1, past the 850 stop and still under the 1000 the NPC pays.
+		NpcReprice.LiveReprice live =
+				NpcReprice.repriceNow(row(700.0d, 500L), context("ITEM", 900.0d, NPC_PRICE))
+						.orElseThrow();
+
+		assertTrue(live.pastStop());
+		assertEquals(STOP, live.chaseStop(), 1e-9d);
+	}
+
+	/**
+	 * An item that has left the catalogue is no NPC reprice at all, so the row is dropped rather than
+	 * repriced against a price no NPC will pay. The old worklist code repriced it at the frozen price
+	 * against a zero NPC price; the reunited engine returns empty.
+	 */
+	@Test
+	void repriceNowDropsARowWhoseItemHasLeftTheCatalogue() {
+		assertTrue(NpcReprice.repriceNow(row(700.0d, 500L), context("ITEM", 760.0d, null)).isEmpty());
+	}
 }

@@ -299,6 +299,88 @@ public final class NpcReprice {
 	}
 
 	/**
+	 * The live reprice of a frozen round row: what to type into the price box now, the stop the price
+	 * must stay under, and whether the book has walked past that stop since the round froze.
+	 *
+	 * <p>The counterpart to {@link NpcRound.Row#postPrice}, which is the yardstick a row is judged
+	 * worked against and is frozen for the interval. This is not frozen: the player is standing in
+	 * front of Hypixel's own "+0.1 coins" button, which reads the live book, so a price frozen half an
+	 * hour ago is visibly a different number from the one the game is offering. See
+	 * {@code docs/adr/0002-reprice-in-rounds.md}.
+	 *
+	 * @param price          where to post to be the top of the book now, off the snapshot in hand
+	 * @param chaseStop      the highest price this item is worth chasing to, quoted as a bound
+	 * @param profitAtStake  coins still reachable on the row, measured at the frozen post price - the
+	 *                       player acted on that number - and on the axis every other task reports
+	 * @param pastStop       true when {@code price} is past {@code chaseStop}, i.e. the book has caught
+	 *                       up while the row was in hand and re-posting would open a position the
+	 *                       strategy would refuse. The caller drops the row and refunds its reservation
+	 */
+	public record LiveReprice(double price, double chaseStop, double profitAtStake, boolean pastStop) {
+	}
+
+	/**
+	 * The live reprice for a frozen round row, or empty when the row is no longer an NPC reprice at
+	 * all.
+	 *
+	 * <p>The same computation {@link #adviseOn} runs for a resting order, over a row instead. A round
+	 * row may be mid-reprice - the cancel done and the re-post not - so there is no resting order to
+	 * read a price off, only the frozen row and the live book.
+	 *
+	 * <ul>
+	 *   <li><b>Empty</b> means the item has left the catalog, so there is no NPC price to defend and no
+	 *       margin to chase into. The row is dropped rather than repriced against a vanished price.
+	 *   <li><b>Present with {@link LiveReprice#pastStop}</b> means the live price is past the stop: drop
+	 *       the row and hand its reservation back to the basket.
+	 *   <li><b>Present otherwise</b> is a reprice at {@link LiveReprice#price}.
+	 * </ul>
+	 *
+	 * <p>The price is read off the snapshot in hand, falling back to the row's frozen post price when
+	 * the product is missing - the book has not been fetched rather than nobody bidding, and a stale
+	 * number beats no number in a field the player is about to type into. Shares the post-price, stop
+	 * and past-stop helpers with {@link #adviseOn}, so the frozen and live paths cannot compute the
+	 * price two different ways.
+	 */
+	public static Optional<LiveReprice> repriceNow(NpcRound.Row row, StrategyContext context) {
+		double npcPrice = context.catalog().get(row.itemId())
+				.flatMap(ItemCatalog.Entry::npcPrice)
+				.filter(price -> price > 0.0d)
+				.orElse(0.0d);
+
+		if (npcPrice <= 0.0d) {
+			return Optional.empty();
+		}
+
+		BazaarProduct product = context.bazaar().products().get(row.itemId());
+		double price = livePostPrice(product, row.postPrice());
+		double stop = chaseStop(context.npc(), npcPrice);
+		double profit = (npcPrice - row.postPrice()) * row.units();
+
+		return Optional.of(new LiveReprice(price, stop, profit, pastStop(price, stop)));
+	}
+
+	/**
+	 * Where to post to be the top of this book now, or {@code fallback} when the book is absent.
+	 *
+	 * <p>The one place the post price is computed. A resting order and a frozen row both post to
+	 * {@code outbidBuyOrder()}; they only differ in what to say when the snapshot has no buy side for
+	 * the item, which each caller passes in.
+	 */
+	private static double livePostPrice(BazaarProduct product, double fallback) {
+		return product == null ? fallback : product.outbidBuyOrder().orElse(fallback);
+	}
+
+	/** The highest price this item is worth chasing to: the NPC price against the margin floor. */
+	private static double chaseStop(NpcContext npc, double npcPrice) {
+		return npc.maxChasePrice(npcPrice);
+	}
+
+	/** Past the stop, a reprice is a position the strategy would refuse to open, so it is dropped. */
+	private static boolean pastStop(double postPrice, double chaseStop) {
+		return postPrice > chaseStop;
+	}
+
+	/**
 	 * Reviews every order against the book as it is now.
 	 *
 	 * <p>Orders on items no NPC buys are dropped rather than reported: they are ordinary spread
@@ -367,7 +449,7 @@ public final class NpcReprice {
 		}
 
 		NpcContext npc = context.npc();
-		double chaseStop = npc.maxChasePrice(npcPrice);
+		double chaseStop = chaseStop(npc, npcPrice);
 		OptionalDouble bestBid = product.instantSellPrice();
 
 		// Filled to the last unit and still holding them. There is no order left to price, so every
@@ -412,7 +494,7 @@ public final class NpcReprice {
 							npcPrice)));
 		}
 
-		double postPrice = product.outbidBuyOrder().orElse(bid + BazaarProduct.PRICE_INCREMENT);
+		double postPrice = livePostPrice(product, bid + BazaarProduct.PRICE_INCREMENT);
 
 		if (postPrice >= npcPrice) {
 			return Optional.of(new Advice(order, Action.CANCEL, npcPrice, bid, postPrice, chaseStop,
@@ -421,7 +503,7 @@ public final class NpcReprice {
 							+ "%.1f, so there is no trade here any more", bid, npcPrice)));
 		}
 
-		if (postPrice > chaseStop) {
+		if (pastStop(postPrice, chaseStop)) {
 			return Optional.of(new Advice(order, Action.CANCEL, npcPrice, bid, postPrice, chaseStop,
 					margin(npcPrice, postPrice),
 					String.format("Getting back on top costs %.1f, past the %.1f stop - that is a "

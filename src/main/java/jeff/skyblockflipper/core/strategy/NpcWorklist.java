@@ -406,17 +406,49 @@ public final class NpcWorklist {
 		// would shrink the plan on the strength of a spread flip.
 		List<NpcReprice.Order> recognised = advice.stream().map(NpcReprice.Advice::order).toList();
 		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, filled, cancelledAt, now);
-		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, rows, advice));
+
+		// Re-price each frozen row against the live book once, before anything is sized against it. A
+		// row the book has chased past the stop, or one whose item has left the catalog, is dropped
+		// here rather than in the task loop, so reserve and roundReprices agree by construction and its
+		// slot and coins go back to this trip's basket instead of sitting reserved for a re-post that
+		// must not happen. See NpcReprice.repriceNow.
+		List<LivePlan> plans = livePlans(rows, context);
+		List<NpcRound.Row> working = plans.stream().map(LivePlan::row).toList();
+		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, working, advice));
 
 		List<Task> tasks = new ArrayList<>();
 
 		tasks.addAll(claims(advice));
 		tasks.addAll(cancels(advice));
-		tasks.addAll(round == null ? reprices(advice) : roundReprices(rows, context, basket));
+		tasks.addAll(round == null ? reprices(advice) : roundReprices(plans, context, basket));
 		tasks.addAll(places(basket, context));
-		tasks.addAll(holds(advice, rows, round != null));
+		tasks.addAll(holds(advice, working, round != null));
 
 		return new Worklist(tasks, basket, advice, round);
+	}
+
+	/**
+	 * Each frozen row re-priced against the live book, minus the ones no longer worth posting.
+	 *
+	 * <p>One evaluation per row, paired with its row so {@code reserve} and the reprice tasks read the
+	 * same answer rather than each computing the price again. A row {@link NpcReprice#repriceNow}
+	 * drops - past the stop, or off the catalogue - is simply absent from the list, which is what
+	 * frees its slot and its coins to the basket this trip.
+	 */
+	private static List<LivePlan> livePlans(List<NpcRound.Row> rows, StrategyContext context) {
+		List<LivePlan> plans = new ArrayList<>();
+
+		for (NpcRound.Row row : rows) {
+			NpcReprice.repriceNow(row, context)
+					.filter(live -> !live.pastStop())
+					.ifPresent(live -> plans.add(new LivePlan(row, live)));
+		}
+
+		return plans;
+	}
+
+	/** One frozen round row and its live reprice, paired so reserve and the task read one evaluation. */
+	private record LivePlan(NpcRound.Row row, NpcReprice.LiveReprice live) {
 	}
 
 	/**
@@ -595,12 +627,14 @@ public final class NpcWorklist {
 	 * thirty-minute window on 39% of {@code ENCHANTED_POISONOUS_POTATO} samples and 83% of
 	 * {@code BRONZE_BOWL} ones, so that is not a rare disagreement.
 	 *
-	 * <p>So this quotes {@code outbidBuyOrder()} off the snapshot in hand, which is the same
-	 * computation the button performs and at most one poll behind it. The frozen price is still what
-	 * {@link NpcRound#outstanding} judges the row worked against - the player acted on that number -
-	 * and still what {@code reserve} sizes the hold with.
+	 * <p>So {@link NpcReprice#repriceNow} quotes {@code outbidBuyOrder()} off the snapshot in hand,
+	 * which is the same computation the button performs and at most one poll behind it. The frozen
+	 * price is still what {@link NpcRound#outstanding} judges the row worked against - the player acted
+	 * on that number - and still what {@code reserve} sizes the hold with. The past-stop rows and the
+	 * catalogue-less ones have already been dropped from {@code plans}, so every row here is one to
+	 * post.
 	 */
-	private static List<Task> roundReprices(List<NpcRound.Row> rows, StrategyContext context,
+	private static List<Task> roundReprices(List<LivePlan> plans, StrategyContext context,
 			NpcBasket.Basket basket) {
 		// What is free once the basket has taken its share, which is what decides whether the new
 		// order can go on the book before the old one comes off. Not consumed row by row: the slot and
@@ -611,17 +645,9 @@ public final class NpcWorklist {
 
 		List<Task> tasks = new ArrayList<>();
 
-		for (NpcRound.Row row : rows) {
-			double stop = chaseStop(context, row);
-			double price = postPriceNow(context, row);
-
-			// The book has caught the stop while the row was in hand. Where an order is still resting
-			// the live review has already emitted the cancel and rowsToWork dropped this; where the
-			// player is mid-reprice there is no order to cancel and nothing to say but "do not post
-			// it", so the row goes and the basket gets its coins back.
-			if (stop > 0.0d && price > stop) {
-				continue;
-			}
+		for (LivePlan plan : plans) {
+			NpcRound.Row row = plan.row();
+			double price = plan.live().price();
 
 			long perOrder = unitsPerOrder(context, row.itemId());
 			long capital = Math.round(price * row.units());
@@ -630,26 +656,12 @@ public final class NpcWorklist {
 
 			tasks.add(new Task(Kind.REPRICE, row.itemId(), row.displayName(), price,
 					row.units(), Stacking.orderSplit(row.units(), perOrder),
-					profitAtStake(context, row), capital,
-					repriceReason(row, price, perOrder, placeFirst, capital, stop), false));
+					plan.live().profitAtStake(), capital,
+					repriceReason(row, price, perOrder, placeFirst, capital, plan.live().chaseStop()),
+					false));
 		}
 
 		return tasks;
-	}
-
-	/**
-	 * Where to post this row to be the top of the book, off the snapshot in hand.
-	 *
-	 * <p>Falls back to the round's frozen price when the snapshot has no buy side for the item, which
-	 * means the book has not been fetched rather than that nobody is bidding. A stale number beats no
-	 * number in a field the player is about to type into.
-	 */
-	private static double postPriceNow(StrategyContext context, NpcRound.Row row) {
-		BazaarProduct product = context.bazaar().products().get(row.itemId());
-
-		return product == null
-				? row.postPrice()
-				: product.outbidBuyOrder().orElse(row.postPrice());
 	}
 
 	/**
@@ -686,31 +698,6 @@ public final class NpcWorklist {
 				: "Cancel first, then re-post - the row, the slot and the " + Coins.format(capital)
 						+ " it needs are held for the rest of the round, so the basket cannot spend "
 						+ "them while you are mid-reprice");
-	}
-
-	/**
-	 * The highest price this item is still worth chasing to, recomputed rather than frozen.
-	 *
-	 * <p>Safe to take live, unlike the post price: it is the NPC price - which cannot move - against
-	 * {@code npcMinMarginRatio}, so nothing about the book enters it. It is the same
-	 * {@code NpcContext.maxChasePrice} the review used to decide the row was a reprice and not a
-	 * cancel.
-	 */
-	private static double chaseStop(StrategyContext context, NpcRound.Row row) {
-		double npcPrice = context.catalog().get(row.itemId())
-				.flatMap(ItemCatalog.Entry::npcPrice)
-				.orElse(0.0d);
-
-		return context.npc().maxChasePrice(npcPrice);
-	}
-
-	/** Coins still reachable on the row, the same axis every other task reports profit on. */
-	private static double profitAtStake(StrategyContext context, NpcRound.Row row) {
-		double npcPrice = context.catalog().get(row.itemId())
-				.flatMap(ItemCatalog.Entry::npcPrice)
-				.orElse(0.0d);
-
-		return npcPrice <= 0.0d ? row.gain() : (npcPrice - row.postPrice()) * row.units();
 	}
 
 	/** Units one bazaar order of this item holds, read off the same book the basket sizes on. */
