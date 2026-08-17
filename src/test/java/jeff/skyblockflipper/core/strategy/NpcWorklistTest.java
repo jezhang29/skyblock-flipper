@@ -322,6 +322,30 @@ class NpcWorklistTest {
 	}
 
 	/**
+	 * A pinned row the book has chased past the stop frees its slot to this trip's basket, rather than
+	 * holding it reserved for a re-post that must not happen.
+	 *
+	 * <p>The reunion's behaviour change. Evaluating each row's live reprice once, before anything is
+	 * reserved, means a dropped row never takes a slot: the old two-pass order reserved the slot and
+	 * then dropped the row, so the coins sat idle until the next round. Mid-reprice and past the 850
+	 * stop, the account is whole again.
+	 */
+	@Test
+	void freesThePinnedRowsSlotWhenTheBookHasChasedPastTheStop() {
+		NpcRound round = roundOver(List.of(outbid("ITEM_0", 500L)), context(10, 5));
+
+		// Past the stop: dropped, and its slot handed back, so all five slots are the basket's.
+		NpcWorklist.Worklist past = NpcWorklist.of(List.of(), context(10, 5, 850.0d), NOW, round);
+		assertTrue(of(past, NpcWorklist.Kind.REPRICE).isEmpty());
+		assertEquals(5, past.count(NpcWorklist.Kind.PLACE));
+
+		// Under the stop, the same row is pinned and keeps its slot, leaving four for the basket.
+		NpcWorklist.Worklist pinned = NpcWorklist.of(List.of(), context(10, 5), NOW, round);
+		assertEquals(1, pinned.count(NpcWorklist.Kind.REPRICE));
+		assertEquals(4, pinned.count(NpcWorklist.Kind.PLACE));
+	}
+
+	/**
 	 * Fault 3 in the ADR, as the worklist sees it. Cancelling to reprice deletes the order the price
 	 * came from, and the list used to regenerate from what was resting - dropping the row, and the
 	 * number the player was walking to the menu to type, at the exact moment it was needed.

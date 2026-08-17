@@ -70,3 +70,20 @@ The per-day `daily.jsonl` summary, 67x smaller than the raw day and never pruned
 history past the retention window. Keyed by signature, and carrying no schema version — so a change
 to how signatures are spelled silently splits every key into a before and an after, and that history
 does not come back. See `docs/adr/0001-defer-the-signature-term-model.md`.
+
+## Yardstick
+
+The frozen post price a reprice row is judged worked against: where the book was when the round
+opened, held still for the interval. `NpcRound.Row.postPrice`. It is what `NpcRound.outstanding`
+calls a row done or outstanding against, and what `NpcWorklist.reserve` sizes the held slot and coins
+on — both have to be the number the player actually acted on. It is **not** the number the panel
+tells anyone to type; that is the live reprice. See `docs/adr/0002-reprice-in-rounds.md`.
+
+## Live reprice
+
+What to type into the price box now, re-read off the snapshot in hand every trip, because the player
+is standing in front of Hypixel's own "+0.1 coins" button which reads the live book. The counterpart
+to the yardstick: the round freezes *which* items to work, never *what to type* for them. Computed
+once per row by `NpcReprice.repriceNow`, which also carries the chase stop and whether the book has
+walked past it. The top bid moves inside a thirty-minute window on the majority of samples for a
+contested item, so a price frozen with the row would visibly disagree with the button.
