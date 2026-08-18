@@ -302,7 +302,7 @@ class NpcBasketTest {
 	/** A plan carrying nothing but the per-order ceiling, which is all {@code orderSplit} reads. */
 	private static NpcPlan plan(String id, long unitsPerOrder) {
 		return new NpcPlan(id, id, 1000.0d, 800.0d, 800.0d, 200.0d, 100_000L, unitsPerOrder,
-				36L, 100.0d, true, null, 0.5d);
+				36L, 100.0d, true, null, 0.5d, false);
 	}
 
 	@Test

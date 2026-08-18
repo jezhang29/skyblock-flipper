@@ -94,7 +94,8 @@ public final class NpcWorklist {
 			String orderSplit,
 			double profit,
 			long capital,
-			String reason
+			String reason,
+			boolean postsAboveBook
 	) {
 		public boolean needsClick() {
 			return kind != Kind.HOLD;
@@ -529,7 +530,7 @@ public final class NpcWorklist {
 				.map(entry -> new Task(Kind.CLAIM, entry.order().itemId(),
 						entry.order().displayName(), 0.0d, entry.order().unclaimed(),
 						String.valueOf(entry.order().unclaimed()), entry.claimableProfit(), 0L,
-						claimReason(entry)))
+						claimReason(entry), false))
 				.toList();
 	}
 
@@ -559,7 +560,7 @@ public final class NpcWorklist {
 				.map(entry -> new Task(Kind.CANCEL, entry.order().itemId(),
 						entry.order().displayName(), 0.0d, entry.order().remaining(),
 						String.valueOf(entry.order().remaining()), 0.0d, entry.capitalAtStake(),
-						entry.reason()))
+						entry.reason(), false))
 				.sorted(Comparator.comparingLong(Task::capital).reversed())
 				.toList();
 	}
@@ -571,7 +572,7 @@ public final class NpcWorklist {
 				.map(entry -> new Task(Kind.REPRICE, entry.order().itemId(),
 						entry.order().displayName(), entry.postPrice(), entry.order().remaining(),
 						String.valueOf(entry.order().remaining()), entry.profitAtStake(),
-						entry.capitalAtStake(), entry.reason()))
+						entry.capitalAtStake(), entry.reason(), false))
 				.sorted(Comparator.comparingDouble(Task::profit).reversed())
 				.toList();
 	}
@@ -630,7 +631,7 @@ public final class NpcWorklist {
 			tasks.add(new Task(Kind.REPRICE, row.itemId(), row.displayName(), price,
 					row.units(), Stacking.orderSplit(row.units(), perOrder),
 					profitAtStake(context, row), capital,
-					repriceReason(row, price, perOrder, placeFirst, capital, stop)));
+					repriceReason(row, price, perOrder, placeFirst, capital, stop), false));
 		}
 
 		return tasks;
@@ -725,7 +726,7 @@ public final class NpcWorklist {
 		return basket.lines().stream()
 				.map(line -> new Task(Kind.PLACE, line.plan().itemId(), line.plan().displayName(),
 						line.plan().postPrice(), line.units(), line.orderSplit(), line.profit(),
-						line.capital(), placeReason(line, context)))
+						line.capital(), placeReason(line, context), line.plan().postsAboveBook()))
 				.toList();
 	}
 
@@ -799,7 +800,7 @@ public final class NpcWorklist {
 		return new Task(Kind.HOLD, entry.order().itemId(), entry.order().displayName(),
 				entry.order().unitPrice(), entry.order().remaining(),
 				String.valueOf(entry.order().remaining()), entry.profitAtStake(),
-				entry.capitalAtStake(), reason);
+				entry.capitalAtStake(), reason, false);
 	}
 
 	private static String waitingReason(NpcReprice.Advice entry) {
