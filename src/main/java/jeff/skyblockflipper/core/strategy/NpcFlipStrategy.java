@@ -115,8 +115,12 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	/** Instant-sells per hour at which a resting order is as reliable as this strategy gets. */
 	private static final double LIQUID_FILL_RATE = 500.0d;
 
-	/** Inventory slots one load through {@code /trades} carries, which is what hauling is counted in. */
-	private static final long SLOTS_PER_LOAD = 36L;
+	/**
+	 * Inventory slots one load through {@code /trades} carries, which is what hauling is counted in.
+	 * A full inventory is 36 slots, but the ninth hotbar slot is locked to the SkyBlock Menu and
+	 * cannot hold an item, so 35 are actually free to carry.
+	 */
+	private static final long SLOTS_PER_LOAD = 35L;
 
 	/**
 	 * Start of the NPC day the given instant falls in, as epoch millis.
