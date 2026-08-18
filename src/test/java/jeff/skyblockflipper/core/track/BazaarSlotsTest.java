@@ -165,6 +165,60 @@ class BazaarSlotsTest {
 	}
 
 	@Test
+	void findsThePlaceFlowButtonsConfirmedByFlipMenu() {
+		// Transcribed off a live /flip menu on 2026-08-16. The command strips lore, so these are built
+		// from names alone rather than added to the capture fixture - enough to pin the wording
+		// screenOf and the buttons match on across the three place-flow screens.
+		CapturedMenu product = new CapturedMenu(0L, "Mining ➜ Coal", List.of(
+				slot(10, "Buy Instantly", ""),
+				slot(11, "Sell Instantly", ""),
+				slot(13, "Coal", "COAL"),
+				slot(15, "Create Buy Order", ""),
+				slot(16, "Create Sell Offer", ""),
+				slot(30, "Go Back", ""),
+				slot(31, "Go Back", ""),
+				slot(32, "Manage Orders", ""),
+				slot(33, "View Graphs", ""),
+				slot(34, "Instasell", "")));
+
+		// Titled <category> ➜ <item>, so not "Bazaar ➜ …": recognised by its buttons, not its title.
+		assertEquals(BazaarSlots.Screen.PRODUCT, BazaarSlots.screenOf(product));
+		assertEquals(OptionalInt.of(15), BazaarSlots.CREATE_BUY_ORDER.in(product));
+		assertEquals(OptionalInt.of(16), BazaarSlots.CREATE_SELL_OFFER.in(product));
+
+		CapturedMenu amount = new CapturedMenu(0L, "How many do you want?", List.of(
+				slot(10, "Buy only one!", "TRANSMISSION_TUNER"),
+				slot(12, "Buy 4!", "TRANSMISSION_TUNER"),
+				slot(14, "Buy 32!", "TRANSMISSION_TUNER"),
+				slot(16, "Custom Amount", ""),
+				slot(30, "Go Back", ""),
+				slot(31, "Close", "")));
+
+		assertEquals(BazaarSlots.Screen.AMOUNT, BazaarSlots.screenOf(amount));
+		assertEquals(OptionalInt.of(16), BazaarSlots.CUSTOM_AMOUNT.in(amount));
+
+		CapturedMenu price = new CapturedMenu(0L, "How much do you want to pay?", List.of(
+				slot(10, "Same as Top Order", "COAL"),
+				slot(12, "Top Order +0.1", ""),
+				slot(14, "5% of Spread", ""),
+				slot(16, "Custom Price", ""),
+				slot(30, "Go Back", ""),
+				slot(31, "Cancel Buy Order", "")));
+
+		// The price page carries both sign buttons, so it must read as PRICE, not AMOUNT.
+		assertEquals(BazaarSlots.Screen.PRICE, BazaarSlots.screenOf(price));
+		assertEquals(OptionalInt.of(16), BazaarSlots.CUSTOM_PRICE.in(price));
+		assertEquals(OptionalInt.of(12), BazaarSlots.TOP_ORDER_PLUS.in(price));
+
+		// "Cancel Buy Order" at 31 must not answer for the confirm-order button that contains its name.
+		assertEquals(OptionalInt.empty(), BazaarSlots.CONFIRM_BUY_ORDER.in(price));
+	}
+
+	private static CapturedSlot slot(int index, String name, String itemId) {
+		return new CapturedSlot(index, name, List.of(), itemId, 1, "");
+	}
+
+	@Test
 	void tellsTwoOrdersOnOneItemApartByTheirPrice() {
 		// The measured ambiguity: two Diamante's Handle offers resting 13.3 coins apart.
 		CapturedMenu orders = menu("Co-op Bazaar Orders", 36);
