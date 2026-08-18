@@ -52,9 +52,9 @@ public final class BazaarSlots {
 		/**
 		 * One item's page: buy instantly, sell instantly, and the two that open an order.
 		 *
-		 * <p>Its title is {@code Item Upgrades ➜ Transmission Tuner} - the sub-category it was
-		 * reached through and then the item - so it is not {@code Bazaar ➜ …} and nothing in it is
-		 * fixed enough to match on. Recognised by the buttons it carries instead.
+		 * <p>Its title is {@code <category> ➜ <item>} - the category it was reached through and then
+		 * the item, e.g. {@code Mining ➜ Coal} - so it is not {@code Bazaar ➜ …} and nothing in the
+		 * title is fixed enough to match on. Recognised by the buttons it carries instead.
 		 */
 		PRODUCT,
 
@@ -99,40 +99,34 @@ public final class BazaarSlots {
 	/**
 	 * The product page's own buttons, and the sign buttons behind them.
 	 *
-	 * <p><b>These names are read off screenshots, not off a capture.</b> {@code Custom Amount} is
-	 * exact - it was photographed with its tooltip open, {@code Buy Order Quantity / Buy up to 256x. /
-	 * Click to specify!} - and the rest are the wording the game uses in front of the player. Each
-	 * carries its alternatives, because a button that answers to none of its names highlights
-	 * nothing, and this is the one part of the mod not written from measured text. {@code /flip menu}
-	 * prints the names of the last menu you opened, which is how they get confirmed.
+	 * <p>All four were confirmed off a live {@code /flip menu} on 2026-08-16. On the product page
+	 * (titled {@code <category> ➜ <item>}, e.g. {@code Mining ➜ Coal}) {@code Create Buy Order} is at
+	 * slot 15 and {@code Create Sell Offer} at 16, beside {@code Buy Instantly} and
+	 * {@code Sell Instantly}. The amount page {@code How many do you want?} carries {@code Custom
+	 * Amount} at 16, and the price page {@code How much do you want to pay?} carries {@code Custom
+	 * Price} at 16. Names are matched case-insensitively, so no case variant is listed.
 	 */
-	public static final Button CREATE_BUY_ORDER =
-			new Button(List.of("Create Buy Order", "Buy Order"), Button.UNANCHORED);
-	public static final Button CREATE_SELL_OFFER =
-			new Button(List.of("Create Sell Offer", "Sell Offer"), Button.UNANCHORED);
-	public static final Button CUSTOM_AMOUNT =
-			new Button(List.of("Custom Amount", "Custom amount"), Button.UNANCHORED);
-	public static final Button CUSTOM_PRICE =
-			new Button(List.of("Custom Price", "Custom price", "Custom Amount Price"),
-					Button.UNANCHORED);
+	public static final Button CREATE_BUY_ORDER = new Button("Create Buy Order", Button.UNANCHORED);
+	public static final Button CREATE_SELL_OFFER = new Button("Create Sell Offer", Button.UNANCHORED);
+	public static final Button CUSTOM_AMOUNT = new Button("Custom Amount", Button.UNANCHORED);
+	public static final Button CUSTOM_PRICE = new Button("Custom Price", Button.UNANCHORED);
 
 	/**
 	 * The price page's other button, which posts one increment above the top of the book.
 	 *
 	 * <p>Photographed live 2026-08-14: {@code Top Order +0.1 / Buy Order Setup / Beat the price of the
-	 * top order so yours is filled first. / Ordering: 256x / Unit price: 30,808.0 coins}. It is the
-	 * same computation {@code BazaarProduct.outbidBuyOrder} performs, off a book with no poll delay in
-	 * front of it, and it needs no sign - so where it offers the plan's price or less it is the button
-	 * to press.
+	 * top order so yours is filled first. / Ordering: 256x / Unit price: 30,808.0 coins}. The name was
+	 * confirmed off {@code /flip menu} on 2026-08-16 at slot 12 of {@code How much do you want to pay?}.
+	 * It is the same computation {@code BazaarProduct.outbidBuyOrder} performs, off a book with no poll
+	 * delay in front of it, and it needs no sign - so where it offers the plan's price or less it is the
+	 * button to press.
 	 *
 	 * <p><b>Buy wordings only.</b> A sell offer's equivalent undercuts instead of outbidding, and the
 	 * rule that decides whether to use this one - "at or under the price the plan quoted" - is upside
 	 * down there. Nothing in the NPC worklist sells on the bazaar, so the sell button is left unmatched
 	 * rather than matched and mishandled.
 	 */
-	public static final Button TOP_ORDER_PLUS =
-			new Button(List.of("Top Order +0.1", "Best Order +0.1", "Top Order +0.1 coins"),
-					Button.UNANCHORED);
+	public static final Button TOP_ORDER_PLUS = new Button("Top Order +0.1", Button.UNANCHORED);
 
 	/** The line that button carries the price on, and the only number on it worth reading. */
 	private static final Pattern OFFERED_PRICE =
