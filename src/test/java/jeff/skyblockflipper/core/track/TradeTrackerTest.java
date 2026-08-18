@@ -222,6 +222,76 @@ class TradeTrackerTest {
 		assertEquals(0L, order(tracker, "Purple Candy").filled());
 	}
 
+	/**
+	 * A buy order knows its price the moment it is announced, out of the escrow the line quotes.
+	 *
+	 * <p>Chat never prints a price per unit, so an order used to be unpriced until the orders menu
+	 * had been drawn - and an unpriced order is dropped by {@code TrackerService.restingBuyOrders},
+	 * which means the basket charged neither a slot nor the coins for it and would offer the same
+	 * item again. A buy escrows the gross, so the division is the price.
+	 *
+	 * <p>311 x 21,076.6 is 6,554,822.6 and the line says 6,554,823, so the recovered price is high
+	 * by a thousandth of a coin. That is why {@code NpcReprice} compares to within half an
+	 * increment.
+	 */
+	@Test
+	void pricesABuyOrderFromTheCoinsItsSetupLineQuoted() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 311x Purple Candy for 6,554,823 coins."));
+
+		assertEquals(21_076.6d, order(tracker, "Purple Candy").unitPrice(), 0.01d);
+	}
+
+	/**
+	 * A sell offer's setup line quotes the payout, which is net of tax, so it is not a price.
+	 *
+	 * <p>Dividing it out would report an offer about 1% under where it really rests - a sell that
+	 * looks undercut when it is on top.
+	 */
+	@Test
+	void leavesASellOfferUnpricedUntilAMenuSaysOtherwise() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Sell Offer Setup! 1,344x Slimeball for 50,720 coins."));
+
+		assertEquals(0.0d, order(tracker, "Slimeball").unitPrice());
+	}
+
+	/** The menu is still the truth, and a price it does state replaces the derived one. */
+	@Test
+	void takesThePriceTheOrdersMenuStatesOverTheDerivedOne() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 1,525x Bronze Bowl for 4,154,100 coins."));
+		assertEquals(2_724.0d, order(tracker, "Bronze Bowl").unitPrice(), 0.01d);
+
+		tracker.accept(orders(1_000L, "BUY Bronze Bowl", "BRONZE_BOWL", "Order amount: 1,525x",
+				"Filled: 0/1.5k (0.0%)", "Price per unit: 2,800.0 coins"));
+
+		assertEquals(2_800.0d, order(tracker, "Bronze Bowl").unitPrice(), 0.01d);
+	}
+
+	/**
+	 * A menu slot the parser could not read a price off does not erase the one already known.
+	 *
+	 * <p>{@code OrderMenuParser} reports zero for a slot with no {@code Price per unit} line, and
+	 * taking that would turn a priced order back into an unpriced one - the state where the basket
+	 * stops counting it.
+	 */
+	@Test
+	void keepsTheDerivedPriceWhenAMenuSlotStatesNone() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 1,525x Bronze Bowl for 4,154,100 coins."));
+		tracker.accept(new CapturedMenu(1_000L, "Co-op Bazaar Orders",
+				List.of(new CapturedSlot(11, "BUY Bronze Bowl",
+						List.of("Order amount: 1,525x", "Filled: 0/1.5k (0.0%)", "By: [MVP+] " + ME),
+						"BRONZE_BOWL", 1, ""))));
+
+		assertEquals(2_724.0d, order(tracker, "Bronze Bowl").unitPrice(), 0.01d);
+	}
+
 	/** An amount matching no resting order cancels nothing, rather than cancelling the nearest. */
 	@Test
 	void ignoresACoinRefundThatMatchesNoOrder() {

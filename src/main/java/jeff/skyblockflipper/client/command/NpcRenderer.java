@@ -49,6 +49,19 @@ public final class NpcRenderer {
 		// command deliberately left out - "3 to place" is not an answer to "what do I do with what I
 		// already have".
 		if (resting.isEmpty()) {
+			String waiting = worklist.waitingNote(System.currentTimeMillis());
+
+			// "All of them are on top of the book" is exactly wrong where some have been outbid and
+			// the round in hand is not asking about them yet. Say which it is, and when.
+			if (!waiting.isEmpty()) {
+				source.sendFeedback(Chat.prefixed(Component.literal("Nothing to reprice yet: "
+						+ waiting + ".").withStyle(ChatFormatting.YELLOW)));
+				source.sendFeedback(Component.literal("  Prices are frozen for a whole check-in "
+								+ "interval so a number can be read, walked to the menu and typed.")
+						.withStyle(ChatFormatting.DARK_GRAY));
+				return;
+			}
+
 			source.sendFeedback(Chat.prefixed(Component.literal(worklist.holding() == 0
 							? "No NPC buy orders resting. Run /flip npc plan for a basket to place."
 							: "All " + worklist.holding() + " NPC orders are on top of the book with "
@@ -94,9 +107,27 @@ public final class NpcRenderer {
 			renderTotals(source, worklist.basket());
 		}
 
+		renderRound(source, worklist);
+
 		source.sendFeedback(Component.literal(
 						"  Come back and run /flip npc reprice, or the orders stop filling.")
 				.withStyle(ChatFormatting.DARK_GRAY));
+	}
+
+	/**
+	 * When the numbers above stop being the numbers to type, and when the next list is due.
+	 *
+	 * <p>The list is a round rather than a running commentary on the book, and a frozen price with no
+	 * stated expiry looks like a live one that has stopped updating. Nothing at all without a round -
+	 * a caller off the clock has no due time to quote.
+	 */
+	private static void renderRound(FabricClientCommandSource source,
+			NpcWorklist.Worklist worklist) {
+		String note = worklist.roundNote(System.currentTimeMillis());
+
+		if (!note.isEmpty()) {
+			source.sendFeedback(Component.literal("  " + note).withStyle(ChatFormatting.GRAY));
+		}
 	}
 
 	/**
@@ -112,6 +143,8 @@ public final class NpcRenderer {
 
 		source.sendFeedback(Chat.prefixed(Component.literal(worklist.headline())
 				.withStyle(worklist.holding() > 0 ? ChatFormatting.GREEN : ChatFormatting.GRAY)));
+
+		renderRound(source, worklist);
 
 		if (worklist.holding() == 0 && basket.isEmpty()) {
 			source.sendFeedback(Component.literal(

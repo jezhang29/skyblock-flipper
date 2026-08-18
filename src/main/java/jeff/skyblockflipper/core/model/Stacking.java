@@ -65,4 +65,24 @@ public final class Stacking {
 	public static int stackSize(ItemCatalog.Entry entry, BazaarProduct product) {
 		return stackable(entry, product) ? STACK_SIZE_STACKABLE : 1;
 	}
+
+	/**
+	 * How a number of units divides into orders the bazaar will accept, e.g. {@code 3 x 256 + 112}.
+	 *
+	 * <p>Here rather than at each of the two places that need it - a basket line to place and a round
+	 * row to re-post - because two copies of this drift apart, and both are read while typing into the
+	 * same box. A total on its own reads as one order, which is how a line of 500 Jungle Hearts got
+	 * typed into a bazaar that takes 256 of them at a time.
+	 */
+	public static String orderSplit(long units, long unitsPerOrder) {
+		if (unitsPerOrder <= 0L || units <= unitsPerOrder) {
+			return String.valueOf(units);
+		}
+
+		long full = units / unitsPerOrder;
+		long remainder = units % unitsPerOrder;
+		String whole = full == 1L ? String.valueOf(unitsPerOrder) : full + " x " + unitsPerOrder;
+
+		return remainder == 0L ? whole : whole + " + " + remainder;
+	}
 }

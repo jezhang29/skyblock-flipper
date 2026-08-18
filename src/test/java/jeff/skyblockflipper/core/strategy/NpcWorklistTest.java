@@ -41,12 +41,17 @@ class NpcWorklistTest {
 
 	/** {@code count} items an NPC pays 1000 for, each bid at 700 so every one clears the floor. */
 	private static StrategyContext context(int count, int slots) {
+		return context(count, slots, 700.0d);
+	}
+
+	/** The same market with the whole book at a different level, which is how it moves under a round. */
+	private static StrategyContext context(int count, int slots, double topBid) {
 		Map<String, BazaarProduct> products = new LinkedHashMap<>();
 		Map<String, ItemCatalog.Entry> items = new LinkedHashMap<>();
 
 		for (int i = 0; i < count; i++) {
 			String id = "ITEM_" + i;
-			products.put(id, product(id, 700.0d - i));
+			products.put(id, product(id, topBid - i));
 			items.put(id, new ItemCatalog.Entry(id, id, NPC_PRICE, false, List.of()));
 		}
 
@@ -156,5 +161,240 @@ class NpcWorklistTest {
 		assertTrue(worklist.isEmpty());
 		assertFalse(worklist.headline().isEmpty());
 		assertTrue(worklist.headline().contains("Nothing to do"), worklist.headline());
+	}
+
+	// The round, which is where the reprices come from once there is a clock.
+
+	/** An order old enough for the round, outbid on a book bidding 700 against the 600 it rests at. */
+	private static NpcReprice.Order outbid(String id, long remaining) {
+		return new NpcReprice.Order(id, id, 600.0d, remaining, remaining, 0L,
+				NOW - NpcContext.DEFAULT_CHECK_IN.toMillis());
+	}
+
+	private static NpcRound roundOver(List<NpcReprice.Order> resting, StrategyContext context) {
+		return NpcRound.open(NOW, NpcContext.DEFAULT_CHECK_IN,
+				NpcReprice.review(resting, context, NOW));
+	}
+
+	private static List<NpcWorklist.Task> of(NpcWorklist.Worklist worklist, NpcWorklist.Kind kind) {
+		return worklist.tasks().stream().filter(task -> task.kind() == kind).toList();
+	}
+
+	/**
+	 * The price is the one the round froze, not the one the book has now.
+	 *
+	 * <p>The whole point of the clock. A number read here is walked to a menu and typed, and a list
+	 * that recomputes it against the live book changes it in between - which on the contested books
+	 * this strategy trades is every few seconds.
+	 */
+	@Test
+	void repricesAtThePriceTheRoundFrozeEvenAfterTheBookMoves() {
+		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 500L));
+		NpcRound round = roundOver(resting, context(10, 5));
+
+		// The book has since walked up 60 coins, so a fresh review would say 760.1.
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(resting, context(10, 5, 760.0d), NOW, round);
+
+		List<NpcWorklist.Task> reprices = of(worklist, NpcWorklist.Kind.REPRICE);
+
+		assertEquals(1, reprices.size());
+		assertEquals(700.1d, reprices.getFirst().price(), 1e-9d);
+		assertEquals(500L, reprices.getFirst().units());
+		assertTrue(worklist.hasRound());
+	}
+
+	/**
+	 * Fault 3 in the ADR, as the worklist sees it. Cancelling to reprice deletes the order the price
+	 * came from, and the list used to regenerate from what was resting - dropping the row, and the
+	 * number the player was walking to the menu to type, at the exact moment it was needed.
+	 */
+	@Test
+	void keepsThePinnedRowAndItsSlotWhileTheOrderIsOffTheBook() {
+		NpcRound round = roundOver(List.of(outbid("ITEM_0", 500L)), context(10, 5));
+
+		// Mid-reprice: the cancel has happened and the re-post has not, so nothing is resting.
+		NpcWorklist.Worklist worklist = NpcWorklist.of(List.of(), context(10, 5), NOW, round);
+		List<NpcWorklist.Task> reprices = of(worklist, NpcWorklist.Kind.REPRICE);
+
+		assertEquals(1, reprices.size());
+		assertEquals(700.1d, reprices.getFirst().price(), 1e-9d);
+
+		// And the slot it needs is still reserved: four places, not the five an empty account gets.
+		assertEquals(4, worklist.count(NpcWorklist.Kind.PLACE));
+		assertEquals(5, NpcWorklist.of(List.of(), context(10, 5), NOW)
+				.count(NpcWorklist.Kind.PLACE));
+		assertTrue(worklist.pending().stream().noneMatch(task ->
+				task.kind() == NpcWorklist.Kind.PLACE && task.itemId().equals("ITEM_0")));
+	}
+
+	/**
+	 * A row merges an item's orders, and reserves every slot behind them.
+	 *
+	 * <p>An unstackable product takes 256 units to an order, so a four-order item is one row and four
+	 * slots. Reserving one would let the basket spend the other three while the player is mid-reprice.
+	 */
+	@Test
+	void reservesEverySlotAMergedRowNeeds() {
+		List<NpcReprice.Order> resting = List.of(
+				outbid("ITEM_0", 500L), outbid("ITEM_0", 500L),
+				outbid("ITEM_0", 500L), outbid("ITEM_0", 500L));
+
+		NpcRound round = roundOver(resting, context(10, 6));
+		NpcWorklist.Worklist worklist = NpcWorklist.of(List.of(), context(10, 6), NOW, round);
+		List<NpcWorklist.Task> reprices = of(worklist, NpcWorklist.Kind.REPRICE);
+
+		assertEquals(1, reprices.size());
+		assertEquals(2_000L, reprices.getFirst().units());
+		assertTrue(reprices.getFirst().reason().contains("4 orders"), reprices.getFirst().reason());
+
+		// Six slots, four held by the row that is mid-reprice.
+		assertEquals(2, worklist.count(NpcWorklist.Kind.PLACE));
+	}
+
+	/**
+	 * Where a slot and the coins are free, the new order goes on before the old one comes off, so the
+	 * item is never off the book. Where they are not, the row is pinned through its own cancel.
+	 */
+	@Test
+	void saysPlaceFirstOnlyWhenASlotAndTheCoinsAreFree() {
+		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 500L));
+
+		// Two candidates, five slots: the basket takes one and leaves three.
+		NpcWorklist.Worklist spare = NpcWorklist.of(resting, context(2, 5), NOW,
+				roundOver(resting, context(2, 5)));
+
+		assertTrue(of(spare, NpcWorklist.Kind.REPRICE).getFirst().reason()
+						.contains("place the new order first"),
+				of(spare, NpcWorklist.Kind.REPRICE).getFirst().reason());
+
+		// Two slots, one of them the resting order's: the basket takes the other and none is left.
+		NpcWorklist.Worklist full = NpcWorklist.of(resting, context(10, 2), NOW,
+				roundOver(resting, context(10, 2)));
+
+		assertTrue(of(full, NpcWorklist.Kind.REPRICE).getFirst().reason().contains("Cancel first"),
+				of(full, NpcWorklist.Kind.REPRICE).getFirst().reason());
+	}
+
+	/** A trade the book has since killed is cancelled, not re-posted at the price it was frozen at. */
+	@Test
+	void letsADeadTradeOverruleItsOwnFrozenRow() {
+		StrategyContext context = context(10, 5);
+		NpcRound round = roundOver(List.of(outbid("ITEM_0", 500L)), context);
+
+		// The same order, now past the window the coins were lent for.
+		long expired = NOW - Math.round(NpcContext.DEFAULT_RESTING_HOURS * 3_600_000.0d) - 1L;
+		NpcWorklist.Worklist worklist = NpcWorklist.of(
+				List.of(new NpcReprice.Order("ITEM_0", "ITEM_0", 600.0d, 500L, 500L, 0L, expired)),
+				context, NOW, round);
+
+		assertEquals(1, worklist.count(NpcWorklist.Kind.CANCEL));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.REPRICE));
+	}
+
+	/** Claims are coins already earned, so they are worked whenever they are true, round or no round. */
+	@Test
+	void emitsAClaimWhateverTheRoundSays() {
+		StrategyContext context = context(10, 5);
+		NpcReprice.Order half =
+				new NpcReprice.Order("ITEM_0", "ITEM_0", 600.0d, 500L, 250L, 250L, NOW);
+
+		NpcWorklist.Worklist worklist = NpcWorklist.of(List.of(half), context, NOW,
+				NpcRound.open(NOW, NpcContext.DEFAULT_CHECK_IN, List.of()));
+
+		assertEquals(1, worklist.count(NpcWorklist.Kind.CLAIM));
+		assertEquals(NpcWorklist.Kind.CLAIM, worklist.pending().getFirst().kind());
+	}
+
+	/**
+	 * An order the round did not freeze is left alone until the next one opens - and still counted,
+	 * rather than dropped from the list, so nothing tells the player their book is all on top of it.
+	 */
+	@Test
+	void leavesAnOrderTheRoundDidNotFreezeForTheNextRound() {
+		StrategyContext context = context(10, 5);
+
+		// Placed just now, so the dwell rule keeps it out of the round that opens a moment later.
+		List<NpcReprice.Order> resting =
+				List.of(new NpcReprice.Order("ITEM_0", "ITEM_0", 600.0d, 500L, 500L, 0L, NOW));
+
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(resting, context, NOW, roundOver(resting, context));
+
+		assertEquals(0, worklist.count(NpcWorklist.Kind.REPRICE));
+		assertEquals(1, worklist.outbidWaiting());
+		assertEquals(1, worklist.holding());
+		assertTrue(worklist.tasks().stream()
+				.anyMatch(task -> task.reason().contains("next round will ask")));
+	}
+
+	/** Without a round this is what it always was: advice straight off the book, one row per order. */
+	@Test
+	void staysTheOldWayWhenNoRoundIsOffered() {
+		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 500L), outbid("ITEM_0", 500L));
+		NpcWorklist.Worklist worklist = NpcWorklist.of(resting, context(10, 5), NOW);
+
+		assertEquals(2, worklist.count(NpcWorklist.Kind.REPRICE));
+		assertEquals(0, worklist.outbidWaiting());
+		assertFalse(worklist.hasRound());
+	}
+
+	/** With everything waiting on the next round, the headline may not claim the book is all yours. */
+	@Test
+	void saysWhatIsWaitingRatherThanClaimingTheBookIsOnTop() {
+		StrategyContext context = context(1, 1);
+		List<NpcReprice.Order> resting =
+				List.of(new NpcReprice.Order("ITEM_0", "ITEM_0", 600.0d, 500L, 500L, 0L, NOW));
+
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(resting, context, NOW, roundOver(resting, context));
+
+		assertTrue(worklist.pending().isEmpty());
+		assertTrue(worklist.headline().contains("1 outbid"), worklist.headline());
+		assertTrue(worklist.headline().contains("next round"), worklist.headline());
+	}
+
+	/**
+	 * The between-rounds line the panel beside the bazaar menu draws: how many, and how long.
+	 *
+	 * <p>A panel that simply goes quiet over a book that has walked past your orders is
+	 * indistinguishable from one that has stopped working, and the clock is the one thing the player
+	 * cannot see for themselves.
+	 */
+	@Test
+	void saysHowManyAreWaitingAndHowLongFor() {
+		StrategyContext context = context(1, 1);
+		List<NpcReprice.Order> resting =
+				List.of(new NpcReprice.Order("ITEM_0", "ITEM_0", 600.0d, 500L, 500L, 0L, NOW));
+
+		// Ten minutes into a thirty-minute round, so twenty are left.
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(resting, context, NOW, roundOver(resting, context));
+		String note = worklist.waitingNote(NOW + 600_000L);
+
+		assertTrue(note.contains("1 outbid"), note);
+		assertTrue(note.contains("20m"), note);
+	}
+
+	/** With reprices in hand the useful fact is how long their prices stay the ones to type. */
+	@Test
+	void saysHowLongTheFrozenPricesAreGoodFor() {
+		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 500L));
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(resting, context(10, 5), NOW, roundOver(resting, context(10, 5)));
+		String note = worklist.roundNote(NOW + 600_000L);
+
+		assertEquals(1, worklist.count(NpcWorklist.Kind.REPRICE));
+		assertTrue(note.contains("held for another 20m"), note);
+	}
+
+	/** Off the clock there is no due time to quote, so neither note invents one. */
+	@Test
+	void quotesNoDueTimeWithoutARound() {
+		NpcWorklist.Worklist worklist =
+				NpcWorklist.of(List.of(outbid("ITEM_0", 500L)), context(10, 5), NOW);
+
+		assertEquals("", worklist.waitingNote(NOW));
+		assertEquals("", worklist.roundNote(NOW));
 	}
 }

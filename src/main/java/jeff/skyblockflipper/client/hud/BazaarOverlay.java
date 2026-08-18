@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.client.hud;
 
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipScreen;
 import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
@@ -69,6 +70,9 @@ public final class BazaarOverlay {
 	private static final int TEXT_PRICE = 0xFF7FB8FF;
 	private static final int TEXT_UNITS = 0xFFBFD8B0;
 	private static final int TEXT_COPIED = 0xFFFFD700;
+
+	/** The between-rounds line: the colour of a reprice, dimmed, because that is what it is about. */
+	private static final int TEXT_WAITING = 0xFFC98A4B;
 	private static final int ROW_OPEN = 0x50FFD700;
 	private static final int ROW_HOVER = 0x30FFFFFF;
 
@@ -177,15 +181,19 @@ public final class BazaarOverlay {
 		}
 
 		NpcWorklist.Worklist worklist = CandidateFeed.worklist();
+		String note = note(worklist);
 
-		if (worklist.pending().isEmpty()) {
+		// Drawn for the note alone when there are no rows, which is the between-rounds case: the book
+		// has walked past orders this round is not asking about, and a panel that simply vanishes then
+		// is indistinguishable from a panel that has stopped working.
+		if (worklist.pending().isEmpty() && note.isEmpty()) {
 			Hit.clear();
 			return;
 		}
 
 		String title = screen.getTitle().getString();
 		Font font = Minecraft.getInstance().font;
-		Board board = board(worklist, title, font);
+		Board board = board(worklist, title, note, font);
 
 		// The bazaar's own menus by title, plus the product page of anything in the list, which is
 		// only recognisable as the name of a line - see BazaarMenu for why, and where those titles
@@ -264,7 +272,9 @@ public final class BazaarOverlay {
 		int panelHeight = Math.round(screenHeight / scale);
 		int shown = board.rowsFitting(panelHeight - 2 * PAD);
 
-		if (shown <= 0) {
+		// A board with rows and no room for any of them is not worth a panel. A board with no rows
+		// at all is the between-rounds note, which is the whole reason it is on screen.
+		if (shown <= 0 && !board.rows().isEmpty()) {
 			Hit.clear();
 			return;
 		}
@@ -273,6 +283,13 @@ public final class BazaarOverlay {
 		int y = Math.clamp(preferredY, PAD, Math.max(PAD, panelHeight - height - PAD));
 
 		Hit.laidOut(board, x, y, scale, shown, font);
+
+		// The list is on screen, so the player has been told. Without this the panel was the one way
+		// of working the basket that never restarted the reminder, and the chime arrived while they
+		// were placing the orders it was about to ask for - fault 1 in the round ADR.
+		if (shown > 0) {
+			NpcCheckInService.acknowledge();
+		}
 
 		graphics.pose().pushMatrix();
 		graphics.pose().scale(scale, scale);
@@ -283,6 +300,7 @@ public final class BazaarOverlay {
 	private static Board board;
 	private static NpcWorklist.Worklist boardWorklist;
 	private static String boardTitle = "";
+	private static String boardNote = "";
 
 	/**
 	 * The laid-out board for this worklist and this screen, rebuilt only when one of them changes.
@@ -291,15 +309,44 @@ public final class BazaarOverlay {
 	 * second to arrive at the same widths is the same waste {@code CandidateFeed} exists to avoid
 	 * for the ranked list, and the list only changes once a poll.
 	 */
-	private static Board board(NpcWorklist.Worklist worklist, String title, Font font) {
-		if (board == null || worklist != boardWorklist || !title.equals(boardTitle)) {
+	private static Board board(NpcWorklist.Worklist worklist, String title, String note, Font font) {
+		if (board == null || worklist != boardWorklist || !title.equals(boardTitle)
+				|| !note.equals(boardNote)) {
 			boardWorklist = worklist;
 			boardTitle = title;
-			board = Board.of(worklist, title, font);
+			boardNote = note;
+			board = Board.of(worklist, title, note, font);
 			Hit.reset(board);
 		}
 
 		return board;
+	}
+
+	/** How often the countdown in the note is recomputed. It is quoted in minutes. */
+	private static final long NOTE_MILLIS = 1_000L;
+
+	private static String note = "";
+	private static long notedAt;
+
+	/**
+	 * The between-rounds line, refreshed on a timer rather than every frame.
+	 *
+	 * <p>It counts down, so it cannot be cached with the board the way the rows are - and it cannot
+	 * be rebuilt sixty times a second either, for the reason on {@link #board}. A second is finer
+	 * than a number quoted in minutes needs.
+	 *
+	 * <p>The wording comes from {@code core} with the rest of the worklist, so the panel, the Basket
+	 * tab and {@code /flip npc reprice} cannot describe the same round differently.
+	 */
+	private static String note(NpcWorklist.Worklist worklist) {
+		long now = System.currentTimeMillis();
+
+		if (worklist != boardWorklist || now - notedAt >= NOTE_MILLIS) {
+			notedAt = now;
+			note = worklist.waitingNote(now);
+		}
+
+		return note;
 	}
 
 	/**
@@ -310,9 +357,10 @@ public final class BazaarOverlay {
 	 * the window has room for.
 	 *
 	 * @param openProduct the row the open product page is for, empty on every other screen
+	 * @param note        the between-rounds line under the heading, empty when nothing is waiting
 	 */
-	private record Board(List<Row> rows, String openProduct, int holding, int width, int rowHeight,
-			int headerHeight) {
+	private record Board(List<Row> rows, String openProduct, String note, int holding, int width,
+			int rowHeight, int headerHeight) {
 		/**
 		 * One line of work: what to search for, what to type, and how the units divide into orders.
 		 *
@@ -327,10 +375,10 @@ public final class BazaarOverlay {
 			}
 		}
 
-		static Board of(NpcWorklist.Worklist worklist, String title, Font font) {
+		static Board of(NpcWorklist.Worklist worklist, String title, String note, Font font) {
 			List<Row> rows = new ArrayList<>();
 			List<String> names = new ArrayList<>();
-			int width = TARGET_WIDTH;
+			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
 			int indent = PAD + ACCENT + ACCENT_GAP;
 
 			for (NpcWorklist.Task task : worklist.pending()) {
@@ -348,8 +396,9 @@ public final class BazaarOverlay {
 				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
 			}
 
-			return new Board(rows, BazaarMenu.productPageFor(title, names), worklist.holding(),
-					width, font.lineHeight * 2 + LINE_GAP + 2, font.lineHeight + 5);
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, worklist.holding(),
+					width, font.lineHeight * 2 + LINE_GAP + 2,
+					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
 		}
 
 		private static int text(Font font, String value) {
@@ -395,6 +444,14 @@ public final class BazaarOverlay {
 
 			graphics.text(font, Component.literal(heading(first, last))
 					.withStyle(ChatFormatting.GOLD), x + PAD, cursor, TEXT);
+
+			// Under the heading and above the rule, so it reads as part of what this list is rather
+			// than as another row to click.
+			if (!note.isEmpty()) {
+				graphics.text(font, Component.literal(note), x + PAD,
+						cursor + font.lineHeight + LINE_GAP, TEXT_WAITING);
+			}
+
 			graphics.fill(x + 1, cursor + headerHeight - 3, right - 1, cursor + headerHeight - 2,
 					HEADER_RULE);
 			cursor += headerHeight;
@@ -465,6 +522,12 @@ public final class BazaarOverlay {
 
 		/** The heading says how far down a scrolled list you are, and nothing when it all fits. */
 		private String heading(int first, int last) {
+			if (rows.isEmpty()) {
+				// The note under this says what is waiting and when. "Do these (0)" would be an
+				// instruction to do nothing, which is not what the panel is on screen for.
+				return "Nothing to do yet";
+			}
+
 			return rows.size() == last - first
 					? "Do these (" + rows.size() + ")"
 					: "Do these (" + (first + 1) + "-" + last + " of " + rows.size() + ")";
@@ -478,6 +541,12 @@ public final class BazaarOverlay {
 		 * they are not in the list above.
 		 */
 		String hint() {
+			if (rows.isEmpty()) {
+				// Nothing to click, so nothing about clicking. The count is still worth saying: it
+				// is the difference between "waiting on the round" and "you have no orders".
+				return holding + (holding == 1 ? " order resting" : " orders resting");
+			}
+
 			return holding > 0
 					? "click to copy - " + holding + " resting fine"
 					: "click a name or a number to copy";

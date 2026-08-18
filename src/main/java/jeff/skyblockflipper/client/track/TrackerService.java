@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.client.track;
 
 import jeff.skyblockflipper.SkyblockFlipper;
+import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
@@ -134,9 +135,12 @@ public final class TrackerService {
 			if (!itemId.isEmpty()) {
 				// placedAt is when this session first saw the order, not when Hypixel accepted it.
 				// The tracker starts empty every launch, so it is a lower bound on the real age and
-				// the resting-window rule built on it fires late rather than wrongly.
+				// the resting-window rule built on it fires late rather than wrongly. Which of the
+				// two it is travels with it: a round's dwell rule waives it on an adopted order,
+				// where the resting-window rule can only ever under-report.
 				orders.add(new NpcReprice.Order(itemId, order.displayName(), order.unitPrice(),
-						order.total(), order.remaining(), order.unclaimed(), order.placedAt()));
+						order.total(), order.remaining(), order.unclaimed(), order.placedAt(),
+						order.adopted()));
 			}
 		}
 
@@ -171,8 +175,12 @@ public final class TrackerService {
 	private static void book(Settlement settlement) {
 		try {
 			// Read through config() at use time, so /flip reload changes this without a restart.
+			// The quotes are what let a basket line be recognised: nothing opens a position for one
+			// by hand, so without them every NPC buy arrives unquoted and trackUnquotedTrades - off
+			// by default, and rightly - drops it.
 			LedgerService.ledger()
-					.record(settlement, fees(), SkyblockFlipperClient.config().trackUnquotedTrades)
+					.record(settlement, fees(), SkyblockFlipperClient.config().trackUnquotedTrades,
+							CandidateFeed.quotes())
 					.ifPresent(entry -> report(settlement, entry));
 		} catch (IOException e) {
 			broken = true;

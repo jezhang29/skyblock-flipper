@@ -138,10 +138,20 @@ public final class Ledger {
 	 */
 	public Optional<LedgerEntry> record(Settlement settlement, Fees fees, boolean trackUnquoted)
 			throws IOException {
-		StrategyKind kind = kindOf(settlement.venue());
+		return record(settlement, fees, trackUnquoted, null);
+	}
 
+	/**
+	 * The same, told what the mod has recently advised, so a plan it gave can be recognised.
+	 *
+	 * <p>{@code quotes} is what makes automatic tracking work for a strategy with no Take button.
+	 * Without it a buy is quoted only when the player opened the position by hand first, which the
+	 * NPC basket offers no way to do.
+	 */
+	public Optional<LedgerEntry> record(Settlement settlement, Fees fees, boolean trackUnquoted,
+			PlannedQuotes quotes) throws IOException {
 		if (settlement.side() == TradeEvent.Side.BUY) {
-			return recordBuy(settlement, kind, trackUnquoted);
+			return recordBuy(settlement, trackUnquoted, quotes);
 		}
 
 		Optional<LedgerEntry> position = entries.values().stream()
@@ -154,7 +164,10 @@ public final class Ledger {
 			return Optional.empty();
 		}
 
-		double net = netProceedsPerUnit(kind, settlement.unitPrice(), fees)
+		// The position's own strategy, not the venue's. The quote was computed on that strategy's
+		// fee basis and the capture rate compares the two, so reading the basis off where the sale
+		// happened would put the mismatch into the number that is supposed to measure the strategy.
+		double net = netProceedsPerUnit(position.get().kind(), settlement.unitPrice(), fees)
 				- position.get().unitBuyPrice();
 		LedgerEntry filled = position.get()
 				.filled(settlement.at(), settlement.units(), settlement.unitPrice(), net);
@@ -340,27 +353,48 @@ public final class Ledger {
 		};
 	}
 
-	private Optional<LedgerEntry> recordBuy(Settlement settlement, StrategyKind kind,
-			boolean trackUnquoted) throws IOException {
-		LedgerEntry quoted = entries.values().stream()
+	private Optional<LedgerEntry> recordBuy(Settlement settlement, boolean trackUnquoted,
+			PlannedQuotes quotes) throws IOException {
+		LedgerEntry taken = entries.values().stream()
 				.filter(entry -> entry.isOpen() && entry.isUntouched())
 				.filter(entry -> entry.origin() == LedgerEntry.Origin.MANUAL)
 				.filter(entry -> isSameItem(entry, settlement))
 				.findFirst()
 				.orElse(null);
 
-		if (quoted == null && !trackUnquoted) {
+		if (taken != null) {
+			return Optional.of(save(taken.confirmedBuy(settlement.units(), settlement.unitPrice())));
+		}
+
+		// Nothing was taken by hand, so ask what the mod last advised on this item. A basket line is
+		// a quote in every sense that matters here: the mod named the item, the price and the size,
+		// and the player bought it.
+		Quote quote = quotes == null
+				? null
+				: quotes.quoteFor(settlement.itemId(), settlement.displayName(), settlement.at())
+						.orElse(null);
+
+		if (quote != null) {
+			LedgerEntry opened = LedgerEntry
+					.open(nextId(), quote, settlement.at(), LedgerEntry.Origin.AUTO_QUOTED)
+					.confirmedBuy(settlement.units(), settlement.unitPrice());
+
+			return Optional.of(save(opened));
+		}
+
+		if (!trackUnquoted) {
 			return Optional.empty();
 		}
 
-		LedgerEntry entry = quoted == null
-				? LedgerEntry.bought(nextId(), settlement.itemId(), settlement.displayName(), kind,
-						settlement.at(), settlement.units(), settlement.unitPrice())
-				: quoted.confirmedBuy(settlement.units(), settlement.unitPrice());
+		return Optional.of(save(LedgerEntry.bought(nextId(), settlement.itemId(),
+				settlement.displayName(), kindOf(settlement.venue()), settlement.at(),
+				settlement.units(), settlement.unitPrice())));
+	}
 
+	private LedgerEntry save(LedgerEntry entry) throws IOException {
 		entries.put(entry.id(), entry);
 		save();
-		return Optional.of(entry);
+		return entry;
 	}
 
 	/**

@@ -232,7 +232,8 @@ public final class Guide {
 			new Term("Check-in", "How often you intend to come back and move your orders to the top "
 					+ "of the book, in settings. It is what fills get measured against: an order "
 					+ "repriced every 30 minutes collects the 30-minute rate, and one posted and "
-					+ "left alone for eight hours collects about a fifth as much"),
+					+ "left alone for eight hours collects about a fifth as much. It is also how "
+					+ "long a reprice round holds its prices"),
 			new Term("What to set it to", "30 minutes, unless you know you will do better. Measured "
 					+ "per eight-hour cycle: 54.2M repricing hourly, 59.7M every 30 minutes, 67.3M "
 					+ "every 15. The sharp part of that curve is above an hour - going from 2 hours "
@@ -310,7 +311,11 @@ public final class Guide {
 						+ "itself every poll and highlights the row for whichever product page you "
 						+ "have open. It stays up for a few seconds after the menu closes, which is "
 						+ "what puts it on screen while you are typing an amount or a price into the "
-						+ "sign, so nothing has to be remembered from chat"),
+						+ "sign, so nothing has to be remembered from chat. With nothing to click "
+							+ "it still draws one line - how many orders have been outbid and how long "
+							+ "until the next round asks about them - because a panel that vanishes "
+							+ "over a book that has moved past you looks like one that has stopped "
+							+ "working"),
 					new Term("Scrolling and copying it", "The wheel scrolls the panel when the list "
 						+ "is longer than the screen, so a long list never has to be chased into "
 						+ "chat. Clicking a row copies the item name for the search sign; clicking "
@@ -341,6 +346,53 @@ public final class Guide {
 							+ "should be cancelled. Replayed over one eight-hour cycle of 30-minute "
 							+ "check-ins on recorded tape, 78% held, 20% wanted a move and 2% were "
 							+ "past the stop"),
+					new Term("Why it is a round", "The prices in it are frozen when it opens and do "
+							+ "not move while you work it, so a number can be read, walked to the "
+							+ "menu and typed. Chasing the book instead is useless on the products "
+							+ "this trade is about: a live sample of Transmission Tuner had five "
+							+ "bots resting a tenth of a coin apart, so an order posted at the top "
+							+ "was outbid before you could reach an NPC and the mod would have asked "
+							+ "for another reprice within seconds, forever. Being a price step down "
+							+ "for up to one check-in costs about 1% of a cycle, and chasing every "
+							+ "move is not doable by hand at any price"),
+					new Term("When the next one opens", "One check-in interval after the last one, "
+							+ "whether or not you finished it. Nothing you do opens one early - "
+							+ "closing the bazaar means nothing, because you have to leave it to "
+							+ "sell to the NPC, and finishing a round does not start another. "
+							+ "Between rounds the panel and the list say how many orders have been "
+							+ "outbid and how long until they are asked about"),
+					new Term("Why an order can be missing from it", "An order has to be at least one "
+							+ "check-in old to enter a round, so orders you just placed are not "
+							+ "immediately something to reprice. Orders that were already resting "
+							+ "when the mod first read your menu are exempt - it cannot tell how old "
+							+ "those are, and logging in to a basket that was outbid overnight is "
+							+ "the case that matters most"),
+					new Term("Claims and dead trades do not wait", "A claim is coins already earned "
+							+ "and it blocks the item from leaving the order; an order past the "
+							+ "chase stop or past the resting window is a trade that is over with "
+							+ "the capital stranded in it. Neither improves by waiting for a round, "
+							+ "so both are listed the moment they are true"),
+					new Term("What a reprice has to be worth", "Expected fills at the top of the "
+							+ "book over the rest of the interval, times the margin, from the same "
+							+ "measured displacement the basket is sized with. Under Minimum profit "
+							+ "per flip the row is not offered at all - on a book that displaces you "
+							+ "every nine minutes a repost is worth about 3k over half an hour and "
+							+ "is dropped, where the same order on a book that turns over once in "
+							+ "ten hours is worth about 10k and is kept. Where nothing has been "
+							+ "measured yet the reprice is always offered: a fresh install has no "
+							+ "history, and filtering on a guess would mute the mod hardest on the "
+							+ "accounts that know the least"),
+					new Term("One row per item", "A reprice row covers every order you hold on that "
+							+ "item - \"cancel 4, repost 4 x 256\" - because 256 units is one order "
+							+ "on an unstackable product and four rows quoting one price is four "
+							+ "times the reading for one decision"),
+					new Term("Place first or cancel first", "The bazaar has no way to edit a resting "
+							+ "order, so a reprice is a cancel and a re-post, and between the two "
+							+ "the item is collecting nothing. Where a slot and the coins for one "
+							+ "order are free the row says place the new one first, which skips that "
+							+ "gap. Where they are not, the row is pinned: its price stays put for "
+							+ "the rest of the round and so do the slot and the coins it needs, so "
+							+ "the basket cannot spend them while you are halfway through"),
 					new Term("Why coming back matters", "An order collects only while it is the best "
 							+ "bid. Measured per eight-hour cycle: 11.5M posting once and walking "
 							+ "away, 59.7M returning every 30 minutes, 73.2M for staying permanently "
@@ -348,13 +400,19 @@ public final class Guide {
 							+ "every 15 minutes buys very little"),
 					new Term("The reminder", "You do not have to watch the clock. With Remind me to "
 							+ "reprice on, you get a toast in the corner, a line in chat and a note "
-							+ "when the book has actually moved past your orders - never merely "
-							+ "because the interval elapsed - and at most once per check-in "
-							+ "interval. Three channels because Skyblock scrolls chat fast enough to "
-							+ "lose a line before it is read; the toast is the one that waits for "
-							+ "you. Click the [reprice] on the end of the chat line to run the "
-							+ "round. Asking for a basket or a reprice yourself restarts the "
-							+ "interval, so it never arrives on top of the list it points at"),
+							+ "once per round that opens with work in it. Three channels because "
+							+ "Skyblock scrolls chat fast enough to lose a line before it is read; "
+							+ "the toast is the one that waits for you. Click the [reprice] on the "
+							+ "end of the chat line to run the round. Asking for a basket or a "
+							+ "reprice yourself, or having the basket panel on screen at the bazaar, "
+							+ "spends that round's notice, so it never arrives on top of the list it "
+							+ "points at"),
+					new Term("What it counts", "The rows in the round, never every order the book "
+							+ "has moved past. An order the round did not freeze is not in the list "
+							+ "the reminder opens, so counting it would send you to a list that does "
+							+ "not contain it. A claim or a cancel that turns up part way through a "
+							+ "round is listed straight away but announced at the next opening, "
+							+ "which is at most one check-in away"),
 					new Term("If it never says anything", "Most likely nothing has ever shown it your "
 							+ "orders. A chat line about a placement carries the size and the total "
 							+ "and never the price per unit, and the price is the whole input to a "
@@ -362,12 +420,13 @@ public final class Guide {
 							+ "what it needs. It now says so itself rather than staying quiet: if "
 							+ "you see \"cannot see your orders\", that is this. Otherwise check "
 							+ "/flip track is on, and remember that asking for a plan yourself "
-							+ "restarts the interval"),
-					new Term("What it takes to be told", "The reminder speaks when the outbid orders "
-							+ "are worth more than Minimum profit per flip put together, or when any "
-							+ "one order has been chased past the stop. A cancel is always worth "
-							+ "saying however small, because it is coins parked in a trade that can "
-							+ "no longer pay plus an order slot held by it"),
+							+ "spends the round's notice"),
+					new Term("What it takes to be told", "The reprices in the round have to be worth "
+							+ "more than Minimum profit per flip put together, or one order has to "
+							+ "have been chased past the stop or have units waiting to be claimed. A "
+							+ "cancel is always worth saying however small, because it is coins "
+							+ "parked in a trade that can no longer pay plus an order slot held by "
+							+ "it"),
 					new Term("Cancelling costs nothing", "The NPC price cannot move, so an order the "
 							+ "book has chased past the stop is coins parked, not coins lost. Cancel "
 							+ "it, take the coins back, and put the slot on something else"),
@@ -450,11 +509,19 @@ public final class Guide {
 					+ "that item, a sale closes it, and a position can close in pieces because one "
 					+ "order often fills in pieces. Off by default, because a wrong entry is worse "
 					+ "than an empty ledger"),
-			new Term("It ignores your shopping", "Tracking only records trades against plans you "
-					+ "took. Buying materials to use, selling what you farmed - none of that reaches "
-					+ "the ledger, because a buy with nothing to sell against it would sit open for "
-					+ "good and drag the fill rate down with it. Turn on \"Also track trades the mod "
-					+ "never quoted\" in settings if you flip by hand and want that measured too"),
+			new Term("It ignores your shopping", "Tracking only records trades against plans the mod "
+					+ "gave you. Buying materials to use, selling what you farmed - none of that "
+					+ "reaches the ledger, because a buy with nothing to sell against it would sit "
+					+ "open for good and drag the fill rate down with it. Turn on \"Also track trades "
+					+ "the mod never quoted\" in settings if you flip by hand and want that measured "
+					+ "too"),
+			new Term("A basket line is a plan", "You do not have to take a basket line by hand for it "
+					+ "to be tracked. Every line the basket shows you is remembered for the resting "
+					+ "window, and buying that item inside the window books the trade against what the "
+					+ "line promised. Without this the ledger stayed empty for anyone flipping "
+					+ "baskets: nothing opens a position for a basket line, so every buy looked like "
+					+ "shopping and was ignored - and the daily NPC cap, which counts what your "
+					+ "recorded flips will collect, read zero spent no matter how much you bought"),
 			new Term("Tracked without a quote", "What that setting produces: a trade the mod never "
 					+ "suggested. It counts toward the fill rate but stays out of the capture rate, "
 					+ "because there was no quote to fall short of and counting zero as the promise "

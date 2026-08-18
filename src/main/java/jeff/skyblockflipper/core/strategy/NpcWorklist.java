@@ -1,8 +1,19 @@
 package jeff.skyblockflipper.core.strategy;
 
+import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.model.ItemCatalog;
+import jeff.skyblockflipper.core.model.Stacking;
+import jeff.skyblockflipper.core.text.Coins;
+import jeff.skyblockflipper.core.text.Waits;
+
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Everything to do at the bazaar this trip, as one list in the order to do it.
@@ -22,6 +33,14 @@ import java.util.List;
  * next, because they hand back the resource everything else is short of. Then reprices, largest
  * first. Then the new orders, which are the only part that needs coins - and by then the cancels
  * have supplied some.
+ *
+ * <p><b>The reprices come from a round, where there is one.</b> {@link NpcRound} is what puts them on
+ * a clock: given one, the reprice rows are the frozen rows of that round rather than whatever the
+ * book says this second, they hold their slot and their coins against the basket while the player is
+ * mid-reprice, and an order the round did not freeze is left alone until the next one opens. Claims
+ * and dead-trade cancels are read off the live review either way, because neither improves by
+ * waiting. Without a round this is the old behaviour, advice straight off the book, which is what a
+ * caller that tracks no clock honestly has.
  *
  * <p>Pure, and in {@code core} with the rest of the money math. Three things render it: chat, the
  * Basket tab and the panel beside the bazaar menu. They must not be able to disagree, which is what
@@ -104,15 +123,113 @@ public final class NpcWorklist {
 	 * @param basket the new orders, already sized around what was resting
 	 * @param advice the review of every resting order, holds included, for anything that wants to
 	 *               explain a single one in full
+	 * @param round  the round the reprice rows were frozen in, or null where the caller tracks none.
+	 *               Carried rather than left to each renderer to fetch, for the same reason
+	 *               {@link Worklist#headline()} is assembled here: a panel drawing rows from this
+	 *               list and a header from a round fetched separately could describe two different
+	 *               rounds
 	 */
-	public record Worklist(List<Task> tasks, NpcBasket.Basket basket, List<NpcReprice.Advice> advice) {
+	public record Worklist(List<Task> tasks, NpcBasket.Basket basket, List<NpcReprice.Advice> advice,
+			NpcRound round) {
 		public Worklist {
 			tasks = List.copyOf(tasks);
 			advice = List.copyOf(advice);
 		}
 
+		/** The shape before reprices were delivered in rounds, for callers that track no clock. */
+		public Worklist(List<Task> tasks, NpcBasket.Basket basket, List<NpcReprice.Advice> advice) {
+			this(tasks, basket, advice, null);
+		}
+
 		public boolean isEmpty() {
 			return tasks.isEmpty();
+		}
+
+		/** Whether these reprices are on a clock, i.e. whether the round accessors mean anything. */
+		public boolean hasRound() {
+			return round != null;
+		}
+
+		/**
+		 * Items the book has moved past that this trip is not asking about.
+		 *
+		 * <p>The count in the between-rounds header. On a clock they are the orders the round did not
+		 * freeze - too young for it, or posted after it opened - and the answer is to wait for the next
+		 * round rather than to chase now. Without one they are the orders whose reprice was not worth
+		 * the click. Counted per item, because a row is per item and an unstackable product has four
+		 * orders behind one of them.
+		 */
+		public int outbidWaiting() {
+			Set<String> asked = new HashSet<>();
+
+			for (Task task : tasks) {
+				if (task.kind() == Kind.REPRICE || task.kind() == Kind.CANCEL) {
+					asked.add(task.itemId());
+				}
+			}
+
+			return (int) advice.stream()
+					.filter(NpcReprice.Advice::outbid)
+					.map(entry -> entry.order().itemId())
+					.filter(itemId -> !asked.contains(itemId))
+					.distinct()
+					.count();
+		}
+
+		/**
+		 * What the book has moved past that this trip is not asking about, and when it will be.
+		 *
+		 * <p>Short enough for the panel beside the bazaar menu, which is about seventy pixels wide:
+		 * {@code 3 outbid, next round in 12m}. Without it the panel goes quiet over a book that has
+		 * walked past your orders, and a mod that has stopped saying anything is indistinguishable
+		 * from a mod that has stopped working - the clock is the one thing the player cannot see for
+		 * themselves.
+		 *
+		 * <p>Empty when nothing is waiting, and empty without a round, where the question has no
+		 * answer: a caller off the clock is already being told about every outbid order it has.
+		 */
+		public String waitingNote(long now) {
+			int waiting = outbidWaiting();
+
+			return hasRound() && waiting > 0
+					? waiting + " outbid, next round " + when(now)
+					: "";
+		}
+
+		/**
+		 * The same clock in a sentence, for chat, where there is room to say what it means for the
+		 * rows above it.
+		 *
+		 * <p>Two different facts depending on what the trip contains. With reprices in it the useful
+		 * one is how long their prices stay the prices to type, because that is what the player is
+		 * about to walk to a menu with. With none it is when the orders the book has passed will be
+		 * asked about. Both come off the one round the tasks came from, for the same reason
+		 * {@link #headline()} does.
+		 */
+		public String roundNote(long now) {
+			if (!hasRound() || count(Kind.REPRICE) == 0) {
+				return waitingNote(now);
+			}
+
+			Duration left = round.remaining(now);
+
+			if (left.isZero()) {
+				return "This round is up, so the next list recomputes these prices.";
+			}
+
+			int waiting = outbidWaiting();
+			String held = "These prices are held for another " + Waits.format(left)
+					+ ", when the next round recomputes them";
+
+			return waiting == 0
+					? held + "."
+					: held + " and asks about the other " + waiting + " outbid.";
+		}
+
+		/** How far off the next round is, phrased once so both notes agree on the number. */
+		private String when(long now) {
+			Duration left = round.remaining(now);
+			return left.isZero() ? "any moment" : "in " + Waits.format(left);
 		}
 
 		/** Tasks that want a click, which is the list a player at a menu is actually reading. */
@@ -145,6 +262,14 @@ public final class NpcWorklist {
 			add(parts, count(Kind.PLACE), "to place");
 
 			if (parts.isEmpty()) {
+				if (hasRound() && outbidWaiting() > 0) {
+					// Not "all of them are on top of the book", which is what this used to say and is
+					// exactly wrong here: some of them have been outbid and the round in hand is not
+					// asking about them.
+					return "Nothing to do yet: " + outbidWaiting()
+							+ " outbid, and the next round is what will ask about them";
+				}
+
 				return holding() == 0
 						? "Nothing to do: no orders resting and nothing on the book worth one"
 						: "Nothing to do: all " + holding() + " orders are on top of the book";
@@ -169,22 +294,122 @@ public final class NpcWorklist {
 	 *                and {@code core} does not own one
 	 */
 	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now) {
-		List<NpcReprice.Advice> advice = NpcReprice.review(resting, context, now);
+		return of(resting, context, now, null);
+	}
+
+	/**
+	 * The same trip, with the reprices delivered on a clock.
+	 *
+	 * <p>What the round changes: the review is valued over what is left of the interval rather than a
+	 * whole one, the reprice rows are the round's frozen rows rather than the live advice, and those
+	 * rows keep their slot and their coins out of the basket until they are worked. Everything else -
+	 * the claims, the dead-trade cancels, the new orders, the holds - is unchanged, because none of
+	 * it is about chasing the book.
+	 *
+	 * @param round the round in hand, or null to review straight off the book. The client owns the
+	 *              instance and decides when a new one supersedes it ({@link NpcRound#elapsed}); this
+	 *              only reads the one it is handed
+	 */
+	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
+			NpcRound round) {
+		// A reprice is only worth what it fills before the next trip, so a round part way through
+		// values its rows over what is left of it. Null is a full interval, not no time at all.
+		Duration horizon = round == null ? null : round.remaining(now);
+		List<NpcReprice.Advice> advice = NpcReprice.review(resting, context, now, horizon);
 
 		// Only the orders the review recognised. One it dropped - an item no NPC buys, or a product
 		// missing from this snapshot - is not an NPC position, so charging the basket a slot for it
 		// would shrink the plan on the strength of a spread flip.
 		List<NpcReprice.Order> recognised = advice.stream().map(NpcReprice.Advice::order).toList();
-		NpcBasket.Basket basket = NpcBasket.plan(context, NpcBasket.Held.of(recognised));
+		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice);
+		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, rows));
 
 		List<Task> tasks = new ArrayList<>();
 
 		tasks.addAll(claims(advice));
-		tasks.addAll(bookTasks(advice));
+		tasks.addAll(cancels(advice));
+		tasks.addAll(round == null ? reprices(advice) : roundReprices(rows, context, basket));
 		tasks.addAll(places(basket));
-		tasks.addAll(holds(advice));
+		tasks.addAll(holds(advice, rows, round != null));
 
-		return new Worklist(tasks, basket, advice);
+		return new Worklist(tasks, basket, advice, round);
+	}
+
+	/**
+	 * The frozen rows still to work, minus the ones the book has since killed.
+	 *
+	 * <p><b>A dead trade overrules its own row.</b> The round froze a price on the evidence that
+	 * repricing there was still worth a slot; a {@code CANCEL} since then says the book has caught the
+	 * NPC price or chased past the stop, and re-posting into that would be buying at a price the
+	 * strategy would refuse to open. The cancel is emitted for the same order in the same trip, so
+	 * leaving the row in would be telling the player to cancel it and put it back.
+	 */
+	private static List<NpcRound.Row> rowsToWork(NpcRound round, List<NpcReprice.Order> recognised,
+			List<NpcReprice.Advice> advice) {
+		if (round == null) {
+			return List.of();
+		}
+
+		Set<String> dead = new HashSet<>();
+
+		for (NpcReprice.Advice entry : advice) {
+			if (entry.isCancel()) {
+				dead.add(entry.order().itemId());
+			}
+		}
+
+		return round.outstanding(recognised).stream()
+				.filter(row -> !dead.contains(row.itemId()))
+				.toList();
+	}
+
+	/**
+	 * What the basket may not spend: the resting orders, plus whatever the round's rows are holding
+	 * for a re-post that has not happened yet.
+	 *
+	 * <p>The reservation is what makes a pinned row survivable. Halfway through a reprice the old
+	 * order is cancelled and the new one is not placed, so the slot and the coins are free on every
+	 * measure the basket has - and a basket allocated then would spend them on another item, leaving
+	 * the player holding a price they can no longer post. Reserved per item at the larger of the two
+	 * claims, never their sum, because the row and the orders behind it are the same position: an
+	 * item with two of its four orders already moved needs four slots reserved, not six.
+	 */
+	private static NpcBasket.Held reserve(List<NpcReprice.Order> resting, List<NpcRound.Row> rows) {
+		if (rows.isEmpty()) {
+			return NpcBasket.Held.of(resting);
+		}
+
+		Map<String, Reservation> perItem = new LinkedHashMap<>();
+
+		for (NpcReprice.Order order : resting) {
+			Reservation held = perItem.computeIfAbsent(order.itemId(), id -> new Reservation());
+
+			held.orders++;
+			held.capital += Math.round(order.unitPrice() * order.remaining());
+		}
+
+		for (NpcRound.Row row : rows) {
+			Reservation held = perItem.computeIfAbsent(row.itemId(), id -> new Reservation());
+
+			held.orders = Math.max(held.orders, row.orders());
+			held.capital = Math.max(held.capital, Math.round(row.postPrice() * row.units()));
+		}
+
+		int orders = 0;
+		long capital = 0L;
+
+		for (Reservation held : perItem.values()) {
+			orders += held.orders;
+			capital += held.capital;
+		}
+
+		return new NpcBasket.Held(orders, capital, perItem.keySet());
+	}
+
+	/** One item's claim on the shared resources, while the two claims on it are being reconciled. */
+	private static final class Reservation {
+		private int orders;
+		private long capital;
 	}
 
 	/** Filled units waiting to be collected, biggest first. */
@@ -215,33 +440,109 @@ public final class NpcWorklist {
 		return entry.isCancel() ? base + ", so claim before cancelling the rest" : base;
 	}
 
-	/** Cancels first, then reprices, each biggest-coins first. */
-	private static List<Task> bookTasks(List<NpcReprice.Advice> advice) {
-		List<Task> cancels = new ArrayList<>();
-		List<Task> reprices = new ArrayList<>();
+	/**
+	 * The trades that are over, biggest-coins first. Never held for a round: the book has caught the
+	 * NPC price or the window has run out, so the capital is stranded until the order comes off.
+	 */
+	private static List<Task> cancels(List<NpcReprice.Advice> advice) {
+		return advice.stream()
+				.filter(NpcReprice.Advice::isCancel)
+				.map(entry -> new Task(Kind.CANCEL, entry.order().itemId(),
+						entry.order().displayName(), 0.0d, entry.order().remaining(),
+						String.valueOf(entry.order().remaining()), 0.0d, entry.capitalAtStake(),
+						entry.reason()))
+				.sorted(Comparator.comparingLong(Task::capital).reversed())
+				.toList();
+	}
 
-		for (NpcReprice.Advice entry : advice) {
-			NpcReprice.Order order = entry.order();
+	/** Reprices straight off the book, for a caller tracking no round. One row per order. */
+	private static List<Task> reprices(List<NpcReprice.Advice> advice) {
+		return advice.stream()
+				.filter(entry -> entry.action() == NpcReprice.Action.REPRICE)
+				.map(entry -> new Task(Kind.REPRICE, entry.order().itemId(),
+						entry.order().displayName(), entry.postPrice(), entry.order().remaining(),
+						String.valueOf(entry.order().remaining()), entry.profitAtStake(),
+						entry.capitalAtStake(), entry.reason()))
+				.sorted(Comparator.comparingDouble(Task::profit).reversed())
+				.toList();
+	}
 
-			switch (entry.action()) {
-				case CANCEL, EXPIRED -> cancels.add(new Task(Kind.CANCEL, order.itemId(),
-						order.displayName(), 0.0d, order.remaining(),
-						String.valueOf(order.remaining()), 0.0d, entry.capitalAtStake(),
-						entry.reason()));
-				case REPRICE -> reprices.add(new Task(Kind.REPRICE, order.itemId(),
-						order.displayName(), entry.postPrice(), order.remaining(),
-						String.valueOf(order.remaining()), entry.profitAtStake(),
-						entry.capitalAtStake(), entry.reason()));
-				case HOLD -> {
-				}
-			}
+	/**
+	 * The round's rows, at the prices it froze, in the order it ranked them.
+	 *
+	 * <p>One row per item however many orders it takes, and left in the round's own order rather than
+	 * re-sorted: the round ranked on what each reprice is expected to earn before the next trip, which
+	 * is the number that decided the row was worth a click at all.
+	 */
+	private static List<Task> roundReprices(List<NpcRound.Row> rows, StrategyContext context,
+			NpcBasket.Basket basket) {
+		// What is free once the basket has taken its share, which is what decides whether the new
+		// order can go on the book before the old one comes off. Not consumed row by row: the slot and
+		// the coins a place-first borrows are handed straight back by the cancel that follows it, so
+		// one free slot serves every row in turn.
+		int freeSlots = Math.max(0, basket.slotsFree() - basket.slotsUsed());
+		long freeCoins = Math.max(0L, basket.bankrollFree() - basket.capital());
+
+		List<Task> tasks = new ArrayList<>();
+
+		for (NpcRound.Row row : rows) {
+			long perOrder = unitsPerOrder(context, row.itemId());
+			long capital = Math.round(row.postPrice() * row.units());
+			long firstOrder = Math.round(row.postPrice() * Math.min(row.units(), perOrder));
+			boolean placeFirst = freeSlots >= 1 && freeCoins >= firstOrder;
+
+			tasks.add(new Task(Kind.REPRICE, row.itemId(), row.displayName(), row.postPrice(),
+					row.units(), Stacking.orderSplit(row.units(), perOrder),
+					profitAtStake(context, row), capital,
+					repriceReason(row, perOrder, placeFirst, capital)));
 		}
 
-		cancels.sort(Comparator.comparingLong(Task::capital).reversed());
-		reprices.sort(Comparator.comparingDouble(Task::profit).reversed());
-		cancels.addAll(reprices);
+		return tasks;
+	}
 
-		return cancels;
+	/**
+	 * What to click, in the order that never leaves you off the book where it can be helped.
+	 *
+	 * <p>The bazaar has no in-place edit, so a reprice is a cancel and then a re-post, and between
+	 * the two the order is not collecting anything. Where a slot and the coins for one order are free
+	 * the row says place first, which skips that gap entirely at the cost of holding both for the few
+	 * seconds in between. Where they are not, the row is pinned: its price is frozen for the rest of
+	 * the round and its slot and capital are reserved, so what it needs to go back on the book is
+	 * still there when the player gets to it.
+	 */
+	private static String repriceReason(NpcRound.Row row, long perOrder, boolean placeFirst,
+			long capital) {
+		String size = row.orders() == 1
+				? String.format("%d units", row.units())
+				: String.format("%d orders, %s units", row.orders(),
+						Stacking.orderSplit(row.units(), perOrder));
+
+		String worth = String.format("Outbid. Move %s to %.1f, worth about %s before the next "
+				+ "check-in. ", size, row.postPrice(), Coins.format(row.gain()));
+
+		return worth + (placeFirst
+				? "A slot and the coins are free, so place the new order first and cancel the old "
+						+ "one after: that way the item is never off the book"
+				: "Cancel first, then re-post at that price - it is held for the rest of the round, "
+						+ "and so are the slot and the " + Coins.format(capital) + " it needs, so "
+						+ "the basket cannot spend them while you are mid-reprice");
+	}
+
+	/** Coins still reachable on the row, the same axis every other task reports profit on. */
+	private static double profitAtStake(StrategyContext context, NpcRound.Row row) {
+		double npcPrice = context.catalog().get(row.itemId())
+				.flatMap(ItemCatalog.Entry::npcPrice)
+				.orElse(0.0d);
+
+		return npcPrice <= 0.0d ? row.gain() : (npcPrice - row.postPrice()) * row.units();
+	}
+
+	/** Units one bazaar order of this item holds, read off the same book the basket sizes on. */
+	private static long unitsPerOrder(StrategyContext context, String itemId) {
+		ItemCatalog.Entry entry = context.catalog().get(itemId).orElse(null);
+		BazaarProduct product = context.bazaar().products().get(itemId);
+
+		return Stacking.unitsPerOrder(entry, product);
 	}
 
 	/** The new orders, in the order the allocator ranked them. */
@@ -256,14 +557,52 @@ public final class NpcWorklist {
 				.toList();
 	}
 
-	/** The orders that are fine, last, so the list a player scans starts with the work. */
-	private static List<Task> holds(List<NpcReprice.Advice> advice) {
-		return advice.stream()
-				.filter(entry -> entry.action() == NpcReprice.Action.HOLD)
-				.map(entry -> new Task(Kind.HOLD, entry.order().itemId(),
-						entry.order().displayName(), entry.order().unitPrice(),
-						entry.order().remaining(), String.valueOf(entry.order().remaining()),
-						entry.profitAtStake(), entry.capitalAtStake(), entry.reason()))
-				.toList();
+	/**
+	 * The orders that are fine, last, so the list a player scans starts with the work.
+	 *
+	 * <p>An item with a row in the round is not one of them, whatever the live review says about it.
+	 * A part-worked reprice reads as a hold the moment the book falls back under the frozen price, and
+	 * an item listed as both "reprice at 28594.7" and "hold, top of the book" is the mod arguing with
+	 * itself in a seventy-pixel panel.
+	 */
+	private static List<Task> holds(List<NpcReprice.Advice> advice, List<NpcRound.Row> rows,
+			boolean onAClock) {
+		Set<String> working = new HashSet<>();
+
+		for (NpcRound.Row row : rows) {
+			working.add(row.itemId());
+		}
+
+		List<Task> tasks = new ArrayList<>();
+
+		for (NpcReprice.Advice entry : advice) {
+			if (working.contains(entry.order().itemId())) {
+				continue;
+			}
+
+			if (entry.action() == NpcReprice.Action.HOLD) {
+				tasks.add(hold(entry, entry.reason()));
+			} else if (onAClock && entry.action() == NpcReprice.Action.REPRICE) {
+				// Outbid, worth chasing, and not in the round in hand. Left alone rather than dropped
+				// from the list, so the order is still counted somewhere and the reason says which of
+				// the two lists it is on.
+				tasks.add(hold(entry, waitingReason(entry)));
+			}
+		}
+
+		return tasks;
+	}
+
+	private static Task hold(NpcReprice.Advice entry, String reason) {
+		return new Task(Kind.HOLD, entry.order().itemId(), entry.order().displayName(),
+				entry.order().unitPrice(), entry.order().remaining(),
+				String.valueOf(entry.order().remaining()), entry.profitAtStake(),
+				entry.capitalAtStake(), reason);
+	}
+
+	private static String waitingReason(NpcReprice.Advice entry) {
+		return String.format("Outbid at %.1f, and this is not in the round in hand - an order has to "
+						+ "be an interval old to enter one, and a round already open is not reopened "
+						+ "for it. The next round will ask about it", entry.bestBid());
 	}
 }

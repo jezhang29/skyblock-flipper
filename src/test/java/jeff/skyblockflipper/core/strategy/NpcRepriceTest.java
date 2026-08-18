@@ -5,11 +5,14 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.valuation.FillStats;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
+import jeff.skyblockflipper.core.valuation.PriceTrend;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,12 +38,23 @@ class NpcRepriceTest {
 	/** With the default 15% floor, this is the highest price the item is worth chasing to. */
 	private static final double STOP = 850.0d;
 
+	/**
+	 * Weekly volume for the tests about the book rather than about throughput: far more flow than
+	 * any order here is for, so the value of a reprice is always capped by the order and the fill
+	 * model never decides an action. {@link #valued} is where flow is the subject.
+	 */
+	private static final long AMPLE_VOLUME = 50_000_000L;
+
 	private static BazaarProduct product(String id, Double bestBid) {
+		return product(id, bestBid, AMPLE_VOLUME);
+	}
+
+	private static BazaarProduct product(String id, Double bestBid, long weeklyVolume) {
 		return new BazaarProduct(
 				id,
 				List.of(new OrderLevel(NPC_PRICE * 2.0d, 10_000L, 20)),
 				bestBid == null ? List.of() : List.of(new OrderLevel(bestBid, 10_000L, 20)),
-				new BazaarProduct.MovingWeek(50_000_000L, 50_000_000L));
+				new BazaarProduct.MovingWeek(weeklyVolume, weeklyVolume));
 	}
 
 	/** @param npcPrice null for an item no NPC buys, which is what a spread flip looks like here */
@@ -56,14 +70,19 @@ class NpcRepriceTest {
 
 	private static StrategyContext context(Map<String, BazaarProduct> products,
 			Map<String, ItemCatalog.Entry> items) {
+		return context(products, items, TrendSnapshot.empty(), 0L);
+	}
+
+	private static StrategyContext context(Map<String, BazaarProduct> products,
+			Map<String, ItemCatalog.Entry> items, TrendSnapshot trends, long minProfit) {
 		return new StrategyContext(
 				new BazaarSnapshot(Instant.now(), products),
 				new ItemCatalog(items),
 				List.of(),
-				TrendSnapshot.empty(),
+				trends,
 				new Fees(0, false),
 				10_000_000L,
-				0L,
+				minProfit,
 				0.0d,
 				0.0d,
 				StrategyContext.DEFAULT_FILL_HORIZON,
@@ -94,6 +113,35 @@ class NpcRepriceTest {
 		assertFalse(advice.needsAction());
 		assertEquals(0.0d, advice.extraCost());
 		assertEquals(0.20d, advice.marginRatio(), 1e-9d);
+	}
+
+	/**
+	 * A resting price recovered from the setup line is exact to within a fraction of a coin, and a
+	 * fraction of a coin is not an outbid.
+	 *
+	 * <p>Real line, from the recorded session: {@code 311x Purple Candy for 6,554,823 coins}. The
+	 * order rests at 21,076.6 and 311 x 21,076.6 is 6,554,822.6, so Hypixel printed it rounded to
+	 * the coin and dividing back gives 21,076.601. Treating that as a price below the top bid would
+	 * advise moving to 21,076.7 - paying an increment on every unit to hold the place already held.
+	 */
+	@Test
+	void treatsARoundedRestingPriceAsATieRatherThanAnOutbid() {
+		double resting = 6_554_823.0d / 311.0d;
+
+		assertTrue(resting > 21_076.6d, "the derived price is above the real one, or this proves nothing");
+
+		NpcReprice.Advice advice = only("ITEM", 21_076.6d, resting);
+
+		assertEquals(NpcReprice.Action.HOLD, advice.action());
+		assertFalse(advice.needsAction());
+	}
+
+	/** Half an increment is the tolerance, so a real one-increment outbid still clears it. */
+	@Test
+	void stillRepricesWhenTheBookMovesByAWholeIncrement() {
+		NpcReprice.Advice advice = only("ITEM", 800.0d, 800.0d + BazaarProduct.PRICE_INCREMENT);
+
+		assertEquals(NpcReprice.Action.REPRICE, advice.action());
 	}
 
 	@Test
@@ -256,5 +304,188 @@ class NpcRepriceTest {
 		assertTrue(advice.hasUnclaimed());
 		assertTrue(advice.needsAnything());
 		assertTrue(advice.reason().contains("Filled completely"), advice.reason());
+	}
+
+	// What a reprice is worth, which is what decides whether it is asked for at all.
+	//
+	// One book throughout: 16,800 units a week is 100 an hour of flow, and a 500-unit order at 800
+	// on a 1000 NPC price is displaced to a 800.2 repost, so every unit that fills is worth 199.8.
+	// The only thing that changes between these is how fast the book posts inside you.
+
+	private static final long SLOW_VOLUME = 16_800L;
+
+	/** Displaced every nine minutes, which is the live {@code TRANSMISSION_TUNER} shape. */
+	private static final double CONTESTED = 6.6667d;
+
+	/** Displaced once every ten hours, so a repost keeps almost the whole interval. */
+	private static final double QUIET = 0.1d;
+
+	/**
+	 * A context whose fill rate is measured, at a stated displacement and profit floor.
+	 *
+	 * <p>{@code intervals} clears {@link PriceTrend#MIN_SAMPLES} so the stats are usable: below it
+	 * {@code FillModel} falls back to the unmeasured share, which is a different test.
+	 */
+	private static StrategyContext valued(String id, double outbidsPerHour, long minProfit) {
+		Map<String, BazaarProduct> products = new LinkedHashMap<>();
+		products.put(id, product(id, 800.1d, SLOW_VOLUME));
+
+		Map<String, ItemCatalog.Entry> items = new LinkedHashMap<>();
+		items.put(id, new ItemCatalog.Entry(id, id, NPC_PRICE, false, List.of()));
+
+		TrendSnapshot trends = new TrendSnapshot(Map.of(),
+				Map.of(id, new FillStats(id, outbidsPerHour, outbidsPerHour, 24.0d, 24)),
+				Map.of(), Duration.ofHours(24), 288, Instant.now());
+
+		return context(products, items, trends, minProfit);
+	}
+
+	private static NpcReprice.Advice valuedAdvice(StrategyContext context) {
+		List<NpcReprice.Advice> advice =
+				NpcReprice.review(List.of(order("ITEM", 800.0d, 500L)), context, NOW);
+
+		assertEquals(1, advice.size());
+		return advice.getFirst();
+	}
+
+	/**
+	 * The whole point of valuing a reprice: on a book five bots are penny-jumping, the repost is
+	 * outbid again before it collects anything, so the advice stops asking.
+	 */
+	@Test
+	void holdsAnOutbidOrderTheBookWillTakeStraightBackOff() {
+		NpcReprice.Advice advice = valuedAdvice(valued("ITEM", CONTESTED, 5_000L));
+
+		assertEquals(NpcReprice.Action.HOLD, advice.action());
+		assertFalse(advice.needsAction());
+
+		// Outbid all the same, which is a different fact from being told to do something about it.
+		assertTrue(advice.outbid());
+
+		// 100 units an hour of flow, collected over the 29% of a 30-minute interval a repost spends
+		// on top at 6.67 displacements an hour: 14.5 units at 199.8 each.
+		assertTrue(advice.value().measured());
+		assertEquals(14.46d, advice.value().unitsExpected(), 0.05d);
+		assertEquals(2_890.0d, advice.value().gain(), 10.0d);
+		assertEquals(9.0d, advice.value().minutesToOutbid().getAsDouble(), 0.05d);
+
+		assertTrue(advice.reason().contains("9 minutes"), advice.reason());
+	}
+
+	/** The same order, the same margin, the same floor - and a book that leaves it alone. */
+	@Test
+	void repricesOnAQuietBookWhereTheRepostWillHold() {
+		NpcReprice.Advice advice = valuedAdvice(valued("ITEM", QUIET, 5_000L));
+
+		assertEquals(NpcReprice.Action.REPRICE, advice.action());
+
+		// 97.5% of the interval on top rather than 29%, so 48.8 units rather than 14.5.
+		assertEquals(48.77d, advice.value().unitsExpected(), 0.05d);
+		assertEquals(9_744.0d, advice.value().gain(), 10.0d);
+	}
+
+	/**
+	 * A gain is only allowed to suppress advice when it is a measurement. A fresh install has no
+	 * tape at all, and filtering on the fallback share would mute the mod hardest on the accounts
+	 * that have never seen it work.
+	 */
+	@Test
+	void chasesOnAnUnmeasuredBookWhateverTheFloor() {
+		Map<String, BazaarProduct> products = new LinkedHashMap<>();
+		products.put("ITEM", product("ITEM", 800.1d, SLOW_VOLUME));
+
+		Map<String, ItemCatalog.Entry> items = new LinkedHashMap<>();
+		items.put("ITEM", new ItemCatalog.Entry("ITEM", "ITEM", NPC_PRICE, false, List.of()));
+
+		NpcReprice.Advice advice = valuedAdvice(
+				context(products, items, TrendSnapshot.empty(), 100_000_000L));
+
+		assertEquals(NpcReprice.Action.REPRICE, advice.action());
+		assertFalse(advice.value().measured());
+		assertTrue(advice.value().minutesToOutbid().isEmpty());
+	}
+
+	/** Coins already stranded are never filtered: the trade is over whatever the throughput is. */
+	@Test
+	void stillCancelsADeadTradeUnderAnyFloor() {
+		Map<String, BazaarProduct> products = new LinkedHashMap<>();
+		products.put("ITEM", product("ITEM", 1005.0d, SLOW_VOLUME));
+
+		Map<String, ItemCatalog.Entry> items = new LinkedHashMap<>();
+		items.put("ITEM", new ItemCatalog.Entry("ITEM", "ITEM", NPC_PRICE, false, List.of()));
+
+		TrendSnapshot trends = new TrendSnapshot(Map.of(),
+				Map.of("ITEM", new FillStats("ITEM", CONTESTED, CONTESTED, 24.0d, 24)),
+				Map.of(), Duration.ofHours(24), 288, Instant.now());
+
+		NpcReprice.Advice advice =
+				valuedAdvice(context(products, items, trends, 100_000_000L));
+
+		assertEquals(NpcReprice.Action.CANCEL, advice.action());
+	}
+
+	/**
+	 * A reprice is worth what it fills before the next trip, so a round half spent is worth half as
+	 * much - which is what turns a marginal row into one not worth walking to a menu for.
+	 */
+	@Test
+	void valuesTheRepriceOverWhatIsLeftOfTheInterval() {
+		StrategyContext context = valued("ITEM", QUIET, 5_000L);
+		List<NpcReprice.Order> resting = List.of(order("ITEM", 800.0d, 500L));
+
+		NpcReprice.Advice quarter = NpcReprice.review(resting, context, NOW,
+				Duration.ofMinutes(15)).getFirst();
+
+		assertEquals(4_933.0d, quarter.value().gain(), 10.0d);
+
+		// Under the same 5,000 floor the full interval cleared, so the row goes away as it runs out.
+		assertEquals(NpcReprice.Action.HOLD, quarter.action());
+		assertEquals(NpcReprice.Action.REPRICE,
+				NpcReprice.review(resting, context, NOW, Duration.ofMinutes(30))
+						.getFirst().action());
+	}
+
+	/** An elapsed interval means the next trip is now, not that there is no time left to fill in. */
+	@Test
+	void readsAnEmptyRemainingIntervalAsAWholeOne() {
+		StrategyContext context = valued("ITEM", QUIET, 5_000L);
+		List<NpcReprice.Order> resting = List.of(order("ITEM", 800.0d, 500L));
+
+		for (Duration nonsense : List.of(Duration.ZERO, Duration.ofMinutes(-5))) {
+			assertEquals(9_744.0d,
+					NpcReprice.review(resting, context, NOW, nonsense).getFirst().value().gain(),
+					10.0d, nonsense.toString());
+		}
+
+		assertEquals(9_744.0d,
+				NpcReprice.review(resting, context, NOW, null).getFirst().value().gain(), 10.0d);
+	}
+
+	/** A reprice moves an order rather than enlarging it, so the units it holds are the ceiling. */
+	@Test
+	void capsTheGainAtTheUnitsStillResting() {
+		Map<String, BazaarProduct> products = new LinkedHashMap<>();
+		products.put("ITEM", product("ITEM", 800.1d, AMPLE_VOLUME));
+
+		Map<String, ItemCatalog.Entry> items = new LinkedHashMap<>();
+		items.put("ITEM", new ItemCatalog.Entry("ITEM", "ITEM", NPC_PRICE, false, List.of()));
+
+		TrendSnapshot trends = new TrendSnapshot(Map.of(),
+				Map.of("ITEM", new FillStats("ITEM", QUIET, QUIET, 24.0d, 24)),
+				Map.of(), Duration.ofHours(24), 288, Instant.now());
+
+		NpcReprice.Advice advice = valuedAdvice(context(products, items, trends, 5_000L));
+
+		// 297,619 units an hour of flow against an order of 500.
+		assertEquals(500.0d, advice.value().unitsExpected(), 1e-9d);
+		assertEquals(199.8d * 500.0d, advice.value().gain(), 1e-6d);
+	}
+
+	/** Nothing that is not a reprice carries an estimate, so no reader can mistake one for a fact. */
+	@Test
+	void leavesEveryOtherAdviceWithoutAnEstimate() {
+		assertEquals(NpcReprice.RepriceValue.none(), only("ITEM", 800.0d, 800.0d).value());
+		assertEquals(NpcReprice.RepriceValue.none(), only("ITEM", 800.0d, 860.0d).value());
+		assertEquals(NpcReprice.RepriceValue.none(), only("ITEM", 800.0d, null).value());
 	}
 }

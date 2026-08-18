@@ -70,22 +70,26 @@ public record LedgerEntry(
 	}
 
 	public static LedgerEntry open(String id, FlipCandidate candidate, long openedAt) {
-		return open(id, candidate, openedAt, Origin.MANUAL);
+		return open(id, Quote.of(candidate), openedAt, Origin.MANUAL);
 	}
 
 	public static LedgerEntry open(String id, FlipCandidate candidate, long openedAt, Origin origin) {
+		return open(id, Quote.of(candidate), openedAt, origin);
+	}
+
+	public static LedgerEntry open(String id, Quote quote, long openedAt, Origin origin) {
 		return new LedgerEntry(
 				id,
-				candidate.itemId(),
-				candidate.displayName(),
-				candidate.kind(),
+				quote.itemId(),
+				quote.displayName(),
+				quote.kind(),
 				origin,
 				Status.OPEN,
 				openedAt,
-				candidate.units(),
-				candidate.unitBuyPrice(),
-				candidate.unitNetProfit(),
-				candidate.capitalRequired(),
+				quote.units(),
+				quote.unitBuyPrice(),
+				quote.unitNetProfit(),
+				quote.capitalRequired(),
 				0L,
 				0L,
 				0.0d,
