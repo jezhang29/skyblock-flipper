@@ -16,12 +16,10 @@ Deep records live elsewhere and are linked from here:
 
 ## Current state (2026-08-15)
 
-Active branch: `npc-basket`. The whole NPC basket strategy is built and committed there — the
-basket, the reprice rounds, the check-in reminder, the Basket tab, the bazaar slot highlighting and
-the drift premium. It has run in real play across several sessions. It is not merged and carries
-40+ `wip:` commits that want squashing before it is called done.
-
-Branch `docs-foundation-reset` holds this file, the CLAUDE.md rewrite, and the memory slim-down.
+The whole NPC basket strategy is merged to `main` (2026-08-17) — the basket, the reprice rounds, the
+check-in reminder, the Basket tab, the bazaar slot highlighting and the drift premium. The squash
+folded 40+ `wip:` commits into a clean history and the branch is deleted. It has run in real play
+across several sessions. `main` is ahead of `origin/main`; nothing is pushed until the user asks.
 
 Everything the valuation side ships (pet levels, the fill model, the rune/potion/dungeon/dye/
 ethermerge signature splits, the Midas ratio quote) is verified offline only. Getting it seen in a
@@ -29,24 +27,26 @@ running client is still the largest unverified-work risk in the project.
 
 ## What is next
 
-Ranked. The top three are all NPC-branch work; the fourth is the standing valuation risk.
+One item stands: getting the shipped valuation work seen in a running client. The three NPC-branch
+items above it are done or measured shut.
 
-1. **Re-run the unattended overnight experiment with the premium actually live.** The first run
-   (2026-08-15) returned 11.2% of capital because `npcDriftPremium = 1.0` contributed exactly zero:
-   the basket was placed ~40s before `MarketPoller` built the NPC edge snapshot, so every `NpcEdge`
-   was null and the chase cost was never charged. Fixed in `65f833d` — the plan now refuses rather
-   than misprices when the edge is unmeasured, and the rebuild starts at 20s. The premium itself is
-   still untested in play. Repeat the overnight run before drawing any conclusion about it.
-2. **Confirm the bazaar place-flow button names in a capture, not from screenshots.** Slot
-   highlighting ships, but `Create Buy Order`, `Custom Amount` and `Custom Price` were read off
-   screenshots; a wording matching none highlights nothing. `/flip menu` prints the last menu's
-   buttons — the cheap way to confirm one. Do not extend the highlight to a new screen without
-   checking that screen exists in a capture file first.
-3. **Squash the `npc-basket` branch and merge it.** One real commit per concern; check
-   `git log --oneline` before calling it done.
-4. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
+1. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
    signature splits and the Midas ratio quote are all offline-only. This is a long queue of
-   unverified-in-game work.
+   unverified-in-game work, and it needs the built jar played on live Hypixel — the user's job, no
+   dev client exists.
+
+Done and closed since the last write:
+
+- **Confirm the bazaar place-flow button names** (was next-2). Done 2026-08-16: `Create Buy Order`,
+  `Create Sell Offer`, `Custom Amount`, `Custom Price` and `Top Order +0.1` all read off a live
+  `/flip menu` and pinned in `BazaarSlotsTest`. Every screenshot guess was exact. Open sub-finding: a
+  sub-category grid titled `<category> ➜ <sub>` still reads as `UNKNOWN`; the shipped worklist routes
+  through search, so nothing live breaks, and fixing it needs a lore-carrying capture.
+- **Squash and merge `npc-basket`** (was next-3). Done 2026-08-17 by fast-forward.
+- **Re-run the unattended overnight experiment** (was next-1). Measured shut, not deferred: the
+  premium holds the top ~10 minutes of a session (3% of samples) and catch-dumps ~1.4M/day;
+  unattended bazaar-to-NPC makes almost nothing. Do not rebuild an away-mode. See
+  `npc-unattended-verdict` in memory and `docs/npc-flipping.md`.
 
 Nothing else is queued. The signature-gap seam is closed and measured closed: the harm probe's top
 entry is `eman_kills` at 45.5M coins, and everything below it is a counter or a per-item identifier.
