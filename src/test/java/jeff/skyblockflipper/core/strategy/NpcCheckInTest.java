@@ -29,6 +29,19 @@ class NpcCheckInTest {
 				(NPC_PRICE - postPrice) / NPC_PRICE, "outbid");
 	}
 
+	/** The same order, with a measured gain on it, which is what a round ranks and sums. */
+	private static NpcReprice.Advice worth(String id, double gain) {
+		NpcReprice.Advice advice = reprice(id, 900.0d, 1000L);
+
+		return new NpcReprice.Advice(advice.order(), advice.action(), advice.npcPrice(),
+				advice.bestBid(), advice.postPrice(), advice.chaseStop(), advice.marginRatio(),
+				new NpcReprice.RepriceValue(1000.0d, gain, 2.0d, true), advice.reason());
+	}
+
+	private static NpcRound round(List<NpcReprice.Advice> advice) {
+		return NpcRound.open(0L, NpcContext.DEFAULT_CHECK_IN, advice);
+	}
+
 	private static NpcReprice.Advice cancel(String id, double yourPrice, long remaining) {
 		return new NpcReprice.Advice(
 				NpcReprice.Order.of(id, id, yourPrice, remaining),
@@ -154,5 +167,54 @@ class NpcCheckInTest {
 
 		assertEquals(1, due.cancelCount());
 		assertEquals(400_000L, due.capitalToFree());
+	}
+
+	/**
+	 * On a clock, the reprices announced are the round's and not the book's.
+	 *
+	 * <p>The live review sees every outbid order, including ones the round did not freeze. Counting
+	 * those here would interrupt the player with a number the list the notice opens does not
+	 * contain, which is the mismatch the round exists to remove.
+	 */
+	@Test
+	void countsTheRoundsRepricesRatherThanTheLiveReview() {
+		List<NpcReprice.Advice> frozen = List.of(worth("A", 60_000.0d));
+		NpcRound round = round(frozen);
+
+		// The book has since moved past a second order, which this round is not asking about.
+		List<NpcReprice.Advice> advice = List.of(worth("A", 60_000.0d), worth("B", 60_000.0d));
+
+		NpcCheckIn.Due due = NpcCheckIn.due(advice, MIN_PROFIT, round).orElseThrow();
+
+		assertEquals(1, due.repriceCount());
+		assertEquals(60_000.0d, due.profitAtStake(), 1.0d);
+	}
+
+	/** An empty round with a claim in the advice still speaks: a claim never waits for a round. */
+	@Test
+	void stillReportsClaimsAndCancelsUnderAnEmptyRound() {
+		NpcCheckIn.Due due = NpcCheckIn
+				.due(List.of(cancel("A", 800.0d, 1L)), MIN_PROFIT, round(List.of()))
+				.orElseThrow();
+
+		assertEquals(0, due.repriceCount());
+		assertEquals(1, due.cancelCount());
+	}
+
+	/** A round with nothing in it and nothing exempt beside it is not worth a chime. */
+	@Test
+	void saysNothingForAnEmptyRound() {
+		assertTrue(NpcCheckIn.due(List.of(hold("A")), MIN_PROFIT, round(List.of())).isEmpty());
+	}
+
+	/** Null round is the old behaviour, for a caller that tracks no clock. */
+	@Test
+	void judgesTheBookDirectlyWithoutARound() {
+		NpcCheckIn.Due due = NpcCheckIn
+				.due(List.of(reprice("A", 900.0d, 1000L)), MIN_PROFIT, null)
+				.orElseThrow();
+
+		assertEquals(1, due.repriceCount());
+		assertEquals(100_000.0d, due.profitAtStake(), 1.0d);
 	}
 }

@@ -222,6 +222,12 @@ public final class FlipperConfig {
 	 * <p>The horizon a plan's fill is measured over, and the interval the chase cost is charged
 	 * over: coming back twice as often fills more but pays to outbid more often. 30 minutes is what
 	 * the measured plan assumed.
+	 *
+	 * <p><b>It is also the length of a reprice round</b>
+	 * ({@link jeff.skyblockflipper.core.strategy.NpcRound}), which is what stops the advice chasing
+	 * a contested book move by move: a round freezes its prices for this long and no new one opens
+	 * until it has run out. A round freezes the interval along with the prices, so editing this
+	 * changes the next round rather than moving the end of the one in hand.
 	 */
 	public int npcCheckInMinutes = 30;
 
@@ -256,7 +262,7 @@ public final class FlipperConfig {
 	 * <p>Separate from {@link #npcRepriceReminder} because they fail differently: a chat line that
 	 * scrolls past unread is the reminder not working, and a sound in a game somebody is listening
 	 * to something else over is the reminder being rude. Under the reminder's own rate limit either
-	 * way, so it is one note per check-in interval at most.
+	 * way, so it is one note per reprice round at most.
 	 */
 	public boolean npcRepriceSound = true;
 
@@ -264,10 +270,13 @@ public final class FlipperConfig {
 	 * Whether to say in chat when resting NPC buy orders have been outbid.
 	 *
 	 * <p>The measured gap between working a basket and forgetting one is 59.7M against 11.5M per
-	 * eight-hour cycle, and nothing else in the mod is worth interrupting a player over. It speaks
-	 * when the book has actually moved past an order rather than when the clock says so - see
-	 * {@link jeff.skyblockflipper.core.strategy.NpcCheckIn} - and at most once per
-	 * {@link #npcCheckInMinutes}.
+	 * eight-hour cycle, and nothing else in the mod is worth interrupting a player over.
+	 *
+	 * <p><b>Once per reprice round</b>, which is what it means for the notice and the list it opens
+	 * to be the same batch of work - see {@link jeff.skyblockflipper.core.strategy.NpcRound}. It
+	 * spoke on the book having moved before that, which on a contested product is true again seconds
+	 * later, so it asked for a click that was already stale. Asking for the list yourself, or having
+	 * the basket panel on screen at the bazaar, spends that round's notice.
 	 *
 	 * <p>Needs {@link #autoTrackEnabled}, which is the only thing that knows what you have resting.
 	 */

@@ -66,6 +66,62 @@ public final class NpcCheckIn {
 	 *                  {@code FlipperConfig.minProfitPerFlip}
 	 */
 	public static Optional<Due> due(List<NpcReprice.Advice> advice, double minProfit) {
+		return due(advice, minProfit, null);
+	}
+
+	/**
+	 * The same question with the reprices on a clock: the round decides which of them count.
+	 *
+	 * <p>A live review sees every outbid order, including the ones too young for the round in hand
+	 * and the ones posted after it opened. Announcing those would be an interruption pointing at a
+	 * list that does not contain them, which is worse than saying nothing - {@link NpcRound} exists
+	 * precisely so the mod stops asking for clicks it is not about to show.
+	 *
+	 * <p>The claims and the cancels still come off the live advice, because neither waits for a
+	 * round: a claim is coins already earned and a cancel is capital stranded in a trade that is
+	 * over.
+	 *
+	 * <p>{@code profitAtStake} is then the round's expected gain over the interval rather than the
+	 * coins reachable on the orders, which is the number the round ranked its rows on and the same
+	 * one the reprice rows quote.
+	 *
+	 * @param round the round in hand, or null to judge straight off the advice
+	 */
+	public static Optional<Due> due(List<NpcReprice.Advice> advice, double minProfit,
+			NpcRound round) {
+		return round == null ? offTheBook(advice, minProfit) : inRound(advice, minProfit, round);
+	}
+
+	private static Optional<Due> inRound(List<NpcReprice.Advice> advice, double minProfit,
+			NpcRound round) {
+		int cancels = 0;
+		int claims = 0;
+		long capital = 0L;
+		double claimable = 0.0d;
+
+		for (NpcReprice.Advice entry : advice) {
+			if (entry.hasUnclaimed()) {
+				claims++;
+				claimable += entry.claimableProfit();
+			}
+
+			if (entry.isCancel()) {
+				cancels++;
+				capital += entry.capitalAtStake();
+			}
+		}
+
+		int reprices = round.rows().size();
+		double profit = round.gain();
+
+		if (cancels == 0 && claims == 0 && (reprices == 0 || profit < minProfit)) {
+			return Optional.empty();
+		}
+
+		return Optional.of(new Due(reprices, cancels, claims, profit, capital, claimable));
+	}
+
+	private static Optional<Due> offTheBook(List<NpcReprice.Advice> advice, double minProfit) {
 		int reprices = 0;
 		int cancels = 0;
 		int claims = 0;

@@ -5,6 +5,7 @@ import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.strategy.NpcCheckIn;
 import jeff.skyblockflipper.core.strategy.NpcReprice;
+import jeff.skyblockflipper.core.strategy.NpcRound;
 import jeff.skyblockflipper.core.text.Coins;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -29,14 +30,22 @@ import java.util.List;
  * eight-hour cycle returning every 30 minutes against 11.5M posting once and walking away. A player
  * who has to remember on their own eventually does not.
  *
- * <p>{@link NpcCheckIn} decides whether there is anything worth saying; this owns the clock and the
- * chat line. Two rate limits, for two different failure modes:
+ * <p>{@link NpcCheckIn} decides whether there is anything worth saying; this owns the chat line.
+ * <b>The clock is the round.</b> {@link NpcRoundService} opens one per {@code npcCheckInMinutes} and
+ * this speaks once per opening, so the notice and the list it points at are the same batch of work.
+ * Announcing on anything finer was the original fault: the book moves past a resting order within
+ * seconds on a contested product, and a reminder that fires on the book firing every few seconds is
+ * trained away inside one session.
+ *
+ * <p>Two consequences of tying the two together, both deliberate:
  *
  * <ul>
- *   <li>The review runs at most once per bazaar revision, so a tick handler never re-ranks a book
- *       that has not changed. That is the same rule {@link CandidateFeed} caches on.
- *   <li>It speaks at most once per {@code npcCheckInMinutes}, so a book that keeps moving past your
- *       orders produces one line per check-in interval rather than one line per poll.
+ *   <li>Reprices announced are the ones the round froze, never the whole live review. An order too
+ *       young for this round, or placed after it opened, is not in the list the click opens, so
+ *       counting it here would point the player at rows that are not there.
+ *   <li>A claim or a cancel that appears part way through a round waits for the next opening, which
+ *       is at most one interval. Both bypass the round in the list itself - they are emitted the
+ *       moment they are true - so nothing is hidden, only unannounced.
  * </ul>
  *
  * <p>Client thread only: {@link ClientTickEvents} runs there, which is what makes it safe to build
@@ -55,15 +64,20 @@ public final class NpcCheckInService {
 	 */
 	private static final SystemToast.SystemToastId TOAST_ID = new SystemToast.SystemToastId();
 
-	/** The book this last looked at, so an unchanged snapshot costs nothing. */
-	private static long reviewedRevision = -1L;
+	/**
+	 * The round already spoken for, by the moment it opened. Zero means none has been, which lets
+	 * the first round speak: logging back in to a basket that was outbid overnight is exactly the
+	 * case the reminder is for.
+	 */
+	private static long announcedRoundAt;
 
 	/**
-	 * When the player was last told, or last asked. Zero means never, which lets the first eligible
-	 * check speak: logging back in to a basket that was outbid overnight is exactly the case the
-	 * reminder is for.
+	 * When the "I cannot see your orders" notice last went out.
+	 *
+	 * <p>Its own rate limit, because that case has no round to hang one on - the orders it is about
+	 * are the ones the mod cannot price, so no round can be opened over them.
 	 */
-	private static long lastNoticeAt;
+	private static long lastUnwatchedAt;
 
 	private NpcCheckInService() {
 	}
@@ -73,14 +87,24 @@ public final class NpcCheckInService {
 	}
 
 	/**
-	 * Restarts the interval, because the player has just seen the answer.
+	 * Marks the round in hand as seen, because the player is looking at it.
 	 *
-	 * <p>Called by {@code /flip npc reprice} and {@code /flip npc plan}. Somebody who is working the
-	 * basket right now does not need to be told to work the basket, and a reminder arriving on top
-	 * of the list it is pointing at reads as a bug.
+	 * <p>Called by {@code /flip npc reprice}, {@code /flip npc plan} and the panel beside the bazaar
+	 * menu, which is the one that used to be missing: working the basket from the panel restarted
+	 * nothing, so the chime fired while the player was in the middle of placing the very orders it
+	 * was about to tell them to place.
+	 *
+	 * <p>It does not move the clock. The round supersedes on its own interval whether or not it was
+	 * acknowledged; this only spends the one chime that round was entitled to.
 	 */
 	public static void acknowledge() {
-		lastNoticeAt = System.currentTimeMillis();
+		NpcRound round = NpcRoundService.current();
+
+		if (round != null) {
+			announcedRoundAt = round.openedAt();
+		}
+
+		lastUnwatchedAt = System.currentTimeMillis();
 	}
 
 	private static void tick() {
@@ -92,41 +116,49 @@ public final class NpcCheckInService {
 		}
 
 		MarketData data = MarketDataService.data();
-		long revision = data.bazaarRevision();
 
-		if (!data.hasBazaar() || revision == reviewedRevision) {
+		if (!data.hasBazaar()) {
 			return;
 		}
 
 		long now = System.currentTimeMillis();
+		NpcRound round = NpcRoundService.current();
 
-		// Checked before the review rather than after, so a basket inside its interval costs one
-		// comparison per tick instead of a pass over every resting order.
-		if (now - lastNoticeAt < config.npcCheckInMinutes * 60_000L) {
+		if (round == null) {
+			// No round means nothing priced to freeze one over. The one thing worth saying then is
+			// that the mod cannot see the orders the player knows are there.
+			announceUnwatched(config, now);
 			return;
 		}
 
-		reviewedRevision = revision;
+		// One notice per opening. An open round costs this comparison and nothing else, which is
+		// what makes it safe to run on every tick rather than once per book revision.
+		if (round.openedAt() == announcedRoundAt) {
+			return;
+		}
+
+		announcedRoundAt = round.openedAt();
+
 		// The review directly rather than through CandidateFeed.worklist(), which would allocate a
-		// whole basket - a pass over every product on the book - on every poll for a player who has
-		// not asked for one. It is the same NpcReprice.review the worklist runs on the same orders,
-		// so the two cannot disagree about what needs a click.
+		// whole basket - a pass over every product on the book - for a player who has not asked for
+		// one. It is the same NpcReprice.review the worklist runs on the same orders, so the two
+		// cannot disagree about what needs a click, and the round supplies the reprices either way.
 		List<NpcReprice.Advice> advice = NpcReprice.review(TrackerService.restingBuyOrders(),
 				CandidateFeed.context(), now);
 
-		if (advice.isEmpty()) {
-			if (TrackerService.hasUnpricedBuyOrders()) {
-				lastNoticeAt = now;
-				announceUnwatched();
-			}
+		NpcCheckIn.due(advice, config.minProfitPerFlip, round)
+				.ifPresent(NpcCheckInService::announce);
+	}
 
+	/** The orders the mod has heard of but cannot price, which no round can be opened over. */
+	private static void announceUnwatched(FlipperConfig config, long now) {
+		if (!TrackerService.hasUnpricedBuyOrders()
+				|| now - lastUnwatchedAt < config.npcCheckInMinutes * 60_000L) {
 			return;
 		}
 
-		NpcCheckIn.due(advice, config.minProfitPerFlip).ifPresent(due -> {
-			lastNoticeAt = now;
-			announce(due);
-		});
+		lastUnwatchedAt = now;
+		announceUnwatched();
 	}
 
 	/**
@@ -198,7 +230,7 @@ public final class NpcCheckInService {
 
 		return due.cancelCount() > 0
 				? Coins.format(due.capitalToFree()) + " parked, /flip npc reprice"
-				: Coins.format(due.profitAtStake()) + " at stake, /flip npc reprice";
+				: Coins.format(due.profitAtStake()) + " to be made, /flip npc reprice";
 	}
 
 	/**
@@ -240,8 +272,10 @@ public final class NpcCheckInService {
 		}
 
 		if (due.repriceCount() > 0) {
-			parts.add(due.repriceCount() + " outbid, worth "
-					+ Coins.format(due.profitAtStake()));
+			// "Worth about", because on a round this is the expected gain from moving them over the
+			// interval - what the round ranked its rows on - and not the coins resting on the orders.
+			parts.add(due.repriceCount() + " outbid, worth about "
+					+ Coins.format(due.profitAtStake()) + " to move");
 		}
 
 		return due.orders() + (due.orders() == 1 ? " NPC order needs" : " NPC orders need")

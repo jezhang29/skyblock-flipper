@@ -2,7 +2,11 @@ package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.ItemCatalog;
+import jeff.skyblockflipper.core.pricing.FillModel;
+import jeff.skyblockflipper.core.pricing.FillModel.FillEstimate;
+import jeff.skyblockflipper.core.text.Coins;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -32,6 +36,24 @@ import java.util.OptionalDouble;
  * re-placed order.
  */
 public final class NpcReprice {
+	/**
+	 * How far above your own price the book has to be before you are treated as outbid.
+	 *
+	 * <p>Half an increment, which is wide enough to absorb any rounding in where the resting price
+	 * came from and narrower than the smallest real outbid there is. Nobody can post inside you by
+	 * less than {@link BazaarProduct#PRICE_INCREMENT}, so a genuine displacement clears this by
+	 * double, while a price derived from a setup line quoted to the coin cannot.
+	 *
+	 * <p>Without it a resting price a hundredth of a coin under the top bid read as outbid, and the
+	 * advice was to move to a price above the one already held - outbidding yourself, on every unit,
+	 * to end up where you started.
+	 *
+	 * <p>Package-visible because {@link NpcRound} compares a frozen post price to whatever the order
+	 * rests at now, and it has to call the same two prices equal that this does. Two tolerances would
+	 * let a round call a row unfinished on the strength of the rounding the review had forgiven.
+	 */
+	static final double OUTBID_TOLERANCE = BazaarProduct.PRICE_INCREMENT / 2.0d;
+
 	private NpcReprice() {
 	}
 
@@ -56,12 +78,26 @@ public final class NpcReprice {
 	 *                  order placed yesterday and first seen in today's orders menu is dated to
 	 *                  today. Age therefore under-reports, which makes {@link Action#EXPIRED} fire
 	 *                  late rather than wrongly
+	 * @param adopted   true when {@code placedAt} is when the order was first seen rather than when
+	 *                  it was placed, i.e. it was read out of an orders menu instead of watched being
+	 *                  posted. The two are the same number and mean different things, and
+	 *                  {@link NpcRound#eligible} is the rule that cannot be written without knowing
+	 *                  which it has
 	 */
 	public record Order(String itemId, String displayName, double unitPrice, long total,
-			long remaining, long unclaimed, long placedAt) {
+			long remaining, long unclaimed, long placedAt, boolean adopted) {
+		/**
+		 * An order whose placement was announced, which is the shape everything had before a dwell
+		 * rule needed to tell the two apart.
+		 */
+		public Order(String itemId, String displayName, double unitPrice, long total, long remaining,
+				long unclaimed, long placedAt) {
+			this(itemId, displayName, unitPrice, total, remaining, unclaimed, placedAt, false);
+		}
+
 		/** A bare order with nothing known about its history, which is what most tests want. */
 		public static Order of(String itemId, String displayName, double unitPrice, long remaining) {
-			return new Order(itemId, displayName, unitPrice, remaining, remaining, 0L, 0L);
+			return new Order(itemId, displayName, unitPrice, remaining, remaining, 0L, 0L, false);
 		}
 
 		/** Units that have filled, whether or not they have been collected. */
@@ -82,7 +118,14 @@ public final class NpcReprice {
 	}
 
 	public enum Action {
-		/** Still the best bid. Nothing to do. */
+		/**
+		 * Nothing to do. Leave it exactly where it is.
+		 *
+		 * <p>Two ways to get here and the reason line says which. The order is still the best bid,
+		 * or it has been outbid by an amount that is not worth the click - see {@link RepriceValue}.
+		 * Both are "leave it alone", and a reader that needs to tell them apart has
+		 * {@link Advice#outbid()}.
+		 */
 		HOLD,
 
 		/** Outbid, and getting back to the top still leaves the margin above the floor. */
@@ -105,6 +148,64 @@ public final class NpcReprice {
 	}
 
 	/**
+	 * What moving this order back to the front of the book is expected to be worth.
+	 *
+	 * <p>The number that decides whether a reprice earns its row. Being outbid is not on its own a
+	 * reason to click: on a contested book it is true again within seconds - the live
+	 * {@code TRANSMISSION_TUNER} sample on 2026-08-11 had five bots a tenth of a coin apart - and
+	 * advice that fires every time it is true is advice nobody can act on.
+	 *
+	 * <p>It is the same {@link FillModel} the placing side sizes with, over the same measured
+	 * displacement, so the two halves of a cycle cannot disagree about what an order will take in.
+	 * An item the book displaces you off in nine minutes is credited with nine minutes of flow,
+	 * which on a thin margin is not worth walking to a menu for; one that holds for hours is
+	 * credited with the rest of the interval.
+	 *
+	 * <p><b>The baseline is zero and that is deliberate.</b> An order collects flow only while it is
+	 * the best bid, which is the whole 11.5M-against-59.7M measurement this strategy is built on, so
+	 * an order that has been outbid is credited with nothing where it sits. Nothing measures when
+	 * the orders inside it will clear, and inventing a figure for that would suppress reprices on
+	 * the strength of a guess. Zero is the baseline most favourable to repricing, so the filter can
+	 * only ever drop a row that is not worth a click even on the generous reading.
+	 *
+	 * @param unitsExpected  units expected to fill over the rest of the interval once the order is
+	 *                       back on top, capped at what is still resting - a reprice cannot buy more
+	 *                       than the order is for
+	 * @param gain           coins those units are worth: {@code unitsExpected} times the margin at
+	 *                       the price the reprice would post at. Zero unless the advice is a reprice
+	 * @param outbidsPerHour measured displacement on this book, carried so a row can say why a gain
+	 *                       is small rather than only that it is. Zero when unmeasured
+	 * @param measured       false when this rests on the unmeasured fallback share rather than on
+	 *                       recorded displacement. <b>An unmeasured gain never suppresses a
+	 *                       reprice</b>: a fresh install has no tape, and filtering on a guess would
+	 *                       mute the advice hardest on the accounts with the least history
+	 */
+	public record RepriceValue(double unitsExpected, double gain, double outbidsPerHour,
+			boolean measured) {
+		/** No estimate, which is what every advice that is not a reprice carries. */
+		public static RepriceValue none() {
+			return new RepriceValue(0.0d, 0.0d, 0.0d, false);
+		}
+
+		/**
+		 * Average minutes before someone posts inside a fresh order here, where that was measured.
+		 *
+		 * <p>The mean wait of the Poisson process {@link FillModel} treats displacement as, so it is
+		 * an average and not a deadline: half of all orders are outbid sooner than this.
+		 */
+		public OptionalDouble minutesToOutbid() {
+			return measured && outbidsPerHour > 0.0d
+					? OptionalDouble.of(60.0d / outbidsPerHour)
+					: OptionalDouble.empty();
+		}
+
+		/** Whether this is a measurement that fell short of a floor, rather than an absent one. */
+		public boolean measuredBelow(double floor) {
+			return measured && gain < floor;
+		}
+	}
+
+	/**
 	 * One order and what to do with it.
 	 *
 	 * @param bestBid     the best bid on the book right now, which is your own price while you are
@@ -113,6 +214,9 @@ public final class NpcReprice {
 	 * @param chaseStop   the highest price this item is worth chasing to
 	 * @param marginRatio margin against the NPC price at the price this advice is about: yours on a
 	 *                    hold, the new one on a reprice, what it would have to become on a cancel
+	 * @param value       what the reprice is expected to be worth, and empty on every advice that is
+	 *                    not one. Present on a hold that was outbid but not worth chasing, which is
+	 *                    the one case where the estimate is the reason for the advice
 	 */
 	public record Advice(
 			Order order,
@@ -122,8 +226,29 @@ public final class NpcReprice {
 			double postPrice,
 			double chaseStop,
 			double marginRatio,
+			RepriceValue value,
 			String reason
 	) {
+		/**
+		 * The shape before a reprice was valued, for the branches and callers that have no estimate
+		 * to offer. A cancel and a full fill are decided by the book and the clock, not by throughput.
+		 */
+		public Advice(Order order, Action action, double npcPrice, double bestBid, double postPrice,
+				double chaseStop, double marginRatio, String reason) {
+			this(order, action, npcPrice, bestBid, postPrice, chaseStop, marginRatio,
+					RepriceValue.none(), reason);
+		}
+
+		/**
+		 * Whether the book has moved past this order, whatever the advice about it is.
+		 *
+		 * <p>Separate from {@link #needsAction()} because the two stopped meaning the same thing when
+		 * a reprice had to earn its row: an order can be outbid and still be told to hold.
+		 */
+		public boolean outbid() {
+			return order.remaining() > 0L && bestBid > order.unitPrice() + OUTBID_TOLERANCE;
+		}
+
 		/** Coins the reprice adds to what the remaining units will cost. Zero unless repricing. */
 		public double extraCost() {
 			return action == Action.REPRICE
@@ -188,10 +313,33 @@ public final class NpcReprice {
 	 *            owns no clock
 	 */
 	public static List<Advice> review(List<Order> orders, StrategyContext context, long now) {
+		return review(orders, context, now, context.npc().checkIn());
+	}
+
+	/**
+	 * The same review, told how much of the check-in interval is left to collect anything in.
+	 *
+	 * <p>A reprice is only worth what it fills before the next trip, so the horizon the gain is
+	 * measured over is the time to that trip and not a fixed hour. A caller working a round part way
+	 * through passes what is left of it; the three-argument form passes a whole interval, which is
+	 * the honest answer for a caller that is not tracking one.
+	 *
+	 * @param remainingInterval time to the next check-in. Null or non-positive is read as a full
+	 *                          interval rather than as "no time left": an elapsed interval means the
+	 *                          next trip is now, and valuing every reprice at zero at exactly the
+	 *                          moment the player came back would mute the whole list
+	 */
+	public static List<Advice> review(List<Order> orders, StrategyContext context, long now,
+			Duration remainingInterval) {
+		Duration horizon = remainingInterval == null || remainingInterval.isZero()
+				|| remainingInterval.isNegative()
+				? context.npc().checkIn()
+				: remainingInterval;
+
 		List<Advice> advice = new ArrayList<>();
 
 		for (Order order : orders) {
-			adviseOn(order, context, now).ifPresent(advice::add);
+			adviseOn(order, context, now, horizon).ifPresent(advice::add);
 		}
 
 		advice.sort(Comparator
@@ -201,7 +349,8 @@ public final class NpcReprice {
 		return advice;
 	}
 
-	private static Optional<Advice> adviseOn(Order order, StrategyContext context, long now) {
+	private static Optional<Advice> adviseOn(Order order, StrategyContext context, long now,
+			Duration horizon) {
 		ItemCatalog.Entry entry = context.catalog().get(order.itemId()).orElse(null);
 		BazaarProduct product = context.bazaar().products().get(order.itemId());
 
@@ -253,8 +402,9 @@ public final class NpcReprice {
 
 		// Your own order is in the book, so being the best bid reads as a tie rather than as a lead.
 		// A tie is behind whoever posted first, but outbidding yourself by an increment to find out
-		// costs the increment on every unit for no measured gain.
-		if (order.unitPrice() >= bid) {
+		// costs the increment on every unit for no measured gain. Held to within OUTBID_TOLERANCE,
+		// so a price that arrived rounded is a tie rather than a reprice.
+		if (order.unitPrice() >= bid - OUTBID_TOLERANCE) {
 			return Optional.of(new Advice(order, Action.HOLD, npcPrice, bid, order.unitPrice(),
 					chaseStop, margin(npcPrice, order.unitPrice()),
 					String.format("Top of the book at %.1f, %.0f%% under the %.1f the NPC pays",
@@ -281,11 +431,67 @@ public final class NpcReprice {
 							npc.minMarginRatio() * 100.0d)));
 		}
 
+		RepriceValue value = valueOf(order, product, npcPrice, postPrice, context, horizon);
+
+		// The click has to be worth the same coins any other candidate has to be worth. Below it the
+		// order stays where it is: the units are still bid for at a better price than the reprice
+		// would pay, and the trade is not over, so there is nothing to do but wait for the book.
+		if (value.measuredBelow(context.minProfitPerFlip())) {
+			return Optional.of(new Advice(order, Action.HOLD, npcPrice, bid, postPrice, chaseStop,
+					margin(npcPrice, order.unitPrice()), value, notWorthChasing(value, context)));
+		}
+
 		return Optional.of(new Advice(order, Action.REPRICE, npcPrice, bid, postPrice, chaseStop,
-				margin(npcPrice, postPrice),
+				margin(npcPrice, postPrice), value,
 				String.format("Outbid at %.1f. Move to %.1f and it is still a %.0f%% margin, with "
 								+ "%.1f of room left before the stop", bid, postPrice,
 						margin(npcPrice, postPrice) * 100.0d, chaseStop - postPrice)));
+	}
+
+	/**
+	 * Expected units over the horizon at the top of the book, priced at the margin they would earn.
+	 *
+	 * <p>Capped at what is still resting, because a reprice moves an order rather than enlarging it:
+	 * a book that would dump four thousand units into an order of five hundred is worth five hundred
+	 * units of margin and no more.
+	 */
+	private static RepriceValue valueOf(Order order, BazaarProduct product, double npcPrice,
+			double postPrice, StrategyContext context, Duration horizon) {
+		double marginPerUnit = npcPrice - postPrice;
+		double hours = horizon.toMillis() / 3_600_000.0d;
+
+		if (marginPerUnit <= 0.0d || hours <= 0.0d || order.remaining() <= 0L) {
+			return RepriceValue.none();
+		}
+
+		FillEstimate fill = FillModel.estimate(
+				product,
+				context.trends().fillStatsFor(order.itemId()).orElse(null),
+				horizon,
+				NpcFlipStrategy.UNMEASURED_FILL_SHARE);
+
+		double units = Math.min(order.remaining(), fill.buyUnitsPerHour() * hours);
+
+		return new RepriceValue(units, units * marginPerUnit, fill.outbidsPerHour(),
+				fill.measured());
+	}
+
+	/**
+	 * Why an outbid order is being left alone, in the terms that decided it.
+	 *
+	 * <p>Says the displacement rate rather than only the coins, because that is the part a player
+	 * cannot see from the menu and the part that will not change by coming back sooner.
+	 */
+	private static String notWorthChasing(RepriceValue value, StrategyContext context) {
+		String pace = value.minutesToOutbid().isPresent()
+				? String.format(" - the book posts inside you about every %.0f minutes",
+						value.minutesToOutbid().getAsDouble())
+				: "";
+
+		return String.format("Outbid, but chasing it back is worth about %s before the next "
+						+ "check-in%s, under the %s a flip has to make. Leave it: the order is still "
+						+ "bid at a better price than the move would pay",
+				Coins.format(value.gain()), pace, Coins.format(context.minProfitPerFlip()));
 	}
 
 	/**

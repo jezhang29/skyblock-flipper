@@ -1,5 +1,7 @@
 package jeff.skyblockflipper.core.strategy;
 
+import jeff.skyblockflipper.core.model.Stacking;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -120,23 +122,12 @@ public final class NpcBasket {
 		/**
 		 * How the units divide into orders you can actually place, e.g. {@code 3 x 256 + 112}.
 		 *
-		 * <p>Here rather than in chat and on the screen separately, for the same reason
-		 * {@link Basket#boundExplanation()} is: two copies of this drift apart. A total on its own
-		 * reads as one order, which is how a line of 500 Jungle Hearts got typed into a bazaar that
-		 * takes 256 of them at a time.
+		 * <p>Shared with the reprice rows through {@link Stacking#orderSplit}, for the same reason
+		 * {@link Basket#boundExplanation()} is assembled once: a place and a re-post of the same item
+		 * are typed into the same box, and two copies of this arithmetic drift apart.
 		 */
 		public String orderSplit() {
-			long perOrder = plan.unitsPerOrder();
-
-			if (perOrder <= 0L || units <= perOrder) {
-				return String.valueOf(units);
-			}
-
-			long full = units / perOrder;
-			long remainder = units % perOrder;
-			String whole = full == 1L ? String.valueOf(perOrder) : full + " x " + perOrder;
-
-			return remainder == 0L ? whole : whole + " + " + remainder;
+			return Stacking.orderSplit(units, plan.unitsPerOrder());
 		}
 	}
 
@@ -247,8 +238,8 @@ public final class NpcBasket {
 	 * Allocates every shared resource across the items worth resting an order on.
 	 *
 	 * <p>Ranks on {@link NpcPlan#profitPerLoad()} and takes each item at the largest size it is
-	 * worth on its own, until a shared budget runs out. An item that would earn less over the
-	 * window than {@code minProfitPerFlip} an hour is skipped rather than allowed to occupy a slot.
+	 * worth on its own, until a shared budget runs out. An item that would earn less over the whole
+	 * window than {@code minProfitPerFlip} is skipped rather than allowed to occupy a slot.
 	 */
 	public static Basket plan(StrategyContext context) {
 		return plan(context, Held.nothing());
@@ -298,7 +289,10 @@ public final class NpcBasket {
 				continue;
 			}
 
-			long wanted = Math.min(plan.maxUnits(), (long) slotsLeft * plan.unitsPerOrder());
+			// The cap bounds this line's slots, never the basket's: what it does not spend here is
+			// left for the next item down the list, which is the whole point of capping one.
+			long wanted = Math.min(plan.maxUnits(),
+					(long) npc.ordersForItem(slotsLeft) * plan.unitsPerOrder());
 			long affordable = affordableUnits(coinsLeft, plan.unitCost());
 			long withinCap = payoutUnits(payoutLeft, plan.npcPrice());
 			long units = Math.min(wanted, Math.min(affordable, withinCap));
@@ -317,7 +311,9 @@ public final class NpcBasket {
 
 			double lineProfit = plan.unitNetProfit() * units;
 
-			if (lineProfit / npc.restingHours() < context.minProfitPerFlip()) {
+			// What the line makes in total, on the same reading of minProfitPerFlip as every other
+			// filter in the mod. See NpcFlipStrategy for why this stopped being a rate.
+			if (lineProfit < context.minProfitPerFlip()) {
 				continue;
 			}
 

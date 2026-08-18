@@ -97,8 +97,12 @@ public final class NpcFlipStrategy implements FlipStrategy {
 	 * <p>A fallback and nothing more. Where {@code FillStats} exists - 759 products on the live
 	 * tape - {@link FillModel} uses measured displacement instead, and the two disagree by 3.5x on
 	 * a post-and-wait plan. A candidate resting on this says so in its risks.
+	 *
+	 * <p>Package-visible because {@link NpcReprice} values a reprice out of the same fill model, and
+	 * the two halves of one cycle must not assume different throughput for the same order: the
+	 * placing side would size a line the repricing side then judged not worth moving.
 	 */
-	private static final double UNMEASURED_FILL_SHARE = 0.25d;
+	static final double UNMEASURED_FILL_SHARE = 0.25d;
 
 	/**
 	 * Share of the hour's ask-side flow you can realistically lift.
@@ -237,7 +241,12 @@ public final class NpcFlipStrategy implements FlipStrategy {
 
 		Route best = better(instant, order);
 
-		if (best == null || best.profitPerHour(limits.restingHours()) < context.minProfitPerFlip()) {
+		// The whole flip's profit, not a rate. minProfitPerFlip is one number the player sets once,
+		// and it read as coins-per-hour here and as coins-in-total in NpcReprice and in the bazaar
+		// and auction strategies - so the same 50,000 excluded a resting plan under 400,000 and a
+		// reprice under 50,000, and ConfigSchema described only the second. Measured free to unify:
+		// over 14 days of tape the basket is identical anywhere from no floor to 100,000.
+		if (best == null || best.totalProfit() < context.minProfitPerFlip()) {
 			return Optional.empty();
 		}
 

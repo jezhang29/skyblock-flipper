@@ -38,6 +38,10 @@ import java.util.Optional;
  * @param capRemaining   gross coins NPCs will still pay out today, across every item. Unlike every
  *                       other limit here this one is shared and consumed: it is the day's budget
  *                       minus what has already been spent, so it shrinks as you trade
+ * @param maxOrdersPerItem the most bazaar orders one item's line may occupy, or
+ *                       {@link #UNLIMITED_ORDERS_PER_ITEM}. Not a setting: it exists so
+ *                       {@code NpcSettingsSweepTest} can price a cap against the same allocator the
+ *                       mod plans with, which is the only way to know what capping one costs
  */
 public record NpcContext(
 		NpcEdgeSnapshot edges,
@@ -45,7 +49,8 @@ public record NpcContext(
 		Duration checkIn,
 		double restingHours,
 		int maxOrderSlots,
-		long capRemaining
+		long capRemaining,
+		int maxOrdersPerItem
 ) {
 	/**
 	 * What an unstated NPC budget means: effectively infinite, so a caller that knows nothing about
@@ -65,6 +70,12 @@ public record NpcContext(
 	/** What {@code maxOrderSlots} of zero means, matching {@code FlipperConfig.npcMaxOrderSlots}. */
 	public static final int ALL_ORDER_SLOTS = 0;
 
+	/**
+	 * What {@code maxOrdersPerItem} of zero means: an item may take every slot it is worth, which is
+	 * how the basket has always sized a line and what the 59.7M cycle was measured under.
+	 */
+	public static final int UNLIMITED_ORDERS_PER_ITEM = 0;
+
 	private static final double MILLIS_PER_HOUR = 3_600_000.0d;
 
 	public NpcContext {
@@ -80,6 +91,19 @@ public record NpcContext(
 		// A spent budget is zero, not negative, and a negative one would flip the sizing arithmetic
 		// into producing plans rather than suppressing them. Unlimited survives the clamp.
 		capRemaining = Math.max(0L, capRemaining);
+		maxOrdersPerItem = Math.max(UNLIMITED_ORDERS_PER_ITEM, maxOrdersPerItem);
+	}
+
+	/**
+	 * The six-argument form, which means "no per-item cap".
+	 *
+	 * <p>Every caller in the mod is this one: the cap is a sweep dimension, not a setting, so the
+	 * shipped behaviour is the one that has always been measured. Only the sweep names the seventh.
+	 */
+	public NpcContext(NpcEdgeSnapshot edges, double minMarginRatio, Duration checkIn,
+			double restingHours, int maxOrderSlots, long capRemaining) {
+		this(edges, minMarginRatio, checkIn, restingHours, maxOrderSlots, capRemaining,
+				UNLIMITED_ORDERS_PER_ITEM);
 	}
 
 	/** Shipped defaults with no measured history and no budget to respect, for tests and callers
@@ -109,6 +133,18 @@ public record NpcContext(
 		int available = fees.bazaarOrderSlots();
 
 		return maxOrderSlots == ALL_ORDER_SLOTS ? available : Math.min(maxOrderSlots, available);
+	}
+
+	/**
+	 * Order slots one item's line may take, out of the {@code slotsLeft} the basket still has.
+	 *
+	 * <p>Uncapped means "all of them", which is the sizing the basket has always used: an item is
+	 * taken at the largest size it is worth on its own and the next one gets what is left.
+	 */
+	public int ordersForItem(int slotsLeft) {
+		return maxOrdersPerItem == UNLIMITED_ORDERS_PER_ITEM
+				? slotsLeft
+				: Math.min(maxOrdersPerItem, slotsLeft);
 	}
 
 	/**

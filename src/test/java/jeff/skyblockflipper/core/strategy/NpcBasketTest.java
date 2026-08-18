@@ -54,6 +54,12 @@ class NpcBasketTest {
 				capRemaining);
 	}
 
+	private static NpcContext npc(int maxOrderSlots, long capRemaining, int maxOrdersPerItem) {
+		return new NpcContext(NpcEdgeSnapshot.empty(), NpcContext.DEFAULT_MIN_MARGIN_RATIO,
+				NpcContext.DEFAULT_CHECK_IN, NpcContext.DEFAULT_RESTING_HOURS, maxOrderSlots,
+				capRemaining, maxOrdersPerItem);
+	}
+
 	private static StrategyContext context(Map<String, BazaarProduct> products,
 			Map<String, ItemCatalog.Entry> items, long bankroll, NpcContext npc) {
 		return new StrategyContext(
@@ -188,6 +194,67 @@ class NpcBasketTest {
 		assertEquals(14, basket.lines().getFirst().orders());
 		assertEquals(256L * 14L, basket.lines().getFirst().units());
 		assertEquals(NpcBasket.Bound.SLOTS, basket.bound());
+	}
+
+	/** The same context with a profit floor, which is the one thing {@link #context} leaves at zero. */
+	private static StrategyContext withFloor(StrategyContext context, long minProfitPerFlip) {
+		return new StrategyContext(context.bazaar(), context.catalog(), context.underpriced(),
+				context.trends(), context.fees(), context.bankroll(), minProfitPerFlip,
+				context.minConfidence(), context.maxAdverseDrift(), context.fillHorizon(),
+				context.maxCapitalShare(), context.npc());
+	}
+
+	@Test
+	void theProfitFloorIsTheWholeLineNotAnHourOfIt() {
+		// minProfitPerFlip used to be compared against lineProfit / restingHours here and against a
+		// plain total in NpcReprice and the other two strategies, so one number the player sets once
+		// meant two different things and ConfigSchema described only one of them.
+		StrategyContext context = manyItems(5, 10_000_000_000L,
+				npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED), false);
+
+		double smallest = NpcBasket.plan(context).lines().stream()
+				.mapToDouble(NpcBasket.Line::profit)
+				.min()
+				.orElseThrow();
+
+		// A floor above what the line makes in total drops it, which is the whole point of a floor.
+		assertTrue(NpcBasket.plan(withFloor(context, Math.round(smallest) + 1L)).lines().stream()
+				.noneMatch(line -> line.profit() <= smallest));
+
+		// And a floor at half of it keeps it. Under the old rate reading this same number excluded
+		// anything under four times the line's profit, so the line would be gone.
+		assertTrue(NpcBasket.plan(withFloor(context, Math.round(smallest / 2.0d))).lines().stream()
+				.anyMatch(line -> line.profit() <= smallest));
+	}
+
+	@Test
+	void aPerItemOrderCapSpreadsTheSlotsOverMoreItems() {
+		// The same book as above, where one unstackable item took all 14 slots. Capped at two, the
+		// slots the first item does not take go to the next items down the ranking rather than
+		// nowhere - which is what makes the cap a trade between items and not a smaller basket.
+		StrategyContext context = manyItems(10, 10_000_000_000L,
+				npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED, 2), true);
+
+		NpcBasket.Basket basket = NpcBasket.plan(context);
+
+		assertEquals(7, basket.lines().size());
+		assertEquals(14, basket.slotsUsed());
+		basket.lines().forEach(line -> assertEquals(2, line.orders()));
+		assertEquals(NpcBasket.Bound.SLOTS, basket.bound());
+	}
+
+	@Test
+	void anUncappedContextSizesAnItemExactlyAsItAlwaysHas() {
+		// The shipped path: zero means unlimited, and the six-argument constructor means zero. Every
+		// measurement in docs/npc-flipping.md was taken here, so this is what must not move.
+		StrategyContext context = manyItems(5, 10_000_000_000L,
+				npc(NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED,
+						NpcContext.UNLIMITED_ORDERS_PER_ITEM), true);
+
+		NpcBasket.Basket basket = NpcBasket.plan(context);
+
+		assertEquals(1, basket.lines().size());
+		assertEquals(14, basket.lines().getFirst().orders());
 	}
 
 	@Test

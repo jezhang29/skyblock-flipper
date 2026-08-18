@@ -121,7 +121,10 @@ public final class ConfigSchema {
 					0.01d, 1.0d, 0.05d,
 					c -> c.maxCapitalShare, (c, v) -> c.maxCapitalShare = v),
 			new Entry.LongRange("minProfitPerFlip", "Minimum profit per flip",
-					"Hide any candidate whose expected net profit is below this.",
+					"Hide any candidate whose expected net profit is below this. Always a total for "
+							+ "the whole flip, never a rate: for an NPC basket line that is what it "
+							+ "makes over the resting window, and for a reprice it is what moving "
+							+ "the order is worth over the rest of the round.",
 					0L, 1_000_000_000L, 50_000L,
 					c -> c.minProfitPerFlip, (c, v) -> c.minProfitPerFlip = v),
 			new Entry.Ratio("minConfidence", "Minimum confidence",
@@ -170,7 +173,10 @@ public final class ConfigSchema {
 			new Entry.IntRange("npcCheckInMinutes", "Check in every (minutes)",
 					"How often you come back to reprice resting NPC buy orders. Plans are sized on "
 							+ "what fills between check-ins and charged for the outbidding that "
-							+ "takes, so coming back more often buys fills with repricing.",
+							+ "takes, so coming back more often buys fills with repricing. It is "
+							+ "also how long a reprice list holds its prices: they are frozen when "
+							+ "the round opens so a number can be read, walked to the menu and "
+							+ "typed, and a new round opens only once this has run out.",
 					5, 480, 5,
 					c -> c.npcCheckInMinutes, (c, v) -> c.npcCheckInMinutes = v),
 			new Entry.Ratio("npcRestingHours", "Order resting window (hours)",
@@ -188,16 +194,17 @@ public final class ConfigSchema {
 					0, Fees.MAX_BAZAAR_ORDER_SLOTS, 1,
 					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v),
 			new Entry.Flag("npcRepriceReminder", "Remind me to reprice",
-					"Say so in chat when your resting NPC buy orders have been outbid, at most once "
-							+ "per check-in interval. An order only fills while it is the best bid, "
-							+ "and a basket left alone for a cycle makes about a fifth of one that is "
-							+ "worked. Needs automatic tracking on, since that is what knows which "
-							+ "orders you have resting.",
+					"Say so in chat when your resting NPC buy orders have been outbid, once per "
+							+ "reprice round. An order only fills while it is the best bid, and a "
+							+ "basket left alone for a cycle makes about a fifth of one that is "
+							+ "worked. Asking for the list yourself, or having the basket panel on "
+							+ "screen at the bazaar, spends that round's notice. Needs automatic "
+							+ "tracking on, since that is what knows which orders you have resting.",
 					c -> c.npcRepriceReminder, (c, v) -> c.npcRepriceReminder = v),
 			new Entry.Flag("npcRepriceSound", "Play a note with the reminder",
 					"Sound the reminder as well as printing it, because Skyblock scrolls chat fast "
-							+ "enough to lose a line before it is read. One note per reminder, on "
-							+ "your master volume, and nothing at all with the reminder itself off.",
+							+ "enough to lose a line before it is read. One note per round, on your "
+							+ "master volume, and nothing at all with the reminder itself off.",
 					c -> c.npcRepriceSound, (c, v) -> c.npcRepriceSound = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(

@@ -39,7 +39,8 @@ bankroll, the 500M daily cap, and the user's time.
 | chase stop | the same 15% — never reprice above `npc × 0.85` | One threshold, one meaning |
 | edge persistence | gap present in ≥95% of tape samples | Order-slot efficiency, not safety |
 | ranking key | profit per inventory slot-load | 16x better than cap efficiency |
-| check-in interval | 30 minutes default | User will check in several times an hour |
+| check-in interval | 30 minutes default | User will check in several times an hour; also the length of a reprice round |
+| reprice delivery | rounds with frozen prices, never per book move | See below and `docs/adr/0002-reprice-in-rounds.md` |
 | resting window | 8 hours | One cycle |
 | order slots | configurable, default all available | Coop members need slots too |
 | book-depth guard | **none** | Rejected; see below |
@@ -264,10 +265,64 @@ meant "how long capital may be tied up here" and nothing enforced it, so it now 
 the refund is the whole remaining stake, so the only question is whether the slot is worth more
 elsewhere, and after a full window of nothing it is.
 
+**A buy order's price is in its escrow line.** Chat announces a placement with the size and the
+total and never the price per unit, so an order stayed unpriced until the orders menu was opened —
+`restingBuyOrders()` dropped it, the basket charged neither a slot nor the coins for it, and the mod
+could tell you to place the same order twice. A buy escrows exactly `units x price`, so the price is
+`setupCoins / total`. **The escrow line is rounded to the coin**: the recorded
+`311x Purple Candy for 6,554,823 coins` really rests at 21,076.6, and 311 x 21,076.6 is 6,554,822.6.
+Hence "outbid" means the top bid beats you by more than half a price increment, not by any amount at
+all. Sells are not priced this way — a sell quotes a taxed payout, so it stays unpriced.
+
 **The age is a lower bound.** The tracker starts empty every launch, so `placedAt` is when the mod
 first saw the order rather than when Hypixel accepted it. An order placed yesterday and first seen
 in today's menu is dated today and gets another full window. Expiry therefore fires late, never
 wrongly, which is the correct direction for a rule whose failure mode is cancelling a live order.
+
+### Repricing is a round, not a stream
+
+Found in play 2026-08-11, and decided in full in `docs/adr/0002-reprice-in-rounds.md` — that ADR is
+the record, this is the measurement it turns on.
+
+`NpcReprice` compared your resting price to the top bid and called anything above it a reprice. On a
+contested book that is correct every time and useless every time. Live sample of
+`TRANSMISSION_TUNER`: the top five bids were 28594.6, 28594.5, 28594.4, 28594.3, 28594.2, each one
+order — five bots penny-jumping by the 0.1 increment. An order placed at the top is outbid within
+seconds, so the mod asked for a reprice within seconds, forever.
+
+**The curve above never described that.** 16 reprice rounds per 8-hour cycle is the 59.7M figure, and
+1h → 30 min is worth 690k of it (~1%). Continuous chasing is not the top of that curve; it is off the
+end of it, buying nothing and costing every click.
+
+So advice is delivered in **rounds**: a frozen list of tasks with frozen prices, opened at most once
+per `npcCheckInMinutes`, surviving menu closes and NPC trips, superseded when the interval elapses.
+The cost is being a price step down for up to one interval — about 1% of a cycle by the table above,
+against a chase that is not achievable by hand at any price.
+
+Three things the round is measured or reasoned into, rather than chosen:
+
+- **A reprice has to earn its row.** Expected fills at the top over the rest of the interval, minus
+  the fills where the order sits now, times the margin — from the same `FillModel` displacement the
+  placing side sizes with. At a 5k floor on the same book: `TRANSMISSION_TUNER`, displaced every
+  ~9 min, a repost is worth 2,890 over 30 minutes and is dropped; at one displacement per 10 hours
+  the same order is worth 9,744 and is kept. **The baseline is zero**, the reading most favourable to
+  repricing, so the filter only ever drops a row that fails on the generous reading. **An unmeasured
+  gain never suppresses a reprice** — a fresh install has no tape.
+- **The dwell exempts adopted orders.** An order must be an interval old to enter a round, but
+  `placedAt` is "when this session first saw the order", so an order read out of a menu snapshot
+  looks newborn however long it has really rested. Dwelling on that would mute the list for a whole
+  interval at the moment it matters most: logging in to a basket outbid overnight.
+- **A row survives its own cancel.** The bazaar has no in-place edit, so a reprice is a cancel and
+  then a re-post, and the cancel deletes the order the price came from. Rows are held until the item
+  is resting at the frozen price again, and while pinned they reserve their slot and their capital so
+  the basket cannot spend what the re-post needs.
+
+Claims and dead-trade cancels bypass the round entirely: a claim is coins already earned and blocks
+the item from leaving the order, and a `CANCEL` past the chase stop or an `EXPIRED` past the resting
+window is a trade that is over with the capital stranded in it. Neither improves by waiting.
+
+**Open:** `NpcSettingsSweepTest` for a max-orders-per-item cap (1, 2, unlimited). An unstackable line
+costs four times the clicks of a stackable one; the profit cost of capping it is not yet measured.
 
 ### Rejected: any guard on book depth
 
@@ -285,6 +340,39 @@ volume).
 cancel — and the player checks in several times an hour anyway.
 `BazaarSpreadStrategy.MIN_ORDERS_PER_SIDE = 15` exists to avoid undercut spirals, which cannot
 happen when the exit price is fixed. Do not import it.
+
+### Rejected: cancelling a live order to chase a better item
+
+Every measurement above plans a cycle against one book snapshot, so within a cycle the item chosen
+at the top of the window is trivially still the best one at the end. That hides the only argument
+for displacement: the book moving under some other item until it outruns something already resting.
+
+`NpcDisplacementSweepTest` replays the real book from the tape at the 30-minute check-in and runs
+`NpcBasket.plan` at every step, under two policies. **Sticky** is what ships — an order keeps its
+slot until the book kills it, and freed slots are refilled from the whole market. **Reshuffle** is
+the proposal at its theoretical best — the entire basket re-chosen every 30 minutes, with no
+cancelled queue position, no stranded partial fill and no click cost. Measured 2026-08-12 over 9
+windows of the user's tape, at the live settings (21 slots, 0.20 floor, 800M bankroll):
+
+| policy | profit | NPC payout | profit per coin of payout |
+| --- | --- | --- | --- |
+| sticky | 930.5M | 804.4M/day | **38.56%** |
+| reshuffle, free of charge | 989.9M (+6.4%) | 863.0M/day | 38.23% (-0.9%) |
+
+**Rejected.** The +6.4% is bought entirely by handing the NPC 7.3% more, on a day that already
+wants to hand over 804M against a 500M cap — 161% of it. Under a binding cap the day is worth
+`cap x margin on payout`, and on that number reshuffling is *worse*: 192.8M/day against 192.3M.
+Perfect foresight and free cancels buy the right to hit the same ceiling sooner at a slightly worse
+price.
+
+This is the same finding as *Ranking key: profit per slot-load, not cap efficiency* seen from the
+other end. Margin against the cap is what a capped day is won on, and the mod already spends it in
+the only place it pays — `npcMinMarginRatio` as a floor, never as a ranking key.
+
+The gap concentrates in 2 of 9 windows (+17.9%, +20.6%) and is under 4% in six of them, so a
+threshold tuned to catch it would fire on noise the rest of the time. The test is kept as a
+tripwire: it asserts both that the cap still binds and that reshuffling still loses on margin, so
+the question re-opens by failing rather than by being remembered.
 
 ### What actually limits a day, measured on the live book
 
@@ -448,3 +536,24 @@ UTC day, records `{"p": id, "t": epochMillis, "a": ask, "b": bid, "bv": …, "sv
 
 Persistence, drift and the holdout backtest are all computed from `b` alone plus
 `npc_sell_price` from the items resource.
+
+The two tape backtests are opt-in JUnit tests rather than scratch scripts, because both answer
+questions a later change could silently invalidate:
+
+```bash
+./gradlew test -PtapeBacktest \
+  -PbazaarTapeDir="$HOME/Library/Application Support/minecraft/config/skyblock-flipper/bazaar-tape" \
+  --tests '*NpcSettingsSweepTest'      # floors, slots, bankrolls, check-in, order caps
+./gradlew test -PtapeBacktest \
+  -PbazaarTapeDir="$HOME/Library/Application Support/minecraft/config/skyblock-flipper/bazaar-tape" \
+  --tests '*NpcDisplacementSweepTest'  # whether cancelling a live order to chase a better item pays
+```
+
+They differ in what they replay, which is the whole reason there are two. The settings sweep plans
+every cycle against **one live book snapshot** and varies the settings; it is the right shape for
+"what should this number be" and structurally cannot answer anything about the book changing. The
+displacement backtest replays **the book itself** at 30-minute steps out of the tape, rebuilding a
+one-level-a-side `BazaarProduct` per product per step. One level is faithful for the resting-order
+route, which reads the top of the bid side and the weekly volumes and nothing else, and is *not*
+faithful for the instant-buy route, which reads depth. Do not reuse that replay for anything that
+walks the book.

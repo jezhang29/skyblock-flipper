@@ -756,8 +756,8 @@ public final class FlipCommand {
 						: "all ")
 				+ new Fees(config.bazaarFlipperLevel, false).bazaarOrderSlots() + " slots, "
 				+ String.format("%.0f%%", config.npcMinMarginRatio * 100.0d) + " min margin, "
-				+ String.format("%.2gh", config.npcRestingHours) + " resting, checked every "
-				+ config.npcCheckInMinutes + "m");
+				+ String.format("%.2gh", config.npcRestingHours) + " resting, "
+				+ config.npcCheckInMinutes + "m reprice rounds");
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
 		line(source, "min confidence", String.format("%.2f", config.minConfidence));
 		line(source, "max adverse drift", config.maxAdverseDrift <= 0.0d

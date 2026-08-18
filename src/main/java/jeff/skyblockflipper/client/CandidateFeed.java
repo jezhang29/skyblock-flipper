@@ -3,11 +3,14 @@ package jeff.skyblockflipper.client;
 import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
+import jeff.skyblockflipper.core.ledger.PlannedQuotes;
+import jeff.skyblockflipper.core.ledger.Quote;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcContext;
 import jeff.skyblockflipper.core.strategy.NpcFlipStrategy;
+import jeff.skyblockflipper.core.strategy.NpcRound;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.strategy.StrategyContext;
 import jeff.skyblockflipper.core.strategy.StrategyEngine;
@@ -33,6 +36,16 @@ public final class CandidateFeed {
 	/** Deep enough to serve any allowed {@code hudLines} without re-ranking when it changes. */
 	private static final int CACHE_DEPTH = 10;
 
+	/**
+	 * What the mod has advised recently, so the ledger can recognise a fill against a basket line.
+	 *
+	 * <p>Good for the resting window, which is how long the plan behind an order is the plan the
+	 * player is still working. Read through {@code config()} at use time, so {@code /flip reload}
+	 * changes it.
+	 */
+	private static final PlannedQuotes QUOTES = new PlannedQuotes(() -> Duration.ofMinutes(
+			Math.round(SkyblockFlipperClient.config().npcRestingHours * 60.0d)));
+
 	private static volatile List<FlipCandidate> cached = List.of();
 	private static long cachedRevision = -1L;
 
@@ -47,6 +60,15 @@ public final class CandidateFeed {
 	 * the panel go on telling them to place it for the twenty seconds until the next poll.
 	 */
 	private static long worklistOrders = -1L;
+
+	/**
+	 * The round the worklist was built from, compared by identity.
+	 *
+	 * <p>A round supersedes on its own clock, and neither the book revision nor the tracker moves
+	 * when it does. Without this the panel would go on showing prices frozen an interval ago until
+	 * the next poll happened to change something else.
+	 */
+	private static NpcRound worklistRound;
 
 	private CandidateFeed() {
 	}
@@ -127,16 +149,50 @@ public final class CandidateFeed {
 	public static NpcWorklist.Worklist worklist() {
 		long revision = MarketDataService.data().bazaarRevision();
 		long orders = TrackerService.orderRevision();
+		NpcRound round = NpcRoundService.current();
 
-		if (worklist == null || revision != worklistRevision || orders != worklistOrders) {
+		if (worklist == null || revision != worklistRevision || orders != worklistOrders
+				|| round != worklistRound) {
 			worklistRevision = revision;
 			worklistOrders = orders;
+			worklistRound = round;
 			worklist = NpcWorklist.of(
 					TrackerService.enabled() ? TrackerService.restingBuyOrders() : List.of(),
-					context(), System.currentTimeMillis());
+					context(), System.currentTimeMillis(), round);
+
+			rememberQuotes(worklist);
 		}
 
 		return worklist;
+	}
+
+	/**
+	 * Records what this basket promised, so a fill hours from now can be held to it.
+	 *
+	 * <p>Here rather than at the screens because this is the one place a basket is built, and the
+	 * panel, the Basket tab, the reminder and {@code /flip npc plan} are four views of it. Recording
+	 * at any of them would mean a trade counted as quoted or not depending on which window the
+	 * player happened to have open.
+	 *
+	 * <p>It has to be remembered rather than looked up later: {@code NpcBasket} drops an item the
+	 * moment an order rests on it, so by the time the buy claims, the plan that asked for it is gone
+	 * from the basket exactly because it was followed.
+	 */
+	private static void rememberQuotes(NpcWorklist.Worklist built) {
+		long now = System.currentTimeMillis();
+
+		QUOTES.prune(now);
+
+		for (NpcBasket.Line line : built.basket().lines()) {
+			QUOTES.quoted(new Quote(line.plan().itemId(), line.plan().displayName(),
+					StrategyKind.NPC_FLIP, line.plan().unitCost(), line.plan().unitNetProfit(),
+					line.units(), line.capital()), now);
+		}
+	}
+
+	/** What the mod has recently advised, for the ledger to recognise a fill against. */
+	public static PlannedQuotes quotes() {
+		return QUOTES;
 	}
 
 	/** The new orders out of {@link #worklist()}, already sized around what is resting. */
@@ -149,6 +205,9 @@ public final class CandidateFeed {
 		cachedRevision = -1L;
 		worklistRevision = -1L;
 		worklist = null;
+		// The open round froze the check-in interval along with its prices, so an edit to it would
+		// otherwise not be felt until the round opened under the old one had run out.
+		NpcRoundService.clear();
 	}
 
 	private static void refreshIfStale() {

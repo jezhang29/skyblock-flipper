@@ -73,6 +73,24 @@ class StackingTest {
 		assertEquals(0L, product(List.of(new OrderLevel(10.0d, 300L, 0))).largestRestingOrder());
 	}
 
+	/**
+	 * The split a player types, shared by the basket line to place and the round row to re-post.
+	 *
+	 * <p>A total on its own reads as one order, which is how 500 Jungle Hearts got typed into a book
+	 * that takes 256 of them at a time.
+	 */
+	@Test
+	void spellsOutHowUnitsDivideIntoOrders() {
+		assertEquals("1000", Stacking.orderSplit(1_000L, 71_680L));
+		assertEquals("256", Stacking.orderSplit(256L, 256L));
+		assertEquals("256 + 44", Stacking.orderSplit(300L, 256L));
+		assertEquals("3 x 256 + 232", Stacking.orderSplit(1_000L, 256L));
+		assertEquals("4 x 256", Stacking.orderSplit(1_024L, 256L));
+
+		// Nothing known about the item is a total, not a division by zero.
+		assertEquals("1000", Stacking.orderSplit(1_000L, 0L));
+	}
+
 	@Test
 	void anAbsentBookIsUnstackableRatherThanAnException() {
 		assertFalse(Stacking.stackable(entry(false), null));

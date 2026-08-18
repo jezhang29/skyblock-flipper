@@ -108,9 +108,11 @@ public final class TradeTracker {
 
 	private void apply(TradeEvent event) {
 		switch (event.kind()) {
-			case ORDER_PLACED -> orders.add(new TrackedOrder(event.at(), event.side(),
+			// The one order whose age is a fact: the placement itself was announced, so what is
+			// recorded is when Hypixel accepted it rather than when this first heard of it.
+			case ORDER_PLACED -> orders.add(new TrackedOrder(event.at(), false, event.side(),
 					event.displayName(), names.idFor(event.displayName()), event.units(),
-					event.coins(), 0.0d));
+					event.coins(), placedUnitPrice(event)));
 
 			// Announces a complete fill and nothing else; the money arrives at the claim.
 			case ORDER_FILLED -> matchOnTotal(event).orElseGet(() -> adopt(event)).fill(event.units());
@@ -139,6 +141,26 @@ public final class TradeTracker {
 			case AUCTION_LISTED -> {
 			}
 		}
+	}
+
+	/**
+	 * What a just-placed order rests at, out of the coins its setup line quoted.
+	 *
+	 * <p><b>Buys only.</b> A buy order escrows the gross, so the quoted coins over the units is the
+	 * price per unit exactly; a sell offer quotes what it will pay out net of tax, which is about 1%
+	 * under the price on the book and would read as an offer nobody posted.
+	 *
+	 * <p>Worth doing because the alternative was a hole rather than an approximation. Chat never
+	 * names a price per unit, so an order was unpriced until the orders menu had been drawn - and
+	 * {@code TrackerService.restingBuyOrders} drops an unpriced order, so {@code NpcBasket.Held}
+	 * charged neither a slot nor the coins for it and the basket would rank the same item again.
+	 * Placing a basket and re-opening it before visiting the menu therefore offered to buy some of it
+	 * twice. The menu still overrules this the moment it is read.
+	 */
+	private static double placedUnitPrice(TradeEvent event) {
+		return event.side() == TradeEvent.Side.BUY && event.units() > 0L
+				? event.coins() / event.units()
+				: 0.0d;
 	}
 
 	private void settle(TradeEvent event, Settlement.Venue venue) {
@@ -189,8 +211,14 @@ public final class TradeTracker {
 		}
 	}
 
+	/**
+	 * An order the menu drew that the chat stream never saw placed, dated to when it was seen.
+	 *
+	 * <p>Marked adopted, because that date is a lower bound and nothing more: the row may have been
+	 * resting since yesterday. Every rule that reasons about age has to know which of the two it has.
+	 */
 	private TrackedOrder adopt(OrderSnapshot snapshot) {
-		TrackedOrder order = new TrackedOrder(snapshot.at(), snapshot.side(),
+		TrackedOrder order = new TrackedOrder(snapshot.at(), true, snapshot.side(),
 				snapshot.displayName(), snapshot.itemId(), snapshot.total(), 0.0d,
 				snapshot.unitPrice());
 		orders.add(order);
@@ -199,7 +227,7 @@ public final class TradeTracker {
 
 	/** For an event about an order placed before capture started, or in an earlier session. */
 	private TrackedOrder adopt(TradeEvent event) {
-		TrackedOrder order = new TrackedOrder(event.at(), event.side(), event.displayName(),
+		TrackedOrder order = new TrackedOrder(event.at(), true, event.side(), event.displayName(),
 				names.idFor(event.displayName()), event.units(), 0.0d, event.unitPrice());
 		orders.add(order);
 		return order;

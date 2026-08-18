@@ -13,6 +13,7 @@ package jeff.skyblockflipper.core.track;
  */
 public final class TrackedOrder {
 	private final long placedAt;
+	private final boolean adopted;
 	private final TradeEvent.Side side;
 	private final String displayName;
 	private final double setupCoins;
@@ -24,9 +25,10 @@ public final class TrackedOrder {
 	private double unitPrice;
 	private Status status = Status.RESTING;
 
-	TrackedOrder(long placedAt, TradeEvent.Side side, String displayName, String itemId, long total,
-			double setupCoins, double unitPrice) {
+	TrackedOrder(long placedAt, boolean adopted, TradeEvent.Side side, String displayName,
+			String itemId, long total, double setupCoins, double unitPrice) {
 		this.placedAt = placedAt;
+		this.adopted = adopted;
 		this.side = side;
 		this.displayName = displayName;
 		this.itemId = itemId;
@@ -52,6 +54,23 @@ public final class TrackedOrder {
 
 	public long placedAt() {
 		return placedAt;
+	}
+
+	/**
+	 * Whether this order was met rather than watched being placed, so {@link #placedAt} is when it
+	 * was first seen and says nothing about how long it has really been resting.
+	 *
+	 * <p>True for every order adopted from an orders-menu snapshot or from a fill line with no
+	 * placement behind it - an order from an earlier session, from another device, or from before
+	 * capture was switched on. False only when the placement itself was in chat, which is the one
+	 * case where the time is the real one.
+	 *
+	 * <p>The distinction exists because a dwell rule cannot be built on {@link #placedAt} alone:
+	 * every order in a fresh session looks newborn, so {@code NpcRound} would refuse to say anything
+	 * about a basket that had been outbid overnight until it had been logged in for a whole interval.
+	 */
+	public boolean adopted() {
+		return adopted;
 	}
 
 	public TradeEvent.Side side() {
@@ -115,7 +134,14 @@ public final class TrackedOrder {
 		// with the client shut.
 		filled = Math.max(filled, snapshot.filled());
 		total = snapshot.total();
-		unitPrice = snapshot.unitPrice();
+
+		// Only when the menu actually stated one. A slot whose "Price per unit" line the parser did
+		// not find reports zero, and taking that would throw away a price derived from the setup
+		// line - turning a priced order back into an unpriced one on the strength of a missing lore
+		// line.
+		if (snapshot.unitPrice() > 0.0d) {
+			unitPrice = snapshot.unitPrice();
+		}
 
 		// And for how much was collected, which used to be read as unknowable here. It is not: the
 		// menu prints "You have 3 items to claim!" on top of the Filled: line, and stops printing it
