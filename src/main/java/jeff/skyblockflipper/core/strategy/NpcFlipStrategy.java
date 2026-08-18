@@ -455,7 +455,8 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				fillPerHour,
 				fill.measured(),
 				edge,
-				confidence);
+				confidence,
+				premium > 0.0d);
 	}
 
 	private static Route better(Route a, Route b) {

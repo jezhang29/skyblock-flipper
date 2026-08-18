@@ -25,6 +25,10 @@ import jeff.skyblockflipper.core.valuation.NpcEdge;
  *                      the basket ranks in
  * @param edge          measured tape history, or null where the product has too little of it. Null
  *                      is expected on a fresh install and is not a rejection
+ * @param postsAboveBook whether the drift premium lifted {@link #postPrice()} above the live top of
+ *                      the book. When true the order is meant to rest above the book, so the price
+ *                      page must type it on the sign rather than click Hypixel's "+0.1" button,
+ *                      which would post at the top of the book and spend the whole premium
  */
 public record NpcPlan(
 		String itemId,
@@ -39,7 +43,8 @@ public record NpcPlan(
 		double fillPerHour,
 		boolean fillMeasured,
 		NpcEdge edge,
-		double confidence
+		double confidence,
+		boolean postsAboveBook
 ) {
 	/**
 	 * The ranking key: coins of profit one inventory load of this item carries.
