@@ -16,7 +16,7 @@ import java.util.List;
  * a 20% floor, 800M - ranking on the slot is worth 65.5M a cycle against 47.3M on the load.
  *
  * <p><b>Inventory loads are what the player runs out of.</b> The same measurement puts that 65.5M at
- * 363 loads against 114, and a load is 36 inventory slots carried to a shop by hand. Buying the extra
+ * 363 loads against 114, and a load is 35 inventory slots carried to a shop by hand. Buying the extra
  * 18M costs about 9,000 clicks, which is the cost no model in this repo has ever priced because it is
  * not paid in coins.
  *

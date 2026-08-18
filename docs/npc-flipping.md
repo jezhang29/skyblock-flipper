@@ -536,8 +536,9 @@ Measured on the live book 2026-08-14 at the user's settings:
 | profit per inventory load (shipped) | 47.3M | 114 |
 | profit per order slot | **65.5M** | **363** |
 
-**Neither is wrong, and that is why it is a setting rather than a fix.** A load is 36 inventory
-slots carried to a shop by hand, so the extra 18M costs roughly 9,000 clicks — a price no model in
+**Neither is wrong, and that is why it is a setting rather than a fix.** A load is 35 inventory
+slots carried to a shop by hand (a full inventory is 36, less the hotbar slot the SkyBlock Menu
+locks), so the extra 18M costs roughly 9,000 clicks — a price no model in
 this repo has ever quoted, because it is not paid in coins. `npcRankingKey` defaults to `LOAD`, on
 the grounds that clicking is what a player runs out of first.
 

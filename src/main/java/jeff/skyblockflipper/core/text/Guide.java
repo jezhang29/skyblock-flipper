@@ -503,8 +503,8 @@ public final class Guide {
 					+ "supply. An item with 4,000 units sitting under the NPC price but only 40 traded "
 					+ "in a week is not a 4,000 unit opportunity, it is a week of holding something "
 					+ "nobody wants. Plans are sized on how much really trades"),
-			new Term("Hauling", "How many inventory loads a plan means carrying: 36 slots at a stack of "
-					+ "64, or 36 unstackable items. There is no walking involved, since /trades reaches "
+			new Term("Hauling", "How many inventory loads a plan means carrying: 35 slots at a stack of "
+					+ "64, or 35 unstackable items. There is no walking involved, since /trades reaches "
 					+ "a shop from anywhere with a booster cookie, so this is a count of how much "
 					+ "clicking the plan is"),
 			new Term("Time to fill", "How long your order should take at the size the plan asks for. "

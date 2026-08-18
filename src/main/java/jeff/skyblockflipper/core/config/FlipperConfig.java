@@ -307,7 +307,7 @@ public final class FlipperConfig {
 	 * runs out of two different things depending on whose time is being spent.
 	 *
 	 * <p><b>{@code LOAD} ranks on profit per inventory load</b>, which is the shipped behaviour and
-	 * what minimises hauling: an item's units have to be carried to the NPC 36 inventory slots at a
+	 * what minimises hauling: an item's units have to be carried to the NPC 35 inventory slots at a
 	 * time, and that carrying is most of the clicking this trade costs.
 	 *
 	 * <p><b>{@code ORDER_SLOT} ranks on profit per bazaar order slot</b>, which is the resource that
