@@ -111,7 +111,7 @@ public final class ConfigSchema {
 	}
 
 	public static List<Group> groups() {
-		return List.of(MONEY, NPC, SCANNING, DISPLAY, CONNECTION, COLLECTOR, TRACKING);
+		return List.of(MONEY, NPC, CRAFT, SCANNING, DISPLAY, CONNECTION, COLLECTOR, TRACKING);
 	}
 
 	/** Every entry, in group order. Useful for lookups and for the test that nothing is missing. */
@@ -226,6 +226,25 @@ public final class ConfigSchema {
 							+ "enough to lose a line before you read it. One note per round, and "
 							+ "nothing at all with the reminder itself off.",
 					c -> c.npcRepriceSound, (c, v) -> c.npcRepriceSound = v)));
+
+	/**
+	 * Crafting's own two settings, apart from Money for the same reason the NPC ones are: the slot
+	 * budget means nothing to any other strategy, and it is a budget shared with the NPC basket
+	 * rather than a coin limit.
+	 */
+	private static final Group CRAFT = new Group("Craft flipping", List.of(
+			new Entry.Flag("craftFlipsEnabled", "Look for crafting profits",
+					"Buy materials on the bazaar, craft, and sell the result back. The mod checks "
+							+ "every recipe it knows against the live prices; it never checks whether "
+							+ "you have unlocked the recipe, so read the unlock line before you buy.",
+					c -> c.craftFlipsEnabled, (c, v) -> c.craftFlipsEnabled = v),
+			new Entry.IntRange("craftMaxOrderSlots", "Order slots one craft may use",
+					"How many of your bazaar order slots a single crafting job may take up. Materials "
+							+ "are cheaper bought on your own buy orders, but each one sits in a slot "
+							+ "the NPC basket also wants. Jobs over this limit are shown with the "
+							+ "materials bought instantly instead, which uses one slot.",
+					1, Fees.MAX_BAZAAR_ORDER_SLOTS, 1,
+					c -> c.craftMaxOrderSlots, (c, v) -> c.craftMaxOrderSlots = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Search the auction house",

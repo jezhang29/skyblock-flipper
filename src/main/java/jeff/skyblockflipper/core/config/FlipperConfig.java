@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.CraftContext;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 
 import java.io.IOException;
@@ -255,6 +256,25 @@ public final class FlipperConfig {
 	 * account's real limit still wins.
 	 */
 	public int npcMaxOrderSlots = 0;
+
+	/**
+	 * Whether craft flips are offered at all.
+	 *
+	 * <p>On, because the strategy refuses rather than guesses everywhere its pricing is unsure, and
+	 * a strategy nobody sees is a strategy nobody checks. Off is for the player who wants the ranked
+	 * list to be about the NPC basket and nothing else.
+	 */
+	public boolean craftFlipsEnabled = true;
+
+	/**
+	 * How many bazaar order slots one craft plan may occupy.
+	 *
+	 * <p>Slots are shared with the NPC basket, which is the daily driver, and measured on the live
+	 * book of 2026-08-18 the best eight craft plans together wanted 19 of the 21 slots a Bazaar
+	 * Flipper 1 account has. A plan over this budget is re-quoted with its materials instant-bought,
+	 * which rests nothing but the sell offer, rather than dropped.
+	 */
+	public int craftMaxOrderSlots = CraftContext.DEFAULT_MAX_ORDER_SLOTS;
 
 	/**
 	 * How much of a resting window's measured upward bid drift to pay up front, as a multiple of it.
@@ -557,6 +577,9 @@ public final class FlipperConfig {
 		// Zero means "all of them", so it stays; the ceiling is the most any Bazaar Flipper level
 		// could give. What the account actually has still wins at plan time.
 		npcMaxOrderSlots = Math.clamp(npcMaxOrderSlots, 0, Fees.MAX_BAZAAR_ORDER_SLOTS);
+		// A craft plan always rests the one sell offer it exits on, so zero would mean "no craft
+		// flips" while reading as a tightened budget. Turning them off is what the flag is for.
+		craftMaxOrderSlots = Math.clamp(craftMaxOrderSlots, 1, Fees.MAX_BAZAAR_ORDER_SLOTS);
 		hudLines = Math.clamp(hudLines, 1, 10);
 		// A zero or negative discount would call every listing at fair value a bargain and hand
 		// the sweep tens of thousands of blobs to decode.

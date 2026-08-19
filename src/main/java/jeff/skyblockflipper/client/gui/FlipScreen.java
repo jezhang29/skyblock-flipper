@@ -88,6 +88,7 @@ public final class FlipScreen extends Screen {
 		BAZAAR("Bazaar", StrategyKind.BAZAAR_SPREAD),
 		NPC("NPC", StrategyKind.NPC_FLIP),
 		BASKET("Basket", null),
+		CRAFT("Craft", StrategyKind.CRAFT),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
 		LEDGER("Ledger", null),
 		GUIDE("Guide", null);
@@ -261,7 +262,7 @@ public final class FlipScreen extends Screen {
 	}
 
 	private int contentTop() {
-		return MARGIN + TAB_HEIGHT + 4;
+		return tabRowY(tabRows().size()) + 2;
 	}
 
 	private int contentHeight() {
@@ -315,7 +316,7 @@ public final class FlipScreen extends Screen {
 		renderedRevision = revision;
 
 		if (tab.showsCandidates()) {
-			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH), data.trends());
+			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH));
 		} else if (tab == Tab.BASKET) {
 			worklist = CandidateFeed.worklist();
 
@@ -386,26 +387,69 @@ public final class FlipScreen extends Screen {
 	}
 
 	private void renderTabs(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
-		int tabX = MARGIN;
+		List<List<Tab>> rows = tabRows();
 
-		for (Tab candidate : Tab.values()) {
-			int tabWidth = tabWidth(candidate);
-			boolean hovered = mouseX >= tabX && mouseX < tabX + tabWidth
-					&& mouseY >= MARGIN && mouseY < MARGIN + TAB_HEIGHT;
+		for (int row = 0; row < rows.size(); row++) {
+			int tabX = MARGIN;
+			int tabY = tabRowY(row);
 
-			graphics.fill(tabX, MARGIN, tabX + tabWidth, MARGIN + TAB_HEIGHT,
-					candidate == tab ? TAB_ACTIVE : TAB_IDLE);
+			for (Tab candidate : rows.get(row)) {
+				int tabWidth = tabWidth(candidate);
+				boolean hovered = mouseX >= tabX && mouseX < tabX + tabWidth
+						&& mouseY >= tabY && mouseY < tabY + TAB_HEIGHT;
 
-			graphics.text(font, Component.literal(candidate.label),
-					tabX + 7, MARGIN + (TAB_HEIGHT - font.lineHeight) / 2 + 1,
-					candidate == tab || hovered ? TEXT : TEXT_DIM);
+				graphics.fill(tabX, tabY, tabX + tabWidth, tabY + TAB_HEIGHT,
+						candidate == tab ? TAB_ACTIVE : TAB_IDLE);
 
-			tabX += tabWidth + 2;
+				graphics.text(font, Component.literal(candidate.label),
+						tabX + 7, tabY + (TAB_HEIGHT - font.lineHeight) / 2 + 1,
+						candidate == tab || hovered ? TEXT : TEXT_DIM);
+
+				tabX += tabWidth + 2;
+			}
 		}
 	}
 
 	private int tabWidth(Tab candidate) {
 		return font.width(Component.literal(candidate.label)) + 14;
+	}
+
+	/**
+	 * The tabs split into as many rows as this width needs.
+	 *
+	 * <p>They used to be one row that assumed it fit. It did, with seven tabs, right up to the
+	 * width GUI scale 6 leaves - about 330 scaled pixels against 311 of tabs. An eighth tab would
+	 * have run off the right edge and been unclickable, on the setting the user actually plays at.
+	 * Wrapping is measured against {@link #viewWidth} rather than against a tab count, so the next
+	 * tab does not have to rediscover this.
+	 */
+	private List<List<Tab>> tabRows() {
+		List<List<Tab>> rows = new ArrayList<>();
+		List<Tab> row = new ArrayList<>();
+		int tabX = MARGIN;
+
+		for (Tab candidate : Tab.values()) {
+			int tabWidth = tabWidth(candidate);
+
+			if (!row.isEmpty() && tabX + tabWidth > viewWidth - MARGIN) {
+				rows.add(row);
+				row = new ArrayList<>();
+				tabX = MARGIN;
+			}
+
+			row.add(candidate);
+			tabX += tabWidth + 2;
+		}
+
+		if (!row.isEmpty()) {
+			rows.add(row);
+		}
+
+		return rows;
+	}
+
+	private static int tabRowY(int row) {
+		return MARGIN + row * (TAB_HEIGHT + 2);
 	}
 
 	/**
@@ -444,7 +488,7 @@ public final class FlipScreen extends Screen {
 		if (candidate == null) {
 			Component message = Component.literal(table.isEmpty()
 					? "No candidates clear the fee stack right now. That is a normal answer."
-					: "Select a row to see the plan and the risks.");
+					: "Select a row to see the plan.");
 
 			graphics.textWithWordWrap(font, message, x, y, wrapWidth, TEXT_DIM);
 			return y + font.wordWrapHeight(message, wrapWidth);
@@ -460,6 +504,37 @@ public final class FlipScreen extends Screen {
 						candidate.kind().label() + " - paid for " + candidate.kind().edge()),
 				x, cursor, TEXT_DIM);
 		cursor += font.lineHeight + 5;
+
+		// A craft flip is a list of clicks to make at a menu you are standing in front of, so the
+		// clicks come first and the arithmetic that justified them comes after. Every other strategy
+		// is one buy and one sell, where the numbers are the plan and the steps restate them.
+		if (candidate.kind() == StrategyKind.CRAFT) {
+			for (String warning : candidate.risks()) {
+				Component text = Component.literal(warning);
+				graphics.textWithWordWrap(font, text, x, cursor, wrapWidth, TEXT_WARN);
+				cursor += font.wordWrapHeight(text, wrapWidth) + 3;
+			}
+
+			cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
+			cursor += 4;
+
+			return figures(graphics, candidate, x, cursor, wrapWidth);
+		}
+
+		cursor = figures(graphics, candidate, x, cursor, wrapWidth);
+
+		cursor += 4;
+		cursor = section(graphics, x, cursor, wrapWidth, "Notes", candidate.notes(), TEXT_NOTE);
+		cursor += 2;
+		cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
+		cursor += 2;
+		return section(graphics, x, cursor, wrapWidth, "Risks", candidate.risks(), TEXT_WARN);
+	}
+
+	/** The money, the size and how long it takes, in the order those questions get asked. */
+	private int figures(GuiGraphicsExtractor graphics, FlipCandidate candidate, int x, int y,
+			int wrapWidth) {
+		int cursor = y;
 
 		cursor = field(graphics, x, cursor, wrapWidth, "Buy", String.format("%.1f", candidate.unitBuyPrice()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Sell", String.format("%.1f", candidate.unitSellPrice()));
@@ -495,12 +570,7 @@ public final class FlipScreen extends Screen {
 							MarketDataService.data().trends().window().toHours()));
 		}
 
-		cursor += 4;
-		cursor = section(graphics, x, cursor, wrapWidth, "Notes", candidate.notes(), TEXT_NOTE);
-		cursor += 2;
-		cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
-		cursor += 2;
-		return section(graphics, x, cursor, wrapWidth, "Risks", candidate.risks(), TEXT_WARN);
+		return cursor;
 	}
 
 	private int section(GuiGraphicsExtractor graphics, int x, int y, int wrapWidth, String heading,
@@ -1244,7 +1314,25 @@ public final class FlipScreen extends Screen {
 			return basketRowClicked(mouseX, mouseY);
 		}
 
-		return tab.showsCandidates() && table.mouseClicked(mouseX, mouseY);
+		if (!tab.showsCandidates() || !table.mouseClicked(mouseX, mouseY)) {
+			return false;
+		}
+
+		// Picking a craft row is what tells the bazaar panel which job to follow, so the steps are
+		// beside Hypixel's menu while the orders are typed instead of behind this screen. Picking
+		// any other kind stops following one: the player has moved on to a different trade, and a
+		// craft panel left up beside a basket they are now working would be the wrong list.
+		FlipCandidate picked = table.selection();
+
+		if (picked != null) {
+			if (picked.kind() == StrategyKind.CRAFT) {
+				CandidateFeed.workCraft(picked.itemId());
+			} else {
+				CandidateFeed.stopCraft();
+			}
+		}
+
+		return true;
 	}
 
 	/** @return true when the click landed in the basket panel, on a row or not */
@@ -1293,13 +1381,17 @@ public final class FlipScreen extends Screen {
 	}
 
 	private boolean tabClicked(double mouseX, double mouseY) {
-		if (mouseY < MARGIN || mouseY >= MARGIN + TAB_HEIGHT) {
+		List<List<Tab>> rows = tabRows();
+		int row = (int) ((mouseY - MARGIN) / (TAB_HEIGHT + 2));
+
+		if (mouseY < MARGIN || row >= rows.size()
+				|| mouseY >= tabRowY(row) + TAB_HEIGHT) {
 			return false;
 		}
 
 		int tabX = MARGIN;
 
-		for (Tab candidate : Tab.values()) {
+		for (Tab candidate : rows.get(row)) {
 			int tabWidth = tabWidth(candidate);
 
 			if (mouseX >= tabX && mouseX < tabX + tabWidth) {

@@ -8,6 +8,7 @@ import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.core.config.OverlaySide;
 import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
+import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.track.BazaarMenu;
 import jeff.skyblockflipper.core.track.BazaarSlots;
@@ -100,6 +101,19 @@ public final class BazaarOverlay {
 			case REPRICE -> 0xFFFFA65C;
 			case PLACE -> 0xFF6FD98A;
 			case HOLD -> TEXT_DIM;
+		};
+	}
+
+	/**
+	 * The same idea for a craft job: one colour per action, so the materials, the crafting and the
+	 * sale read as three blocks rather than as one wall.
+	 */
+	private static int colourOf(CraftJob.Action action) {
+		return switch (action) {
+			case BUY_ORDER -> 0xFF6FD98A;
+			case INSTANT_BUY -> 0xFF7FB8FF;
+			case CRAFT -> 0xFFD59BFF;
+			case SELL_OFFER -> 0xFFFFD24A;
 		};
 	}
 
@@ -202,6 +216,16 @@ public final class BazaarOverlay {
 			return;
 		}
 
+		// A craft job the player picked wins over the basket. Both are lists of prices to type at
+		// this menu, and two panels beside one menu is two panels to read; the player said which
+		// one they are working by choosing it, so that is the one drawn until they stop it.
+		String craftOutput = CandidateFeed.craftOutputId();
+
+		if (craftOutput != null) {
+			renderCraft(screen, graphics, mouseX, mouseY, craftOutput);
+			return;
+		}
+
 		NpcWorklist.Worklist worklist = CandidateFeed.worklist();
 		String note = note(worklist);
 
@@ -269,6 +293,92 @@ public final class BazaarOverlay {
 		}
 
 		Hit.clear();
+	}
+
+	/**
+	 * The craft job, drawn wherever the basket would have been.
+	 *
+	 * <p><b>No green box.</b> {@code BazaarStep} works a slot out from an {@code NpcWorklist.Task},
+	 * so it has nothing to say about a craft row, and a box left over from the basket would sit
+	 * behind a slot this list is not asking for. The panel says what to type and the player finds
+	 * the button, which is how this worked before the highlight existed.
+	 */
+	private static void renderCraft(Screen screen, GuiGraphicsExtractor graphics, int mouseX,
+			int mouseY, String outputId) {
+		String title = screen.getTitle().getString();
+		Font font = Minecraft.getInstance().font;
+		Board board = craftBoard(CandidateFeed.craftJob(), outputId, title, font);
+
+		if (screen instanceof ContainerScreenLayout layout
+				&& screen instanceof AbstractContainerScreen<?> container) {
+			if (bazaarFlow(container) || BazaarMenu.isBazaar(title)
+					|| !board.openProduct().isEmpty()) {
+				leftBazaarAt = System.currentTimeMillis();
+				Guidance.clear();
+				drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
+				return;
+			}
+
+			Guidance.clear();
+			Hit.clear();
+			return;
+		}
+
+		boolean onASign = screen instanceof AbstractSignEditScreen;
+
+		Guidance.leftTheMenu(onASign);
+
+		if (onASign && System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
+			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
+			return;
+		}
+
+		Hit.clear();
+	}
+
+	private static WeakReference<Screen> flowScreen = new WeakReference<>(null);
+	private static long flowReadAt;
+	private static boolean flowValue;
+
+	/**
+	 * Whether this menu is part of the bazaar, read from its contents rather than its title.
+	 *
+	 * <p>The three screens an order is actually placed on - the create screen, the amount, the price
+	 * - are titled nothing that names the bazaar, which is why {@code BazaarSlots} recognises them
+	 * by their buttons. Throttled on the same interval {@link Guidance} reads a menu at, because
+	 * this runs every frame and describing a menu is not free.
+	 */
+	private static boolean bazaarFlow(AbstractContainerScreen<?> container) {
+		long now = System.currentTimeMillis();
+
+		if (flowScreen.get() == container && now - flowReadAt < Guidance.REREAD_MILLIS) {
+			return flowValue;
+		}
+
+		flowScreen = new WeakReference<>(container);
+		flowReadAt = now;
+		flowValue = BazaarSlots.isBazaarFlow(MenuReader.describe(container, now));
+
+		return flowValue;
+	}
+
+	private static Board craftBoard;
+	private static CraftJob craftBoardJob;
+	private static String craftBoardOutput = "";
+	private static String craftBoardTitle = "";
+
+	/** The laid-out craft board, rebuilt only when the job or the screen behind it changes. */
+	private static Board craftBoard(CraftJob job, String outputId, String title, Font font) {
+		if (craftBoard == null || job != craftBoardJob || !outputId.equals(craftBoardOutput)
+				|| !title.equals(craftBoardTitle)) {
+			craftBoardJob = job;
+			craftBoardOutput = outputId;
+			craftBoardTitle = title;
+			craftBoard = Board.ofCraft(job, outputId, title, font);
+			Hit.reset(craftBoard);
+		}
+
+		return craftBoard;
 	}
 
 	/** Beside Hypixel's menu, on the side the settings name. */
@@ -411,8 +521,8 @@ public final class BazaarOverlay {
 	 * @param openProduct the row the open product page is for, empty on every other screen
 	 * @param note        the between-rounds line under the heading, empty when nothing is waiting
 	 */
-	private record Board(List<Row> rows, String openProduct, String note, int holding, int width,
-			int rowHeight, int headerHeight) {
+	private record Board(List<Row> rows, String openProduct, String note, String label, int holding,
+			int width, int rowHeight, int headerHeight) {
 		/**
 		 * One line of work: what to search for, what to type, and how the units divide into orders.
 		 *
@@ -420,11 +530,8 @@ public final class BazaarOverlay {
 		 *              box character by character, and 84999.9 shortened to 85k is a different order.
 		 *              Empty on a claim or a cancel, which are a button rather than a number
 		 */
-		private record Row(NpcWorklist.Task task, String verb, String name, String price,
+		private record Row(int colour, int group, String verb, String name, String price,
 				String units) {
-			int colour() {
-				return colourOf(task.kind());
-			}
 		}
 
 		static Board of(NpcWorklist.Worklist worklist, String title, String note, Font font) {
@@ -434,7 +541,8 @@ public final class BazaarOverlay {
 			int indent = PAD + ACCENT + ACCENT_GAP;
 
 			for (NpcWorklist.Task task : worklist.pending()) {
-				Row row = new Row(task, task.verb(), task.displayName(),
+				Row row = new Row(colourOf(task.kind()), task.kind().ordinal(), task.verb(),
+						task.displayName(),
 						task.hasPrice() ? String.format("%.1f", task.price()) : "",
 						task.orderSplit());
 
@@ -448,8 +556,54 @@ public final class BazaarOverlay {
 				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
 			}
 
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, worklist.holding(),
-					width, font.lineHeight * 2 + LINE_GAP + 2,
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, "Do these",
+					worklist.holding(), width, font.lineHeight * 2 + LINE_GAP + 2,
+					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
+		}
+
+		/**
+		 * The same panel for one craft job: buy the materials, craft, offer the result.
+		 *
+		 * <p>Laid out by the same code as the basket because it is the same problem - a list of
+		 * prices and sizes to type into a menu you are standing in front of - and because a second
+		 * panel drawn a different way beside the same menu is two things for the player to learn.
+		 *
+		 * <p>A null job with an item still selected means the flip stopped clearing its gates while
+		 * it was being worked. That draws the heading and the reason and no rows, rather than
+		 * vanishing: a panel that disappears is indistinguishable from one that has broken, and the
+		 * player may be halfway through buying the materials.
+		 */
+		static Board ofCraft(CraftJob job, String outputId, String title, Font font) {
+			List<Row> rows = new ArrayList<>();
+			List<String> names = new ArrayList<>();
+			int indent = PAD + ACCENT + ACCENT_GAP;
+			String note = job == null
+					? "no longer clears - check the flip screen"
+					: "";
+			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
+
+			for (CraftJob.Row source : job == null ? List.<CraftJob.Row>of() : job.rows()) {
+				Row row = new Row(colourOf(source.action()), source.action().ordinal(),
+						source.action().label(), source.displayName(),
+						source.action().priced() ? String.format("%.1f", source.price()) : "",
+						source.orderSplit());
+
+				rows.add(row);
+				names.add(source.displayName());
+
+				int nameLine = text(font, row.verb() + " " + row.name());
+				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
+						+ text(font, row.units()) + text(font, UNITS_MARK);
+
+				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
+			}
+
+			String label = "Craft " + (job == null ? outputId : job.displayName());
+
+			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
+
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, 0, width,
+					font.lineHeight * 2 + LINE_GAP + 2,
 					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
 		}
 
@@ -522,7 +676,7 @@ public final class BazaarOverlay {
 				// is serving, so a list of twenty does not have to be read through to find the one
 				// in front of you.
 				if (i == Guidance.row() || (!openProduct.isEmpty()
-						&& row.task().displayName().equalsIgnoreCase(openProduct))) {
+						&& row.name().equalsIgnoreCase(openProduct))) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_OPEN);
 				} else if (i == hovered) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_HOVER);
@@ -530,7 +684,7 @@ public final class BazaarOverlay {
 
 				// Where one kind of work ends and the next begins. The list is sorted claims, cancels,
 				// reprices, places, so this is a group boundary and not a per-row decoration.
-				if (i > first && rows.get(i - 1).task().kind() != row.task().kind()) {
+				if (i > first && rows.get(i - 1).group() != row.group()) {
 					graphics.fill(x + 1, cursor - 1, right - 1, cursor, GROUP_RULE);
 				}
 
@@ -578,12 +732,12 @@ public final class BazaarOverlay {
 			if (rows.isEmpty()) {
 				// The note under this says what is waiting and when. "Do these (0)" would be an
 				// instruction to do nothing, which is not what the panel is on screen for.
-				return "Nothing to do yet";
+				return label.equals("Do these") ? "Nothing to do yet" : label;
 			}
 
 			return rows.size() == last - first
-					? "Do these (" + rows.size() + ")"
-					: "Do these (" + (first + 1) + "-" + last + " of " + rows.size() + ")";
+					? label + " (" + rows.size() + ")"
+					: label + " (" + (first + 1) + "-" + last + " of " + rows.size() + ")";
 		}
 
 		/**
@@ -952,7 +1106,7 @@ public final class BazaarOverlay {
 			if (!onNumbers || row.price().isEmpty()) {
 				// Shortened to what the search sign will take: the full name of a long item cannot
 				// be pasted into it at all, and the bazaar searches on a prefix anyway.
-				put(Guidance.fitting(row.task().displayName()), "name");
+				put(Guidance.fitting(row.name()), "name");
 				return;
 			}
 

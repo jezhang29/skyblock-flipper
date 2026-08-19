@@ -14,26 +14,42 @@ Deep records live elsewhere and are linked from here:
   method. Read it before proposing any new signature key term.
 - `docs/headless-collector.md`, `docs/trade-capture.md` — the collector and the capture protocol.
 
-## Current state (2026-08-15)
+## Current state (2026-08-19)
 
 The whole NPC basket strategy is merged to `main` (2026-08-17) — the basket, the reprice rounds, the
 check-in reminder, the Basket tab, the bazaar slot highlighting and the drift premium. The squash
 folded 40+ `wip:` commits into a clean history and the branch is deleted. It has run in real play
 across several sessions. `main` is ahead of `origin/main`; nothing is pushed until the user asks.
 
+The **CRAFT seat is now filled**, on branch `craft-flips`: the NEU recipe table is imported and
+bundled, `core/pricing/CraftQuote` prices a recipe on either input route, and
+`core/strategy/CraftFlipStrategy` ranks it as an ordinary `FlipCandidate` reachable from
+`/flip craft`, the Craft tab and `strategyFilter=CRAFT`. The bazaar overlay follows one chosen craft
+job the way it follows the NPC basket, so the steps are beside Hypixel's menu while the orders are
+typed. Every number behind it is offline - one live book snapshot plus 13 days of bazaar tape. Read
+`docs/craft-flipping.md` before touching any of it.
+
 Everything the valuation side ships (pet levels, the fill model, the rune/potion/dungeon/dye/
 ethermerge signature splits, the Midas ratio quote) is verified offline only. Getting it seen in a
-running client is still the largest unverified-work risk in the project.
+running client is still the largest unverified-work risk in the project, and craft flipping has now
+joined that queue.
 
 ## What is next
 
-One item stands: getting the shipped valuation work seen in a running client. The three NPC-branch
-items above it are done or measured shut.
+Two items stand, and both are the same shape: work finished offline that has never been seen in play.
 
-1. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
+1. **Play a craft flip.** Nothing in the craft strategy has been crafted and sold on Hypixel. What
+   only play can answer: whether a recipe's materials really fill on a resting order inside the
+   horizon, whether the sell offer sheds at the rate `FillModel` predicts, and how much of the
+   ranked list the player cannot craft at all because of unlocks the mod does not read.
+2. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
    signature splits and the Midas ratio quote are all offline-only. This is a long queue of
    unverified-in-game work, and it needs the built jar played on live Hypixel — the user's job, no
    dev client exists.
+
+Not started, and deliberately: **checking unlocks against the player**, and **pricing an ingredient
+as a craft of its own** (recursive inputs). Both are named in `docs/craft-flipping.md`; neither is
+worth building before a craft flip has been run in play.
 
 Done and closed since the last write:
 
@@ -48,7 +64,7 @@ Done and closed since the last write:
   unattended bazaar-to-NPC makes almost nothing. Do not rebuild an away-mode. See
   `npc-unattended-verdict` in memory and `docs/npc-flipping.md`.
 
-Nothing else is queued. The signature-gap seam is closed and measured closed: the harm probe's top
+Nothing else is queued beyond those two. The signature-gap seam is closed and measured closed: the harm probe's top
 entry is `eman_kills` at 45.5M coins, and everything below it is a counter or a per-item identifier.
 `UnreadAttributeProbeTest` asserts the top stays under 100M — it is the alarm for a Skyblock update
 adding a new invisible upgrade, not a to-do list. Do not start another attribute branch without a
@@ -98,8 +114,19 @@ rather than a memory.
   a key term). Pet level, dungeon `item_tier` and Kuudra `attributes` also ship.
 - **More tape does not buy pricing accuracy.** Coverage is 88.9% at 48h against 89.3% at 120h;
   `valuationWindowDays` stays 2.
-- **AH → BZ arbitrage is dead by game rule.** The two venues trade disjoint item sets. Craft flips
-  have no deterministic recipe source in the API, so that seat stays empty too.
+- **AH → BZ arbitrage is dead by game rule.** The two venues trade disjoint item sets.
+- **Craft flips have no recipe source in the API, and that is answered.** The source is the NEU item
+  dump, MIT licensed, imported offline by `core/recipe/NeuRecipeImporter` and shipped as a table
+  `RecipeBook` reads. Measured worth: 35-47 profitable recipes on every one of 13 tape days, a
+  median 5.4M/hour on ~75M of capital at a 5% flow share, without touching the 500M NPC cap. The
+  exit is always a **resting sell offer** — never a dump (worth ~10x less) and never an NPC sale,
+  which spends the cap the daily driver needs. **Order slots are the constraint, not coins**: the
+  best eight plans wanted 19 of 21, so one plan is capped at `craftMaxOrderSlots` and re-quoted on
+  the instant route rather than dropped, and counted off the real orders (`Stacking.orderSplit`)
+  rather than one per ingredient — 58,624 units of an unstackable material is 229 orders, not one.
+  A recipe is offered only while its **margin drift** (output drift less the cost-weighted drift of
+  its materials) is holding. Do not re-open the "no recipe source" line — read
+  `docs/craft-flipping.md`.
 - **Hedonic / component valuation measured flat** — no improvement over the base median. The hole is
   real (22.9% of sales unpriceable, 61.7% of coins) but component multipliers do not fill it.
 

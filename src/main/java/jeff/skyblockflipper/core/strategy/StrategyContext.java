@@ -36,6 +36,9 @@ import java.util.List;
  * @param npc              the NPC-specific half: measured edge history plus the settings that
  *                         decide what is worth an order slot. Bundled because they are only ever
  *                         read as a set, and because the basket allocator reads the same set
+ * @param craft            the craft-specific half: whether crafting is offered at all, and the
+ *                         order-slot budget one craft plan may spend out of the account's shared
+ *                         pool
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -49,7 +52,8 @@ public record StrategyContext(
 		double maxAdverseDrift,
 		Duration fillHorizon,
 		double maxCapitalShare,
-		NpcContext npc
+		NpcContext npc,
+		CraftContext craft
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
@@ -66,6 +70,7 @@ public record StrategyContext(
 
 		maxCapitalShare = maxCapitalShare <= 0.0d ? UNCAPPED : Math.min(maxCapitalShare, UNCAPPED);
 		npc = npc == null ? NpcContext.unlimited() : npc;
+		craft = craft == null ? CraftContext.defaults() : craft;
 	}
 
 	/**
@@ -92,13 +97,23 @@ public record StrategyContext(
 				maxAdverseDrift, DEFAULT_FILL_HORIZON, UNCAPPED);
 	}
 
+	/** The shape before crafting had settings of its own, for callers that state only the NPC ones. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, CraftContext.defaults());
+	}
+
 	/** The shape before NPC planning had settings of its own, for callers that track none. */
 	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
 			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
 			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
 			double maxCapitalShare) {
 		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
-				maxAdverseDrift, fillHorizon, maxCapitalShare, NpcContext.unlimited());
+				maxAdverseDrift, fillHorizon, maxCapitalShare, NpcContext.unlimited(),
+				CraftContext.defaults());
 	}
 
 	/** The shape before a per-flip capital cap existed, for callers that do not want one. */

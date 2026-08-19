@@ -30,6 +30,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcProbe;
@@ -132,6 +133,13 @@ public final class FlipCommand {
 										.suggests(FlipCommand::suggestBazaarItems)
 										.executes(ctx -> startProbe(ctx.getSource(),
 												StringArgumentType.getString(ctx, "id"))))))
+				.then(ClientCommands.literal("craft")
+						.executes(ctx -> {
+							showCrafts(ctx.getSource());
+							return 1;
+						})
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopCraft(ctx.getSource()))))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
@@ -615,6 +623,43 @@ public final class FlipCommand {
 	 * Auction flips get their own explanation of why the list is empty, because there are several
 	 * quite different reasons and "nothing found" reads like a broken feature for all of them.
 	 */
+	/**
+	 * Craft flips, with the one refusal worth explaining said out loud.
+	 *
+	 * <p>An empty list with crafting switched off looks exactly like an empty list with nothing
+	 * profitable on the book, and the player has no way to tell which they are looking at.
+	 */
+	private static void showCrafts(FabricClientCommandSource source) {
+		if (!SkyblockFlipperClient.config().craftFlipsEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Craft flips are off - turn them on in /flip config edit.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		CraftJob job = CandidateFeed.craftJob();
+
+		if (job != null) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Working " + job.displayName() + " - the bazaar panel has the steps. "
+							+ "/flip craft stop to leave it.").withStyle(ChatFormatting.GRAY)));
+		}
+
+		showTop(source, StrategyKind.CRAFT, "Best things to craft and sell");
+	}
+
+	/** Stops the bazaar panel following a craft, so it goes back to the NPC basket. */
+	private static int stopCraft(FabricClientCommandSource source) {
+		String following = CandidateFeed.craftOutputId();
+
+		CandidateFeed.stopCraft();
+		source.sendFeedback(Chat.prefixed(Component.literal(following == null
+				? "No craft was being worked."
+				: "Stopped working that craft.").withStyle(ChatFormatting.GRAY)));
+
+		return 1;
+	}
+
 	private static void showSnipes(FabricClientCommandSource source) {
 		FlipperConfig config = SkyblockFlipperClient.config();
 		MarketData data = MarketDataService.data();

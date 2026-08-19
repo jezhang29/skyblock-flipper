@@ -6,6 +6,9 @@ import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.PlannedQuotes;
 import jeff.skyblockflipper.core.ledger.Quote;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.CraftContext;
+import jeff.skyblockflipper.core.strategy.CraftFlipStrategy;
+import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcContext;
@@ -35,6 +38,13 @@ import java.util.Set;
 public final class CandidateFeed {
 	private static final StrategyEngine ENGINE = StrategyEngine.withDefaults();
 
+	/**
+	 * The craft planner, kept beside the engine because the overlay needs more from it than a
+	 * ranking: it re-plans one chosen recipe every poll. Free to hold a second instance -
+	 * {@code RecipeBook.bundled()} is parsed once and cached.
+	 */
+	private static final CraftFlipStrategy CRAFT = new CraftFlipStrategy();
+
 	/** Deep enough to serve any allowed {@code hudLines} without re-ranking when it changes. */
 	private static final int CACHE_DEPTH = 10;
 
@@ -50,6 +60,21 @@ public final class CandidateFeed {
 
 	private static volatile List<FlipCandidate> cached = List.of();
 	private static long cachedRevision = -1L;
+
+	/**
+	 * The crafted item the player said they are working, and the plan for it as of the last book.
+	 *
+	 * <p>Held as an id rather than as a plan, because the plan goes stale: the prices in it are what
+	 * the player is about to type, and the book moves every twenty seconds. So the id is what
+	 * persists across a poll and the job is rebuilt beneath it, exactly as the NPC worklist is.
+	 *
+	 * <p>A null {@link #craftJob} against a non-null id is a real state and not a missing one: the
+	 * flip stopped clearing its own gates while it was being worked, and the panel says so rather
+	 * than going on showing the last numbers that happened to work.
+	 */
+	private static volatile String craftOutputId;
+	private static CraftJob craftJob;
+	private static long craftJobRevision = -1L;
 
 	private static NpcWorklist.Worklist worklist;
 	private static long worklistRevision = -1L;
@@ -109,7 +134,8 @@ public final class CandidateFeed {
 						// against the same allocator the mod plans with.
 						NpcContext.UNLIMITED_ORDERS_PER_ITEM,
 						config.npcDriftPremium,
-						config.npcRanking()));
+						config.npcRanking()),
+				new CraftContext(config.craftFlipsEnabled, config.craftMaxOrderSlots));
 	}
 
 	/**
@@ -218,11 +244,57 @@ public final class CandidateFeed {
 		return worklist().basket();
 	}
 
+	/**
+	 * Work this crafted item: the bazaar overlay follows it until told otherwise.
+	 *
+	 * <p>Set from the flip screen when a craft row is picked, which is the click that means "this is
+	 * the one". The alternative was a panel that follows whatever happens to rank first, which
+	 * changes under the player every poll while they are halfway through buying materials for the
+	 * one it used to show.
+	 */
+	public static void workCraft(String outputId) {
+		craftOutputId = outputId;
+		craftJob = null;
+		craftJobRevision = -1L;
+	}
+
+	/** Stop following a craft, so the bazaar panel goes back to the NPC basket. */
+	public static void stopCraft() {
+		workCraft(null);
+	}
+
+	/** The crafted item being worked, or null. Set even when the plan has stopped clearing. */
+	public static String craftOutputId() {
+		return craftOutputId;
+	}
+
+	/**
+	 * The plan for the item being worked, re-priced against the current book, or null.
+	 *
+	 * <p>Call from the client thread only, like {@link #worklist()}: every caller is a render or a
+	 * tick path, which is why this needs no lock.
+	 */
+	public static CraftJob craftJob() {
+		if (craftOutputId == null) {
+			return null;
+		}
+
+		long revision = MarketDataService.data().bazaarRevision();
+
+		if (craftJob == null || revision != craftJobRevision) {
+			craftJobRevision = revision;
+			craftJob = CRAFT.job(craftOutputId, context()).orElse(null);
+		}
+
+		return craftJob;
+	}
+
 	/** Forces a rebuild on the next tick, for changes the book revision cannot see. */
 	public static void invalidate() {
 		cachedRevision = -1L;
 		worklistRevision = -1L;
 		worklist = null;
+		craftJobRevision = -1L;
 		// The open round froze the check-in interval along with its prices, so an edit to it would
 		// otherwise not be felt until the round opened under the old one had run out.
 		NpcRoundService.clear();
