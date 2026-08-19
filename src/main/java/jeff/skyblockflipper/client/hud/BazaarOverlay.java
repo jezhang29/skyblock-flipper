@@ -521,8 +521,8 @@ public final class BazaarOverlay {
 	 * @param openProduct the row the open product page is for, empty on every other screen
 	 * @param note        the between-rounds line under the heading, empty when nothing is waiting
 	 */
-	private record Board(List<Row> rows, String openProduct, String note, String label, int holding,
-			int width, int rowHeight, int headerHeight) {
+	private record Board(List<Row> rows, String openProduct, String note, String label,
+			boolean guided, int holding, int width, int rowHeight, int headerHeight) {
 		/**
 		 * One line of work: what to search for, what to type, and how the units divide into orders.
 		 *
@@ -556,7 +556,7 @@ public final class BazaarOverlay {
 				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
 			}
 
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, "Do these",
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, "Do these", true,
 					worklist.holding(), width, font.lineHeight * 2 + LINE_GAP + 2,
 					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
 		}
@@ -602,8 +602,8 @@ public final class BazaarOverlay {
 
 			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
 
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, 0, width,
-					font.lineHeight * 2 + LINE_GAP + 2,
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, false, 0,
+					width, font.lineHeight * 2 + LINE_GAP + 2,
 					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
 		}
 
@@ -675,7 +675,7 @@ public final class BazaarOverlay {
 				// The row for the product page actually open, and the row the green box in the menu
 				// is serving, so a list of twenty does not have to be read through to find the one
 				// in front of you.
-				if (i == Guidance.row() || (!openProduct.isEmpty()
+				if ((guided && i == Guidance.row()) || (!openProduct.isEmpty()
 						&& row.name().equalsIgnoreCase(openProduct))) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_OPEN);
 				} else if (i == hovered) {
@@ -1000,6 +1000,21 @@ public final class BazaarOverlay {
 		private static int firstRow;
 
 		private static int rowCount;
+
+		/**
+		 * The board the last frame actually drew, which is the only one a click can be about.
+		 *
+		 * <p>Held here rather than read off {@link BazaarOverlay#board}, which is the basket's board
+		 * and stays populated while a craft job is on screen. Reading that one copied the basket's
+		 * name and price for whatever row of the craft list was clicked - the right row index into
+		 * the wrong list, so it produced a plausible name and a plausible price for a different
+		 * item, which is worse than copying nothing.
+		 */
+		private static Board drawn;
+
+		/** Which list the scroll position belongs to. Survives {@link #clear()}, unlike {@link #drawn}. */
+		private static String scrolling = "";
+
 		private static String copied = "";
 		private static long copiedAt;
 
@@ -1008,6 +1023,7 @@ public final class BazaarOverlay {
 
 		static void clear() {
 			live = false;
+			drawn = null;
 		}
 
 		/**
@@ -1030,6 +1046,7 @@ public final class BazaarOverlay {
 		static void laidOut(Board board, int panelX, int panelY, float panelScale, int shown,
 				Font font) {
 			live = true;
+			drawn = board;
 			scale = panelScale;
 			x = Math.round(panelX * panelScale);
 			y = Math.round(panelY * panelScale);
@@ -1042,6 +1059,15 @@ public final class BazaarOverlay {
 			lineHeight = font.lineHeight;
 			visibleRows = shown;
 			rowCount = board.rows().size();
+
+			// A different list, not a rebuild of the same one: switching between the basket and a
+			// craft job starts at the top rather than at row fifteen of something else. Checked
+			// here rather than where a board is built, because coming back to a basket that never
+			// changed while the craft panel was up rebuilds nothing.
+			if (!scrolling.equals(board.label())) {
+				scrolling = board.label();
+				firstRow = 0;
+			}
 
 			// A list that shrank under a scrolled window - orders were placed, or the book moved -
 			// would otherwise leave the panel showing blank space below the last row.
@@ -1078,14 +1104,14 @@ public final class BazaarOverlay {
 
 			int row = hoveredRow(mouseX, mouseY);
 
-			if (row < 0 || board == null) {
+			if (row < 0 || drawn == null) {
 				// Inside the panel but not on a row: the heading or the footer. Swallowed anyway,
 				// because a click that lands on the panel and moves an item in the menu behind it
 				// is the one failure this whole design cannot afford.
 				return true;
 			}
 
-			copy(board.rows().get(row), mouseX, mouseY);
+			copy(drawn.rows().get(row), mouseX, mouseY);
 			return true;
 		}
 
