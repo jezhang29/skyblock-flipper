@@ -125,6 +125,45 @@ public record BazaarProduct(
 	}
 
 	/**
+	 * Average cost per unit of instantly buying {@code units}, walking down the ask book.
+	 *
+	 * <p>Top of book is what one unit costs. Buying a hundred of a thin item means eating several
+	 * price levels, and quoting the first level as the price of all of them understates the bill -
+	 * always in the flattering direction, because the levels below are dearer. That is the same
+	 * silent-wrong-number shape as {@link #instantBuyPrice()} against {@code quick_status.buyPrice},
+	 * one level deeper.
+	 *
+	 * <p><b>Empty rather than a partial fill when the visible book cannot cover {@code units}.</b> A
+	 * caller asking what a hundred units cost is not helped by the price of the sixty that happen to
+	 * be resting; that answer is both cheaper per unit and for a different quantity than the one
+	 * asked about.
+	 *
+	 * <p>Only the returned depth is walked. Hypixel truncates each side, so this is a bound on what
+	 * is visible now rather than on what would fill over time - see {@link #instantBuysPerHour()}
+	 * for the flow question, which is the one that decides how much can be bought an hour.
+	 */
+	public OptionalDouble costToBuy(long units) {
+		if (units <= 0L) {
+			return OptionalDouble.empty();
+		}
+
+		long remaining = units;
+		double paid = 0.0d;
+
+		for (OrderLevel level : sellOffers) {
+			long taken = Math.min(remaining, level.amount());
+			paid += taken * level.pricePerUnit();
+			remaining -= taken;
+
+			if (remaining <= 0L) {
+				return OptionalDouble.of(paid / units);
+			}
+		}
+
+		return OptionalDouble.empty();
+	}
+
+	/**
 	 * A lower bound on the largest single order resting anywhere on this book.
 	 *
 	 * <p>A price level reports units and the number of orders holding them, so the largest order at

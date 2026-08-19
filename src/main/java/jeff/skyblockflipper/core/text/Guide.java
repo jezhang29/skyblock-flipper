@@ -31,8 +31,8 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, LIQUIDITY,
-				LEDGER, SETTINGS, SYNC, LIMITS);
+		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, CRAFT,
+				LIQUIDITY, LEDGER, SETTINGS, SYNC, LIMITS);
 	}
 
 	/**
@@ -53,7 +53,8 @@ public final class Guide {
 							+ "status says how old the prices are. Until they arrive the list is empty"),
 					new Term("3. Ask for a list", "/flip, typed with nothing after it, ranks every kind of "
 							+ "flip together. "
-							+ "/flip bazaar, /flip npc and /flip snipe ask for one kind. The list is "
+							+ "/flip bazaar, /flip npc, /flip craft and /flip snipe ask for one kind. "
+							+ "The list is "
 							+ "sorted by profit per hour after fees, so rank 1 is the best thing the "
 							+ "mod can see right now"),
 					new Term("4. Read one row before trusting it", "Click the row in the flip screen. "
@@ -89,8 +90,8 @@ public final class Guide {
 
 	/** Every command, in one place, because a command you cannot remember does not exist. */
 	private static final Section COMMANDS = new Section("commands", "Commands", List.of(
-			new Term("/flip", "The ranked list. /flip bazaar, /flip npc and /flip snipe show one kind "
-					+ "of flip only"),
+			new Term("/flip", "The ranked list. /flip bazaar, /flip npc, /flip craft and /flip snipe "
+					+ "show one kind of flip only"),
 			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, your "
 					+ "ledger and this guide. The keybind opens the same thing"),
 			new Term("/flip npc plan", "Everything to do at the bazaar right now: what to collect, "
@@ -156,9 +157,7 @@ public final class Guide {
 					+ "actually get"),
 			new Term("Conf", "Confidence, 0 to 1: how much the numbers behind the row deserve to be "
 					+ "trusted. High for a fixed NPC price you buy into instantly, lower for anything "
-					+ "resting on an estimate, a wait, or a thin market"),
-			new Term("Sparkline", "The item's last few prices, green rising, red falling, grey flat. "
-					+ "Empty until enough history has been recorded")));
+					+ "resting on an estimate, a wait, or a thin market")));
 
 	private static final Section STRATEGIES = new Section("strategies", "Kinds of flip", List.of(
 			new Term("Bazaar", "Buy low and sell high on the same item: post a buy order, wait, post a "
@@ -166,6 +165,9 @@ public final class Guide {
 					+ "coins or materials right now"),
 			new Term("NPC", "The bazaar price has dropped below the fixed price a shop NPC pays. There "
 					+ "is no bazaar tax on it, because selling to an NPC is not a bazaar trade"),
+			new Term("Craft", "Buy the materials for a recipe on the bazaar, craft it, and sell the "
+					+ "result back on the bazaar. You are paid for the work of putting it together, "
+					+ "and it uses none of the daily coin limit NPC flips run into"),
 			new Term("Snipe", "An auction listed below what that exact item has really been selling "
 					+ "for. Worth is learned from completed sales only, never from what other people "
 					+ "are asking"),
@@ -202,6 +204,46 @@ public final class Guide {
 					+ "is what the plan says, with the other shown underneath. Waiting costs nothing "
 					+ "against an NPC price, which cannot move away from you; a bazaar price can, which "
 					+ "is why bazaar flips come with a rule for when to give up instead")));
+
+	private static final Section CRAFT = new Section("craft", "Crafting to sell", List.of(
+			new Term("The trade", "/flip craft lists recipes whose materials cost less on the bazaar "
+					+ "than the finished item sells for. Every price is a live bazaar price on both "
+					+ "ends, so nothing here depends on guessing what an item is worth"),
+			new Term("Which way it is moving", "A recipe is only offered while its margin is holding. "
+					+ "The recorded drift of the finished item and of every material is combined into "
+					+ "one number - what the materials are doing, weighted by what they cost, against "
+					+ "what the output is doing - and a recipe whose margin is closing faster than "
+					+ "your adverse-drift setting is left out. An output falling on materials falling "
+					+ "faster is a widening margin and stays in"),
+			new Term("How it is sold", "Always as a sell offer a tenth of a coin under the cheapest "
+					+ "one on the board, never dumped into the buy orders and never sold to an NPC. "
+					+ "Measured across the whole recipe list, offering it is worth about ten times "
+					+ "dumping it, and an NPC sale would eat into the daily coin limit your NPC "
+					+ "flipping needs"),
+			new Term("How the materials are bought", "Both ways are priced and the better one by "
+					+ "profit per hour is what you are shown. Buy orders are usually the winner by a "
+					+ "long way, because farmed materials are dumped into buy orders constantly and "
+					+ "bought instantly hardly ever, so an order both costs less and fills faster"),
+			new Term("Order slots", "Each material bought on an order takes a slot, and so does the "
+					+ "sell offer at the end. Those are the same slots your NPC basket wants, so a "
+					+ "limit in settings caps how many one job may take. A job over the limit is shown "
+					+ "with its materials bought instantly instead, which needs only the one slot"),
+			new Term("Working one", "Click a craft row in the flip screen and the bazaar panel "
+					+ "follows that job instead of the basket: the materials, the craft and the sell "
+					+ "offer, each with the price and the amount to type, beside Hypixel's own menu. "
+					+ "Click a name or a number to copy it. The prices are re-worked every poll, so "
+					+ "what the panel shows is the book as it is, not as it was when you picked the "
+					+ "row. /flip craft stop puts the basket back, and so does clicking any other "
+					+ "kind of flip"),
+			new Term("Falling behind", "If the flip stops clearing while you are working it - the "
+					+ "output crashes, a material climbs - the panel says so and stops giving prices "
+					+ "rather than quoting numbers that no longer earn anything"),
+			new Term("Unlocks", "Recipes have collection and skill requirements, and nothing here "
+					+ "knows what you have unlocked. The requirement is printed with the job; if you "
+					+ "cannot craft it yet, the materials you bought are just materials"),
+			new Term("What it does not do", "Every material is priced at what it costs to buy. "
+					+ "Whether crafting an ingredient yourself would be cheaper than buying it is not "
+					+ "worked out")));
 
 	private static final Section NPC_CAP = new Section("npc", "NPC flipping", List.of(
 			new Term("The trade", "Post a buy order under the fixed price a shop NPC pays, then sell "

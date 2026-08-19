@@ -173,6 +173,24 @@ tasks.register("collectorJar", Jar) {
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+/**
+ * Regenerates the crafting recipe table from a NotEnoughUpdates checkout.
+ *
+ * <p>Run by hand when NEU moves, never as part of `build`. The table is checked in so a craft flip
+ * is ranked off data that was reviewed in a diff, rather than off whatever a GitHub repository
+ * happened to look like on the morning of a release. See docs/craft-flipping.md.
+ *
+ *   git clone --depth 1 https://github.com/NotEnoughUpdates/NotEnoughUpdates-REPO.git
+ *   ./gradlew importRecipes --args="--repo NotEnoughUpdates-REPO"
+ */
+tasks.register("importRecipes", JavaExec) {
+	description = "Regenerates data/skyblock-flipper/recipes.jsonl from a NotEnoughUpdates-REPO checkout"
+	group = "build"
+
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = "jeff.skyblockflipper.core.recipe.NeuRecipeImporter"
+}
+
 // configure the maven publication
 publishing {
 	publications {
