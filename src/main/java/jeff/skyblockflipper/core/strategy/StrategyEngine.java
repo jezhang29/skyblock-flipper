@@ -20,7 +20,7 @@ public final class StrategyEngine {
 	public static StrategyEngine withDefaults() {
 		return new StrategyEngine(List.of(
 				new BazaarSpreadStrategy(), new NpcFlipStrategy(), new AuctionValueStrategy(),
-				new CraftFlipStrategy()));
+				new CraftFlipStrategy(), new BazaarCombineStrategy()));
 	}
 
 	/** Best candidates across all strategies, capped at {@code limit}. */

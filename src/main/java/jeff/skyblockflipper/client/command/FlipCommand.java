@@ -140,6 +140,11 @@ public final class FlipCommand {
 						})
 						.then(ClientCommands.literal("stop")
 								.executes(ctx -> stopCraft(ctx.getSource()))))
+				.then(ClientCommands.literal("combine")
+						.executes(ctx -> {
+							showCombines(ctx.getSource());
+							return 1;
+						}))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
@@ -659,6 +664,24 @@ public final class FlipCommand {
 				: "Stopped working that craft.").withStyle(ChatFormatting.GRAY)));
 
 		return 1;
+	}
+
+	/**
+	 * Combine flips, ranked here rather than in the main list because their edge is per anvil click,
+	 * not per hour, so profit-per-hour ranking buries them.
+	 *
+	 * <p>Says so out loud when combining is off, for the same reason craft does: an empty list with
+	 * the strategy switched off looks identical to one with nothing profitable on the book.
+	 */
+	private static void showCombines(FabricClientCommandSource source) {
+		if (!SkyblockFlipperClient.config().combineFlipsEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Combine flips are off - turn them on in /flip config edit.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		showTop(source, StrategyKind.COMBINE, "Best books to combine and sell");
 	}
 
 	private static void showSnipes(FabricClientCommandSource source) {

@@ -353,9 +353,9 @@ public final class Ledger {
 			// NPCs pay their fixed price flat; there is no tax on the counter.
 			case NPC_FLIP -> unitSellPrice;
 			case AUCTION_VALUE -> fees.binNetProceeds(Math.round(unitSellPrice));
-			// Craft outputs are assumed to be sold on the bazaar until craft flips exist and can
-			// say where they actually go.
-			case BAZAAR_SPREAD, CRAFT -> fees.bazaarSaleProceeds(unitSellPrice);
+			// Craft and combine outputs both leave on a bazaar sell offer, so they carry the bazaar
+			// sales tax exactly as a spread does.
+			case BAZAAR_SPREAD, CRAFT, COMBINE -> fees.bazaarSaleProceeds(unitSellPrice);
 		};
 	}
 

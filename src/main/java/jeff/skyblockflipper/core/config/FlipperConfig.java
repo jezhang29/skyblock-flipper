@@ -270,6 +270,16 @@ public final class FlipperConfig {
 	public int craftMaxOrderSlots = CraftContext.DEFAULT_MAX_ORDER_SLOTS;
 
 	/**
+	 * Whether enchanted-book combine flips are offered at all.
+	 *
+	 * <p>On, for the same reason craft is: the strategy refuses rather than guesses. It ranks low on
+	 * profit per hour on purpose - its return is per anvil click, not per hour - so it never crowds
+	 * the list; {@code /flip combine} is where it is meant to be read. Off is for the player who does
+	 * not want the anvil work.
+	 */
+	public boolean combineFlipsEnabled = true;
+
+	/**
 	 * What the basket ranks candidates on when it has to choose between them.
 	 *
 	 * <p>A greedy allocator should rank on profit per unit of whatever it runs out of, and this trade
@@ -479,15 +489,13 @@ public final class FlipperConfig {
 		return null;
 	}
 
-	/** What the filter may be set to. {@code CRAFT} is left out while it has no strategy behind it. */
+	/** What the filter may be set to: no restriction, or any strategy the engine actually runs. */
 	public static List<String> strategyFilterOptions() {
 		List<String> options = new ArrayList<>();
 		options.add(FILTER_ALL);
 
 		for (StrategyKind kind : StrategyKind.values()) {
-			if (kind != StrategyKind.CRAFT) {
-				options.add(kind.name());
-			}
+			options.add(kind.name());
 		}
 
 		return List.copyOf(options);

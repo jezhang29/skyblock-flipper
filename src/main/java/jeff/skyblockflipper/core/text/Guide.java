@@ -31,7 +31,7 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, CRAFT,
+		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, CRAFT, COMBINE,
 				LIQUIDITY, LEDGER, SETTINGS, SYNC, LIMITS);
 	}
 
@@ -53,7 +53,7 @@ public final class Guide {
 							+ "status says how old the prices are. Until they arrive the list is empty"),
 					new Term("3. Ask for a list", "/flip, typed with nothing after it, ranks every kind of "
 							+ "flip together. "
-							+ "/flip bazaar, /flip npc, /flip craft and /flip snipe ask for one kind. "
+							+ "/flip bazaar, /flip npc, /flip craft, /flip combine and /flip snipe ask for one kind. "
 							+ "The list is "
 							+ "sorted by profit per hour after fees, so rank 1 is the best thing the "
 							+ "mod can see right now"),
@@ -90,8 +90,8 @@ public final class Guide {
 
 	/** Every command, in one place, because a command you cannot remember does not exist. */
 	private static final Section COMMANDS = new Section("commands", "Commands", List.of(
-			new Term("/flip", "The ranked list. /flip bazaar, /flip npc, /flip craft and /flip snipe "
-					+ "show one kind of flip only"),
+			new Term("/flip", "The ranked list. /flip bazaar, /flip npc, /flip craft, /flip combine and "
+					+ "/flip snipe show one kind of flip only"),
 			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, your "
 					+ "ledger and this guide. The keybind opens the same thing"),
 			new Term("/flip npc plan", "Everything to do at the bazaar right now: what to collect, "
@@ -168,6 +168,9 @@ public final class Guide {
 			new Term("Craft", "Buy the materials for a recipe on the bazaar, craft it, and sell the "
 					+ "result back on the bazaar. You are paid for the work of putting it together, "
 					+ "and it uses none of the daily coin limit NPC flips run into"),
+			new Term("Combine", "Buy cheap low-tier enchanted books, combine them up to a dearer tier at "
+					+ "the anvil, and sell the top tier. You are paid for the anvil tedium, so the honest "
+					+ "measure is coins per combine, not per hour - the main list ranks it low on purpose"),
 			new Term("Snipe", "An auction listed below what that exact item has really been selling "
 					+ "for. Worth is learned from completed sales only, never from what other people "
 					+ "are asking"),
@@ -244,6 +247,32 @@ public final class Guide {
 			new Term("What it does not do", "Every material is priced at what it costs to buy. "
 					+ "Whether crafting an ingredient yourself would be cheaper than buying it is not "
 					+ "worked out")));
+
+	private static final Section COMBINE = new Section("combine", "Combining books", List.of(
+			new Term("The trade", "/flip combine lists enchanted books that are cheaper bought low and "
+					+ "combined up than bought at the tier you sell. Two books of one tier make one of "
+					+ "the next at the anvil, so a tier-10 book is sixteen tier-6 books and fifteen "
+					+ "merges. Both ends are live bazaar prices"),
+			new Term("Coins per combine, not per hour", "The books are thin, so this makes little per "
+					+ "hour and the main list ranks it low. Its point is the return per anvil click, "
+					+ "which the row prints as a note: a player who cannot sit at the game all day is "
+					+ "spending clicks, not hours, and this pays a lot of coins for a few of them"),
+			new Term("Where it sources", "The cheapest source tier is not always the bottom one. A "
+					+ "low tier can carry a fat buy-order price from everyone else combining it, so the "
+					+ "mod prices every listed tier below the target and buys from the cheapest, which "
+					+ "is often a tier or two up"),
+			new Term("The middles are dead", "You combine straight through the tiers between, never "
+					+ "trading them. Their books are nearly empty and that is fine - nothing rests on "
+					+ "them"),
+			new Term("How it is sold", "Always a sell offer a tenth of a coin under the cheapest one on "
+					+ "the target's board. The high tiers have huge spreads, so dumping into the buy "
+					+ "orders is a loss almost everywhere. The exit uses none of the NPC daily coin "
+					+ "limit"),
+			new Term("The fantasy-price guard", "A book is only offered when its top tier has at least "
+					+ "fifteen sell offers resting. A tier priced by a single seller at a made-up number "
+					+ "is not a real price, and this is the filter that tells the two apart"),
+			new Term("Unverified", "Nothing here has been combined and sold in play yet, and the anvil "
+					+ "is assumed to cost no coins. Treat the first runs as a test")));
 
 	private static final Section NPC_CAP = new Section("npc", "NPC flipping", List.of(
 			new Term("The trade", "Post a buy order under the fixed price a shop NPC pays, then sell "

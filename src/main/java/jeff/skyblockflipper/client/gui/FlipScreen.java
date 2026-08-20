@@ -89,6 +89,7 @@ public final class FlipScreen extends Screen {
 		NPC("NPC", StrategyKind.NPC_FLIP),
 		BASKET("Basket", null),
 		CRAFT("Craft", StrategyKind.CRAFT),
+		COMBINE("Combine", StrategyKind.COMBINE),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
 		LEDGER("Ledger", null),
 		GUIDE("Guide", null);

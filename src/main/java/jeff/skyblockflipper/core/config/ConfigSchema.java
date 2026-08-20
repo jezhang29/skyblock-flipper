@@ -111,7 +111,7 @@ public final class ConfigSchema {
 	}
 
 	public static List<Group> groups() {
-		return List.of(MONEY, NPC, CRAFT, SCANNING, DISPLAY, CONNECTION, COLLECTOR, TRACKING);
+		return List.of(MONEY, NPC, CRAFT, COMBINE, SCANNING, DISPLAY, CONNECTION, COLLECTOR, TRACKING);
 	}
 
 	/** Every entry, in group order. Useful for lookups and for the test that nothing is missing. */
@@ -238,6 +238,17 @@ public final class ConfigSchema {
 							+ "materials bought instantly instead, which uses one slot.",
 					1, Fees.MAX_BAZAAR_ORDER_SLOTS, 1,
 					c -> c.craftMaxOrderSlots, (c, v) -> c.craftMaxOrderSlots = v)));
+
+	/**
+	 * Combining's one setting. It has no slot budget of its own because a combine rests at most two
+	 * orders, so unlike a craft it cannot starve the NPC basket.
+	 */
+	private static final Group COMBINE = new Group("Combine flipping", List.of(
+			new Entry.Flag("combineFlipsEnabled", "Look for book-combining profits",
+					"Buy low-tier enchanted books, combine them up to a dearer tier at the anvil, and "
+							+ "sell the top tier. The return is per anvil click, not per hour, so read "
+							+ "/flip combine rather than expecting it near the top of the main list.",
+					c -> c.combineFlipsEnabled, (c, v) -> c.combineFlipsEnabled = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Search the auction house",
