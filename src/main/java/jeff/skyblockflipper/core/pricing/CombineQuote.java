@@ -37,11 +37,13 @@ import java.util.OptionalDouble;
  *
  * <p>The cheapest source is not always the bottom tier. On 2026-08-20 the cheapest Rejuvenate 5
  * source was tier 2, not tier 1, because tier 1 carried a fat bid from combiner demand while tier 2
- * did not. {@link #quote} prices every listed source tier and keeps the best <b>by net per anvil
- * combine</b>, not by profit per hour: this is a coins-per-click trade for a player who is not
- * watching the book, so the cheapest way to make one output book wins even when a dearer tier or the
- * instant route would fill faster. {@link #profitPerHour} is still computed honestly, because the
+ * did not. {@link #quote} prices every listed source tier and keeps the best <b>by total profit per
+ * output book</b>, after tax: the cheapest way to make one top-tier book wins. An earlier rule chose
+ * by net per anvil combine, to spend the fewest clicks per coin, but at a few tens of books a day the
+ * anvil grind never binds, so it was trading real coins to skip merges that were not scarce - see
+ * {@code docs/combine-flipping.md}. {@link #profitPerHour} is still computed honestly, because the
  * unified ranking compares every strategy on it; it is just not what a combine is chosen on.
+ * {@link #netPerCombine} is still reported and still orders the {@code /flip combine} list.
  * {@link #quoteFrom} prices one named tier for a caller that wants to compare.
  *
  * <h2>Sell via offer, source via order</h2>
@@ -137,12 +139,14 @@ public record CombineQuote(
 			CombineQuote quote = quoteFrom(entry, tier, bazaar, fees, exit, horizon, maxCapital,
 					flowShare);
 
-			// Best by net per anvil combine, not per hour. A combine is a coins-per-click trade for a
-			// player who is not watching the book, so the cheaper source tier wins even when a dearer
-			// one would fill faster - fill speed is what profit per hour rewards, and it is the one
-			// thing this player does not care about. On 2026-08-20 the profit-per-hour rule picked
-			// Rejuvenate tier 1 (10,106 a combine) over tier 2 (36,671) for being three times faster.
-			if (quote != null && (best == null || quote.netPerCombine() > best.netPerCombine())) {
+			// Best by total profit per output book, which is the cheapest source tier after tax. An
+			// earlier rule ranked this by net per anvil combine, on the theory that clicks are the
+			// scarce resource, and that picked a higher source tier for its fewer merges: Rejuvenate
+			// tier 3 (4 books, 3 merges) over tier 2 (8 books, 7 merges). But the volumes here are a few
+			// tens of books a day, so the anvil grind never binds and the four saved merges are not
+			// worth the ~65k more each cheaper output book pays. Net per combine is still reported and
+			// still orders the combine list; it just no longer decides which tier to buy.
+			if (quote != null && (best == null || quote.netPerOutput() > best.netPerOutput())) {
 				best = quote;
 			}
 		}
@@ -318,13 +322,14 @@ public record CombineQuote(
 	}
 
 	/**
-	 * The better of the two source routes, by net per anvil combine.
+	 * The better of the two source routes, by total profit per output book.
 	 *
-	 * <p>Cheapest source, not fastest. The resting route is normally both, but where it is only
-	 * cheaper - it fills slower because it waits on dumps - it still wins here, because the player
-	 * running this is spending clicks, not hours, and a cheaper source is more coins for the same
-	 * clicks. On 2026-08-20 picking by profit per hour instead took the instant route on Green Thumb
-	 * (283,858 a combine) over the resting one (437,625).
+	 * <p>Cheapest source, not fastest, and for the same tier the two routes make the same number of
+	 * books an output, so this is the plain "which route costs less" pick. The resting route is
+	 * normally both cheaper and fine, but where it is only cheaper - it fills slower because it waits
+	 * on dumps - it still wins here, because capital and patience are slack for this player and a
+	 * cheaper source is more coins per book. Picking by profit per hour instead would take the instant
+	 * route on Green Thumb (283,858 a combine) over the resting one (437,625) for its speed.
 	 */
 	private static CombineQuote better(CombineQuote first, CombineQuote second) {
 		if (first == null) {
@@ -335,7 +340,7 @@ public record CombineQuote(
 			return first;
 		}
 
-		return first.netPerCombine() >= second.netPerCombine() ? first : second;
+		return first.netPerOutput() >= second.netPerOutput() ? first : second;
 	}
 
 	/** Books of the source tier this plan buys in total. */

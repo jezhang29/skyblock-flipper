@@ -52,10 +52,21 @@ Scavenger, Growth, Power, Protection, Vampirism — are drop-gated or non-anvil 
 
 ## The measured economics, 2026-08-20
 
-Run of the shipped `BazaarCombineStrategy` against the live book. For each enchant the solver scans
+**Selection rule changed 2026-08-20.** The table below was produced by an earlier rule that kept the
+source tier with the best net **per anvil combine**. The shipped rule now keeps the tier with the
+best total profit **per output book** after tax. At these volumes — a few tens of books a day — the
+anvil grind never binds, so ranking the tier pick on clicks was trading real coins to skip merges
+that are not scarce: on Rejuvenate the fewer-merges tier 3 cost ~65k more per output book than tier 2
+to save four merges. So the `source → T` column below records the old pick; under the current rule
+several enchants source from a lower, cheaper tier — Rejuvenate from tier 2 (8 books, 7 merges), not
+tier 3. The net/output and profit/hr for a given tier do not change; only which tier is chosen moves.
+Re-measure against a live snapshot before quoting the picks. Net per combine is still reported and
+still orders the `/flip combine` list.
+
+Run of the earlier `BazaarCombineStrategy` against the live book. For each enchant the solver scans
 every bazaar-listed source tier below the max, sources it on the cheaper of a resting order (where
 the source book has ≥15 bid orders) or an instant buy, exits on a tier-`T` sell offer taxed at
-Bazaar Flipper 1 (1.125%), and keeps the tier and route that pay the most **per anvil combine**.
+Bazaar Flipper 1 (1.125%), and kept the tier and route that paid the most **per anvil combine**.
 Profit per hour is at the 5% flow share the mod already assumes, sized off `quick_status` volumes
 with no displacement — treat it as a ceiling, not a promise. The list is ordered by net per combine,
 which is how `/flip combine` orders it.
@@ -75,17 +86,17 @@ The strategy is a **net-per-combine** business, not a coins-per-hour one, and th
 that: it takes the cheapest way to make one top-tier book, not the fastest. Two consequences to
 read the table with:
 
-- **The chosen source tier is not always the bottom one, and not always the one with the best net
-  per output.** Rejuvenate's best net-per-output source is tier 2, but its best net-per-*combine*
-  source is tier 3: four tier-3 books make a tier-5 in three merges where sixteen tier-1 books take
-  fifteen, and a player short of clicks would rather make 63,739 in three merges than 36,671 in
-  seven. This is right only because capital is slack and patience is high for this player, both of
-  which the NPC work already measured. A tier that fills slower for the same clicks is a win when
-  you are not watching it.
+- **The chosen source tier is not always the bottom one.** It is the tier that makes one output book
+  for the fewest coins after tax. On this snapshot Rejuvenate's cheapest source is tier 2, not tier 1,
+  because tier 1 carries a fat bid from combiner demand; the solver sources from tier 2. It is not
+  tier 3 either: tier 3 makes a tier-5 in three merges against tier 2's seven, but costs ~65k more per
+  output book, and at a few tens of books a day those four saved merges are not worth 65k. An earlier
+  rule ranked the tier pick on net per combine and picked tier 3 for its fewer clicks; it was dropped
+  2026-08-20 because the click budget never binds at this volume, while capital and patience are slack.
 - **Profit per hour is honest but is not the ranking.** It stays the shared `FlipCandidate` axis so
   the unified `/flip` list can compare a combine against an NPC flip, where a combine sits low on
-  purpose. Optimising per combine can pick a high source tier whose book fills slowly, so a row's
-  profit-per-hour and fill time are the check on whether "cheap per click" also means "ever fills".
+  purpose. The cheapest source tier can be a book that fills slowly, so a row's profit-per-hour and
+  fill time are the check on whether "cheapest per book" also means "ever fills".
 
 **The ≥15-ask gate is a price check, not a liquidity one, so ordering by net per combine floats thin
 whale flips to the top.** `VICIOUS_5` topped the live run at 67.8M a combine on a single merge, resting
@@ -115,13 +126,14 @@ for shared item ids: the wrong number is silent and plausible right up to the cl
 
 ### The source tier is scanned, not assumed
 
-The best source is not the bottom tier. Two reasons pull off it. **Price:** on this snapshot
-Rejuvenate tier 1 carries a fat bid (9,003, on 183k weekly dumps of combiner demand) while tier 2's
-is 4,867, so tier 2 is cheaper per output despite being higher. **Clicks:** every tier up halves the
-merges an output takes, and the strategy is ranked on net per merge, so it climbs further still -
-tier 3 makes a Rejuvenate 5 in three merges against tier 1's fifteen. The solver quotes every listed
-source tier and keeps the best per merge, which is why the shipped pick for Rejuvenate is tier 3, and
-which also handles the Vitality enchants, whose only liquid source is tier 5 rather than tier 1.
+The best source is not the bottom tier, so the solver quotes every listed tier and keeps the cheapest
+per output book after tax. On this snapshot Rejuvenate tier 1 carries a fat bid (9,003, on 183k weekly
+dumps of combiner demand) while tier 2's is 4,867, so tier 2 is cheaper per output despite being
+higher, and tier 2 is the shipped pick. The scan also handles the Vitality enchants, whose only liquid
+source is tier 5 rather than tier 1. It does not climb higher for the sake of fewer merges: tier 3
+makes a Rejuvenate 5 in three merges against tier 2's seven but costs ~65k more per book. An earlier
+rule ranked the tier pick on net per merge and so chose tier 3; it was dropped 2026-08-20 because at
+these volumes the anvil grind never binds, while capital and patience are slack.
 
 ### Sell via offer, source via order
 
