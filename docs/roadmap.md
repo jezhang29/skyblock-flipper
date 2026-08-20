@@ -14,20 +14,39 @@ Deep records live elsewhere and are linked from here:
   method. Read it before proposing any new signature key term.
 - `docs/headless-collector.md`, `docs/trade-capture.md` — the collector and the capture protocol.
 
-## Current state (2026-08-19)
+## Current state (2026-08-20)
 
 The whole NPC basket strategy is merged to `main` (2026-08-17) — the basket, the reprice rounds, the
 check-in reminder, the Basket tab and the bazaar slot highlighting. The squash
 folded 40+ `wip:` commits into a clean history and the branch is deleted. It has run in real play
 across several sessions. `main` is ahead of `origin/main`; nothing is pushed until the user asks.
 
-The **CRAFT seat is now filled**, on branch `craft-flips`: the NEU recipe table is imported and
-bundled, `core/pricing/CraftQuote` prices a recipe on either input route, and
-`core/strategy/CraftFlipStrategy` ranks it as an ordinary `FlipCandidate` reachable from
-`/flip craft`, the Craft tab and `strategyFilter=CRAFT`. The bazaar overlay follows one chosen craft
-job the way it follows the NPC basket, so the steps are beside Hypixel's menu while the orders are
-typed. Every number behind it is offline - one live book snapshot plus 13 days of bazaar tape. Read
-`docs/craft-flipping.md` before touching any of it.
+The **CRAFT seat is now filled**, on branch `drop-drift-premium` beside the drift-premium removal:
+the NEU recipe table is imported and bundled, `core/pricing/CraftQuote` prices a recipe by routing
+each ingredient on its own, and `core/strategy/CraftFlipStrategy` ranks it as an ordinary
+`FlipCandidate` reachable from `/flip craft`, the Craft tab and `strategyFilter=CRAFT`. The bazaar
+overlay follows one chosen craft job the way it follows the NPC basket, so the steps are beside
+Hypixel's menu while the orders are typed. Every number behind it is offline - one live book snapshot
+plus 13 days of bazaar tape. Read `docs/craft-flipping.md` before touching any of it.
+
+**Craft and bazaar were re-measured on 2026-08-20** against the live book plus two days of tape, and
+two things changed (full record in `docs/craft-flipping.md`):
+
+- **A craft plan over its slot budget is cut to size, not moved onto the ask.** The old fallback
+  re-quoted the whole bill at `INSTANT_BUY`, which on a farmed material caps the plan at the trickle
+  the ask side supplies: `ENCHANTED_MITHRIL` and `ENCHANTED_WHEAT` - the only two plans over the
+  shipped six-slot budget - were quoted at 1,123 and 4,774 coins an hour against 883,751 and 787,543
+  for the same routes sized to six slots. No slot budget from 1 to 21 regresses; the shipped 6 gains
+  3%, and tight budgets 21-24%.
+- **Ingredients are routed one at a time** rather than the whole bill taking one route. Worth
+  **nothing** on this book, to the coin, and shipped as the correct model rather than as a gain - the
+  resting route is normally both cheaper and faster on a crafting material, so there is rarely a
+  trade to make. Do not re-measure it hoping for one.
+
+`BazaarSpreadStrategy` came out of the same audit sound: ranking on profit per hour is right (a
+greedy portfolio by that axis spends the whole 400M bankroll on 7 flips for 19.2M/h, against 5.5M/h
+ranking by profit per coin), capital binds where slots do not (6 of 130 plans), and the only defect
+was a quantity that no order box would take - now split through `Stacking.orderSplit` on both legs.
 
 Everything the valuation side ships (pet levels, the fill model, the rune/potion/dungeon/dye/
 ethermerge signature splits, the Midas ratio quote) is verified offline only. Getting it seen in a
@@ -50,6 +69,25 @@ Two items stand, and both are the same shape: work finished offline that has nev
 Not started, and deliberately: **checking unlocks against the player**, and **pricing an ingredient
 as a craft of its own** (recursive inputs). Both are named in `docs/craft-flipping.md`; neither is
 worth building before a craft flip has been run in play.
+
+### Measured, and left alone on purpose: the displacement rate saturates
+
+`FillStats` counts *intervals that contained a displacement*, never displacements, because it
+compares consecutive samples - so at the ~5-minute bazaar tape cadence the number it can report is
+capped at 12 an hour. On the tape of 2026-08-20 the busiest books sit on that ceiling: `SOULFLOW`
+measures 11.01/h, `WHALE_BAIT` 10.38/h, and halving the sampling cadence roughly halves every one of
+them (ratio 1.8-2.2 across the twelve busiest) while the per-interval hit fraction stays at ~0.91.
+The measurement is saturated, and the estimator the model's own Poisson assumption implies -
+`-ln(1-p)/t` rather than `p/t` - puts `SOULFLOW` at **28.6/h or more**. `FillModel` therefore credits
+contested books with at least 2.6x the fill rate they really get, and those are exactly the books
+that rank highest.
+
+The fix that recovers the number is counting displacement at the 20-second poll cadence rather than
+at the 5-minute tape cadence, which needs a small per-product counter rather than the trend ring (a
+24-hour ring at 20s would be hundreds of megabytes). **It was measured and not done**, because
+`NpcFlipStrategy` and `NpcReprice` size the daily driver off the same `FillModel`, and this would
+change the basket and the reprice rounds - settled ground. It is the largest known correction to both
+bazaar and craft ranking, and it lowers quoted profit rather than raising it.
 
 Done and closed since the last write:
 

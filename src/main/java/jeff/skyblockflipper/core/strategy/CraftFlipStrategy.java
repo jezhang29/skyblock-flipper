@@ -1,16 +1,20 @@
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.model.UpgradeCost;
 import jeff.skyblockflipper.core.pricing.CraftQuote;
-import jeff.skyblockflipper.core.pricing.CraftQuote.InputRoute;
 import jeff.skyblockflipper.core.recipe.Recipe;
 import jeff.skyblockflipper.core.recipe.RecipeBook;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Buy materials on the bazaar, craft, and sell the result back into the same bazaar.
@@ -29,9 +33,10 @@ import java.util.Optional;
  *       book the best eight craft plans together wanted 19 of the 21 slots a Bazaar Flipper 1
  *       account has. Those are the same slots the NPC basket - the user's daily driver - needs, and
  *       that strategy has already measured that slots bind where coins do not. A plan over
- *       {@link CraftContext#maxOrderSlots()} is re-quoted on {@link InputRoute#INSTANT_BUY}, which
- *       rests nothing but the sell offer, rather than dropped: a seven-slot resting plan is usually
- *       still a flip at one slot, just a slower and dearer one.</li>
+ *       {@link CraftContext#maxOrderSlots()} gives up its most slot-hungry resting leg and is
+ *       re-priced, one leg at a time, rather than dropped or moved wholesale onto the ask: a
+ *       seven-slot plan is usually still a flip at four, and cheaper than the same plan bought
+ *       entirely at the ask.</li>
  *   <li><b>The budget is per plan, not across the list.</b> This produces a menu the player picks
  *       one row from, not a basket they execute whole, so spending a shared budget down the ranking
  *       would hide row five because of four plans nobody placed.</li>
@@ -72,7 +77,10 @@ public final class CraftFlipStrategy implements FlipStrategy {
 			return List.of();
 		}
 
-		List<FlipCandidate> candidates = new ArrayList<>();
+		// One row per crafted item, not per recipe. Several items are craftable more than one way,
+		// and the overlay follows whichever way pays best, so a second row for the same item would
+		// be a row the panel refuses to follow.
+		Map<String, FlipCandidate> best = new LinkedHashMap<>();
 
 		for (Recipe recipe : book.all()) {
 			// Cheapest possible rejection first. Only 307 of the 2,550 recipes have their output on
@@ -82,8 +90,11 @@ public final class CraftFlipStrategy implements FlipStrategy {
 				continue;
 			}
 
-			evaluate(recipe, context).ifPresent(candidates::add);
+			evaluate(recipe, context).ifPresent(candidate -> best.merge(candidate.itemId(), candidate,
+					(a, b) -> a.profitPerHour() >= b.profitPerHour() ? a : b));
 		}
+
+		List<FlipCandidate> candidates = new ArrayList<>(best.values());
 
 		candidates.sort(null);
 		return candidates;
@@ -157,23 +168,12 @@ public final class CraftFlipStrategy implements FlipStrategy {
 		CraftQuote.FillHistory history =
 				productId -> context.trends().fillStatsFor(productId).orElse(null);
 
-		CraftJob job = job(recipe, context, history, null).orElse(null);
+		CraftJob job = fitToSlots(
+				job(recipe, context, history, Set.of(), Long.MAX_VALUE).orElse(null),
+				recipe, context, history).orElse(null);
 
 		if (job == null) {
 			return Optional.empty();
-		}
-
-		if (job.orderSlots() > context.craft().maxOrderSlots()) {
-			// The resting route is what spends slots, so the instant route is the same recipe with
-			// nothing resting but the sell offer. It is dearer and slower to source and it may well
-			// not clear the profit floor below, in which case this recipe is not a flip inside the
-			// budget. The offer itself can still overrun it on an item that does not stack, and
-			// there is no third route to fall back to, so that one is refused.
-			job = job(recipe, context, history, InputRoute.INSTANT_BUY).orElse(null);
-
-			if (job == null || job.orderSlots() > context.craft().maxOrderSlots()) {
-				return Optional.empty();
-			}
 		}
 
 		CraftQuote quote = job.quote();
@@ -198,17 +198,179 @@ public final class CraftFlipStrategy implements FlipStrategy {
 		return Optional.of(new Planned(job, marginDrift));
 	}
 
-	/** One recipe priced and laid out as clicks, on {@code route} or on whichever pays better. */
+	/** One recipe priced and laid out as clicks, no larger than {@code maxCrafts}. */
 	private static Optional<CraftJob> job(Recipe recipe, StrategyContext context,
-			CraftQuote.FillHistory history, InputRoute route) {
-		Optional<CraftQuote> quoted = route == null
-				? CraftQuote.quote(recipe, context.bazaar(), context.fees(), history,
-						context.fillHorizon(), context.maxCapitalPerFlip())
-				: CraftQuote.quote(recipe, context.bazaar(), context.fees(), history,
+			CraftQuote.FillHistory history, Set<String> instantOnly, long maxCrafts) {
+		return CraftQuote.quote(recipe, context.bazaar(), context.fees(), history,
 						context.fillHorizon(), context.maxCapitalPerFlip(),
-						CraftQuote.DEFAULT_FLOW_SHARE, route);
+						CraftQuote.DEFAULT_FLOW_SHARE, instantOnly, maxCrafts)
+				.flatMap(quote -> CraftJob.of(quote, context.catalog(), context.bazaar()));
+	}
 
-		return quoted.flatMap(quote -> CraftJob.of(quote, context.catalog(), context.bazaar()));
+	/**
+	 * The same plan, cut down until its real orders fit the slot budget, or empty when they cannot.
+	 *
+	 * <p><b>A plan over budget is nearly always the right flip at the wrong size, and it used to be
+	 * answered by buying the whole bill at the ask instead.</b> That gives every slot back at once
+	 * and pays the ask on materials that were never the problem, and on a farmed material the ask
+	 * side supplies almost nothing - nobody instant-sells wheat. Measured on the live book of
+	 * 2026-08-20, the two plans that overran the shipped six-slot budget were
+	 * {@code ENCHANTED_MITHRIL} at 3.13M coins an hour and {@code ENCHANTED_WHEAT} at 5.18M, and
+	 * the old fallback quoted them at <b>1,123 and 4,774</b>. Both wanted their whole overrun for a
+	 * single material: eighteen orders of mithril ore, thirty-three of wheat.
+	 *
+	 * <p>So the first answer is a smaller plan. Sizing the same routes down to what six slots can
+	 * rest at once keeps the margin per craft exactly and takes the share of the flow those slots
+	 * hold, which is worth hundreds of times the instant corner on both of those rows.
+	 *
+	 * <p>Giving up a leg is the second answer, for the plan that wants more <i>distinct</i> resting
+	 * materials than the player has slots - a size cut cannot help there, because every leg costs
+	 * one order however small it is. The most slot-hungry leg goes first and the recipe is
+	 * re-priced, so the plan keeps the cheap orders it can afford to keep.
+	 *
+	 * <p>Empty when even resting nothing fits, which happens when the sell offer alone needs more
+	 * orders than the player has slots. There is nothing further to give back.
+	 */
+	private static Optional<CraftJob> fitToSlots(CraftJob job, Recipe recipe,
+			StrategyContext context, CraftQuote.FillHistory history) {
+		int budget = context.craft().maxOrderSlots();
+
+		if (job == null || job.orderSlots() <= budget) {
+			return Optional.ofNullable(job);
+		}
+
+		Set<String> instantOnly = new HashSet<>();
+		CraftJob best = null;
+
+		// Walk the plan down one resting leg at a time, and at every step also take the same routes
+		// sized to the budget. Neither answer wins everywhere - a small plan that keeps a cheap
+		// order beats the ask on a farmed material, and the ask beats a plan cut to almost nothing
+		// on a material the bid side barely trades - so both are priced and the better one ships.
+		while (job != null) {
+			best = better(best, sizedToFit(job, recipe, context, history, instantOnly, budget));
+
+			if (job.orderSlots() <= budget) {
+				return Optional.of(better(best, job));
+			}
+
+			String give = hungriest(job);
+
+			if (give == null || !instantOnly.add(give)) {
+				break;
+			}
+
+			job = job(recipe, context, history, instantOnly, Long.MAX_VALUE).orElse(null);
+		}
+
+		// The walk can die on a step that will not price at all - an ingredient the visible ask book
+		// cannot cover in one go refuses rather than quoting part of a bill - so the corner it was
+		// heading for is tried directly. Buying the whole bill at the ask rests only the sell offer,
+		// which is the smallest claim on slots any plan can make.
+		CraftJob instant = job(recipe, context, history, everyIngredient(recipe), Long.MAX_VALUE)
+				.orElse(null);
+
+		return Optional.ofNullable(instant != null && instant.orderSlots() <= budget
+				? better(best, instant)
+				: best);
+	}
+
+	/** Every id the recipe consumes, i.e. the plan that rests nothing but its sell offer. */
+	private static Set<String> everyIngredient(Recipe recipe) {
+		Set<String> ids = new HashSet<>();
+
+		for (UpgradeCost.Ingredient ingredient : recipe.ingredients()) {
+			ids.add(ingredient.productId());
+		}
+
+		return ids;
+	}
+
+	/** The same routes cut down to what the budget can rest at once, or null if nothing fits. */
+	private static CraftJob sizedToFit(CraftJob job, Recipe recipe, StrategyContext context,
+			CraftQuote.FillHistory history, Set<String> instantOnly, int budget) {
+		long fits = craftsThatFit(job, context, budget);
+
+		if (fits < 1L) {
+			return null;
+		}
+
+		CraftJob sized = job(recipe, context, history, instantOnly, fits).orElse(null);
+
+		// The cut cannot change which legs rest, so this holds; checked rather than assumed because
+		// a plan over the budget is exactly what this method exists to stop returning.
+		return sized != null && sized.orderSlots() <= budget ? sized : null;
+	}
+
+	private static CraftJob better(CraftJob first, CraftJob second) {
+		if (first == null) {
+			return second;
+		}
+
+		if (second == null) {
+			return first;
+		}
+
+		return first.profitPerHour() >= second.profitPerHour() ? first : second;
+	}
+
+	/**
+	 * The largest plan of this shape whose orders fit {@code budget}, or 0 when none does.
+	 *
+	 * <p>Searched rather than solved because the cost is a sum of ceilings: every resting leg rounds
+	 * up to a whole order, so the orders a plan needs is a step function of its size. It only ever
+	 * climbs, which is what makes the search valid.
+	 */
+	private static long craftsThatFit(CraftJob job, StrategyContext context, int budget) {
+		long low = 0L;
+		long high = job.quote().crafts();
+
+		while (low < high) {
+			long mid = low + (high - low + 1L) / 2L;
+
+			if (ordersFor(job, context, mid) <= budget) {
+				low = mid;
+			} else {
+				high = mid - 1L;
+			}
+		}
+
+		return low;
+	}
+
+	/** Bazaar orders a plan of {@code crafts} would rest, on the routes this job already chose. */
+	private static int ordersFor(CraftJob job, StrategyContext context, long crafts) {
+		Recipe recipe = job.quote().recipe();
+		int orders = orders(context, recipe.outputId(), crafts * recipe.outputCount());
+
+		for (UpgradeCost.Ingredient ingredient : recipe.ingredients()) {
+			if (job.quote().restingBuyOrders().contains(ingredient.productId())) {
+				orders += orders(context, ingredient.productId(), crafts * ingredient.amount());
+			}
+		}
+
+		return orders;
+	}
+
+	private static int orders(StrategyContext context, String productId, long units) {
+		long perOrder = Stacking.unitsPerOrder(context.catalog().get(productId).orElse(null),
+				context.bazaar().product(productId).orElse(null));
+
+		return (int) Math.max(1L, (units + perOrder - 1L) / perOrder);
+	}
+
+	/** The resting ingredient row costing the most orders, which is the one worth giving up first. */
+	private static String hungriest(CraftJob job) {
+		String worst = null;
+		int orders = 0;
+
+		for (CraftJob.Row row : job.rows()) {
+			if (row.action() == CraftJob.Action.BUY_ORDER && row.orders() > orders) {
+				orders = row.orders();
+				worst = row.itemId();
+			}
+		}
+
+		return worst;
 	}
 
 	/**

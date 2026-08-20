@@ -145,8 +145,8 @@ much larger share, which is another reason the sell leg must be sized by `FillMo
 ## What `CraftQuote` prices
 
 `core/pricing/CraftQuote` is the shipped arithmetic. The exit is always a resting sell offer one
-increment under the best ask. The **inputs have two routes**, both priced, better profit per hour
-quoted:
+increment under the best ask. The **inputs have two routes, chosen per ingredient**, better profit
+per hour quoted:
 
 | | cost basis | rate ceiling | costs |
 |---|---|---|---|
@@ -165,7 +165,25 @@ existing and not, rather than a refinement of the margin.
 **A resting price needs the same liquidity gate as the output, per ingredient.** Without it, three
 books quoting cost savings of 79% to 89% against bid sides nothing was resting on ranked in the top
 eight, and the profitable count inflated from 31 to 108. An ingredient failing the gate is
-instant-bought inside the resting route, so one recipe can mix them.
+instant-bought whatever the arithmetic says, so one recipe can mix them.
+
+**The route is picked per ingredient, not for the whole bill.** A plan runs at the rate of its
+slowest leg and pays the sum of its parts, so one material nobody dumps into can drag a whole recipe
+to a trickle even where instant-buying that one material costs a few percent more and arrives a
+thousand times faster. The search is exact rather than greedy: a plan's rate is always one of a
+small set — the sell leg's, or one of the two each ingredient can hold to — so every achievable rate
+is tried, each ingredient takes the cheaper route that still holds it, and the best plan wins. The
+two whole-bill corners stay inside that search, so the answer is never worse than the old
+best-of-two.
+
+**Measured worth on the live book of 2026-08-20: nothing, and that is the honest number.** Over the
+120 quotable recipes the sum of positive profit per hour came out identical to the corner-picking it
+replaced, to the coin, with no recipe improved and none made worse. The reason is that the resting
+route is normally both the cheaper and the faster one on a crafting material — farm materials are
+dumped into buy orders constantly and instant-bought rarely — so there is rarely anything to trade
+off. It ships as the correct model and as insurance for the recipe that does have a slow leg, not as
+a measured gain. Do not re-measure it hoping for one; measure whether a slow-to-rest ingredient has
+turned up instead.
 
 **Slots are the real constraint, not coins.** The top eight together want **19 of the 21 order slots**
 a Bazaar Flipper 1 account has, against 86.6M of capital out of an 800M bankroll. Those are the same
@@ -186,12 +204,51 @@ any ingredient is unpriceable or uncoverable, or when nothing clears.
 lays the result out as a `CraftJob`, and emits the shared `FlipCandidate`. Three things belong to
 this layer rather than to the quote, because all three are about the account rather than the recipe.
 
-**The order-slot budget** (`craftMaxOrderSlots`, default 6). A plan over it is **re-quoted on
-`INSTANT_BUY` rather than dropped**: the resting route is what spends slots, so a seven-slot plan is
-usually still a flip at one slot, just dearer and slower to source. That is why `CraftQuote.quote`
-has a route-specific overload. The budget is per plan and deliberately not spent down the ranking —
-this is a menu the player picks one row from, and a shared budget would hide row five because of
-four plans nobody placed.
+**The order-slot budget** (`craftMaxOrderSlots`, default 6). The budget is per plan and deliberately
+not spent down the ranking — this is a menu the player picks one row from, and a shared budget would
+hide row five because of four plans nobody placed.
+
+**A plan over the budget is the right flip at the wrong size, and answering it with the route cost a
+factor of hundreds.** Until 2026-08-20 an over-budget plan was re-quoted on `INSTANT_BUY`, which
+gives every slot back at once and pays the ask on materials that were never the problem. On the live
+book of that day the two plans over the shipped six-slot budget were the only two over it, and both
+wanted their whole overrun for a **single** material:
+
+| Plan | Wants | Old fallback | Sized to six slots |
+|---|---|---|---|
+| `ENCHANTED_MITHRIL` | 1,269,600 mithril ore = 18 orders | 1,123/h | **883,751/h** |
+| `ENCHANTED_WHEAT` | 2,358,880 wheat = 33 orders | 4,774/h | **787,543/h** |
+
+The fallback collapsed because nobody instant-sells ore or wheat: the ask side of a farmed material
+supplies a trickle, so buying the bill there caps the plan at almost nothing. Sizing the same routes
+down to what six slots can rest at once keeps the margin per craft exactly and takes the share of the
+flow those slots hold — five orders of 71,680 ore plus the sell offer, 2,240 crafts.
+
+So the budget is spent in this order:
+
+1. **Cut the plan to size.** `CraftQuote` takes a hard craft ceiling, and the strategy
+   binary-searches the largest plan whose real orders — `Stacking.orderSplit`, ceilings and all —
+   fit the budget. The quote reports `Bound.SLOTS` when that is what held it down.
+2. **Give up a resting leg**, most slot-hungry first, for the plan wanting more *distinct* resting
+   materials than there are slots. A size cut cannot help there, because every leg costs one order
+   however small it is.
+3. Both are priced at every step and the better one ships, because neither wins everywhere: a small
+   plan keeping a cheap order beats the ask on a farmed material, and the ask beats a plan cut to
+   almost nothing on a material the bid side barely trades.
+
+Measured over the whole recipe table on 2026-08-20, against the plan logic it replaced:
+
+| Slot budget | Candidates | Profit/hour |
+|---|---|---|
+| 2 | 28 → 35 | 31.4M → 38.0M (×1.21) |
+| 3 | 30 → 36 | 41.7M → 51.8M (×1.24) |
+| 4 | 34 → 36 | 52.5M → 53.5M (×1.02) |
+| **6 (shipped)** | **34 → 36** | **52.5M → 54.2M (×1.03)** |
+| 12 | 34 → 36 | 52.5M → 56.2M (×1.07) |
+| 21 | 35 → 36 | 55.6M → 58.8M (×1.06) |
+
+No budget regresses. The headline is small because only two plans overran the shipped budget; what
+it buys is that those two stop being noise.
 
 **Slots are counted off the real orders, not off the ingredients.** `CraftQuote.orderSlots()` counts
 one order per resting leg, which holds only while every leg fits in one order. A bazaar order takes
@@ -209,6 +266,10 @@ ingredient that is 3% of the bill moving 20% matters far less than the one that 
 is a *widening* margin, and rejecting it on the output would throw away the better half of the
 strategy. Books with no usable history contribute nothing, so an unrecorded recipe is neutral rather
 than suspect — the same convention `BazaarSpreadStrategy` uses.
+
+**One row per crafted item, not per recipe.** Several items are craftable more than one way, and the
+overlay follows whichever way pays best, so a second row for the same item is a row the panel refuses
+to follow. The ranking keeps the better recipe and drops the other.
 
 The recipe table is a field on the strategy, not part of `StrategyContext`: it is shipped game data,
 identical on every client, and it does not change between polls.
