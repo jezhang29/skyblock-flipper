@@ -4,6 +4,7 @@ import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.model.UpgradeCost;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.recipe.Recipe;
@@ -150,9 +151,13 @@ class CraftFlipStrategyTest {
 	 * The measured reason this budget exists: on the live book the best eight craft plans wanted 19
 	 * of the 21 slots a Bazaar Flipper 1 account has, and those are the same slots the NPC basket -
 	 * the daily driver - needs.
+	 *
+	 * <p>A plan wanting more <i>distinct</i> resting materials than the budget has slots gives them
+	 * up one at a time, cheapest orders kept. It used to give up all of them at once and buy the
+	 * whole bill at the ask, which pays the ask on materials that were never the problem.
 	 */
 	@Test
-	void aPlanOverTheSlotBudgetFallsBackToTheInstantRouteRatherThanBeingDropped() {
+	void aPlanOverTheSlotBudgetGivesUpItsRestingLegsOneAtATime() {
 		book("OUTPUT", 10_000.0d, 9_000.0d, 5_000_000L, 5_000_000L);
 		book("A", 100.0d, 90.0d, 5_000_000L, 5_000_000L);
 		book("B", 100.0d, 90.0d, 5_000_000L, 5_000_000L);
@@ -160,17 +165,100 @@ class CraftFlipStrategyTest {
 
 		Recipe six = recipe("OUTPUT", 1, "A", 1, "B", 1, "C", 1);
 
-		// Four slots on the resting route: three ingredients plus the sell offer.
+		// Four slots with every material on an order: three ingredients plus the sell offer.
 		FlipCandidate roomy = candidates(six, context(new CraftContext(true, 6), 0L)).getFirst();
 		List<FlipCandidate> tight = candidates(six, context(new CraftContext(true, 2), 0L));
 
-		assertTrue(roomy.steps().stream().anyMatch(step -> step.startsWith("Buy Order:")),
-				"with slots to spare the cheaper resting route should win");
-		assertEquals(1, tight.size(), "a slot-hungry plan is re-quoted, not dropped");
-		assertTrue(tight.getFirst().steps().stream().noneMatch(step -> step.startsWith("Buy Order:")),
-				"inside a tight budget the plan must rest nothing but its sell offer");
-		assertTrue(tight.getFirst().steps().stream().anyMatch(step -> step.startsWith("Buy Instantly:")),
-				"the materials still have to be bought, just at the ask");
+		assertEquals(3L, roomy.steps().stream().filter(step -> step.startsWith("Buy Order:")).count(),
+				"with slots to spare every material should be bought on the cheaper resting order");
+		assertEquals(1, tight.size(), "a slot-hungry plan is re-priced, not dropped");
+
+		List<String> steps = tight.getFirst().steps();
+
+		assertEquals(1L, steps.stream().filter(step -> step.startsWith("Buy Order:")).count(),
+				"two slots is one buy order and the sell offer, not nothing but the sell offer");
+		assertEquals(2L, steps.stream().filter(step -> step.startsWith("Buy Instantly:")).count(),
+				"the two materials it could not keep still have to be bought, at the ask");
+	}
+
+	/**
+	 * The overrun that actually happens, and the one the old fallback answered worst.
+	 *
+	 * <p>Measured on the live book of 2026-08-20: {@code ENCHANTED_MITHRIL} and
+	 * {@code ENCHANTED_WHEAT} were the only two plans over the shipped six-slot budget, and both
+	 * wanted the whole overrun for a <b>single</b> material - eighteen orders of mithril ore,
+	 * thirty-three of wheat. Buying the bill at the ask instead dropped them from 3.13M and 5.18M
+	 * coins an hour to 1,123 and 4,774, because nobody instant-sells ore or wheat, so the ask side
+	 * supplies a trickle. The plan is the right flip at the wrong size, so it is cut to the size the
+	 * slots hold.
+	 */
+	@Test
+	void aPlanWantingMoreOrdersOfOneMaterialThanTheBudgetHoldsIsCutToSizeNotToTheAsk() {
+		// An hour of flow wants far more of the material than one order holds, and the ask side of
+		// its book barely trades - which is what a farmed material looks like.
+		book("OUTPUT", 10_000.0d, 9_000.0d, 5_000_000L, 5_000_000L);
+		book("FARMED", 10.0d, 9.0d, 1_680L, 500_000_000L);
+
+		Recipe recipe = recipe("OUTPUT", 1, "FARMED", 160);
+		List<FlipCandidate> found = candidates(recipe, context(new CraftContext(true, 3), 0L));
+
+		assertEquals(1, found.size());
+
+		List<String> steps = found.getFirst().steps();
+
+		assertTrue(steps.stream().anyMatch(step -> step.startsWith("Buy Order:")),
+				"the material must stay on an order: " + steps);
+		assertTrue(found.getFirst().units() > 0L);
+
+		// Two orders of material plus the sell offer is the whole budget, and the split has to say
+		// so rather than quoting a total no order box would take.
+		String material = steps.stream().filter(step -> step.startsWith("Buy Order:")).findFirst()
+				.orElseThrow();
+
+		assertTrue(material.contains("x " + Stacking.UNITS_PER_ORDER_STACKABLE)
+						|| material.endsWith("x" + Stacking.UNITS_PER_ORDER_STACKABLE),
+				"the plan should be sized to whole orders: " + material);
+	}
+
+	/** A wider budget buys a bigger plan of the same shape, never a different one. */
+	@Test
+	void aWiderSlotBudgetOnlyEverMakesThePlanWorthMore() {
+		book("OUTPUT", 10_000.0d, 9_000.0d, 5_000_000L, 5_000_000L);
+		book("FARMED", 10.0d, 9.0d, 1_680L, 500_000_000L);
+
+		Recipe recipe = recipe("OUTPUT", 1, "FARMED", 160);
+		double previous = 0.0d;
+
+		for (int budget : new int[] {2, 3, 4, 6, 10}) {
+			List<FlipCandidate> found = candidates(recipe, context(new CraftContext(true, budget), 0L));
+			double now = found.isEmpty() ? 0.0d : found.getFirst().profitPerHour();
+
+			assertTrue(now >= previous - 1e-6d,
+					"budget " + budget + " quoted " + now + " against " + previous + " at the last");
+			previous = now;
+		}
+	}
+
+	/**
+	 * One row per crafted item, not per recipe. Several items are craftable more than one way, and
+	 * the overlay follows whichever way pays best - so a second row for the same item is a row the
+	 * panel refuses to follow.
+	 */
+	@Test
+	void offersOneRowPerItemEvenWhereARecipeHasAVariant() {
+		book("OUTPUT", 10_000.0d, 9_000.0d, 5_000_000L, 5_000_000L);
+		book("CHEAP", 100.0d, 90.0d, 5_000_000L, 5_000_000L);
+		book("DEAR", 900.0d, 800.0d, 5_000_000L, 5_000_000L);
+
+		List<FlipCandidate> found = new CraftFlipStrategy(RecipeBook.of(List.of(
+				recipe("OUTPUT", 1, "CHEAP", 1), recipe("OUTPUT", 1, "DEAR", 1))))
+				.findCandidates(context());
+
+		assertEquals(1, found.size(), "two ways to craft one item is still one row");
+		assertEquals(new CraftFlipStrategy(RecipeBook.of(List.of(recipe("OUTPUT", 1, "CHEAP", 1))))
+						.findCandidates(context()).getFirst().profitPerHour(),
+				found.getFirst().profitPerHour(), 1e-6d,
+				"the row kept has to be the recipe that pays best");
 	}
 
 	/**
