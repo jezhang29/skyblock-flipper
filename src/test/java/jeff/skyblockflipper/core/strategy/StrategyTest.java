@@ -5,6 +5,7 @@ import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.valuation.FillStats;
 import jeff.skyblockflipper.core.valuation.NpcEdge;
@@ -63,6 +64,50 @@ class StrategyTest {
 
 	private static StrategyContext contextFor(BazaarProduct product) {
 		return contextFor(product, ItemCatalog.empty(), 0L);
+	}
+
+	/**
+	 * A quantity the amount box will take, not a total that reads as one order.
+	 *
+	 * <p>Measured on the live book of 2026-08-20: one of the 130 bazaar candidates
+	 * ({@code ESSENCE_CRIMSON}, 111,507 units against a 71,680 ceiling) asked for more than one
+	 * order. A bare total reads as one order, and that is how a line of 500 Jungle Hearts came to be
+	 * typed into a box that takes 256 of them.
+	 */
+	@Test
+	void aSpreadPlanOverOneOrderSaysHowItSplits() {
+		// Deep and busy enough that an hour of flow runs past the 71,680-unit order ceiling.
+		BazaarProduct busy = new BazaarProduct(
+				"TEST_ITEM",
+				List.of(new OrderLevel(104.0d, 100_000_000L, 40)),
+				List.of(new OrderLevel(100.0d, 100_000_000L, 40)),
+				new BazaarProduct.MovingWeek(2_000_000_000L, 2_000_000_000L));
+
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(busy)).getFirst();
+
+		assertTrue(candidate.units() > Stacking.UNITS_PER_ORDER_STACKABLE,
+				"the fixture has to want more than one order to mean anything, got "
+						+ candidate.units());
+
+		String split = " x " + Stacking.UNITS_PER_ORDER_STACKABLE;
+
+		assertTrue(candidate.steps().stream().anyMatch(step -> step.contains(split)),
+				"the buy leg has to name the orders it splits into: " + candidate.steps());
+		assertEquals(2L, candidate.steps().stream().filter(step -> step.contains(split)).count(),
+				"both legs are typed into an amount box: " + candidate.steps());
+	}
+
+	/** One order covers it, so the total is the number to type and nothing is added to it. */
+	@Test
+	void aSpreadPlanInsideOneOrderQuotesABareTotal() {
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(healthy())).getFirst();
+
+		assertTrue(candidate.units() < Stacking.UNITS_PER_ORDER_STACKABLE);
+		assertTrue(candidate.steps().stream().anyMatch(
+						step -> step.endsWith("quantity " + candidate.units())),
+				"a single-order plan should quote the total plainly: " + candidate.steps());
 	}
 
 	@Test
