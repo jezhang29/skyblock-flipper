@@ -43,6 +43,17 @@ two things changed (full record in `docs/craft-flipping.md`):
   resting route is normally both cheaper and faster on a crafting material, so there is rarely a
   trade to make. Do not re-measure it hoping for one.
 
+**A fourth strategy, enchanted-book combining, is now built** on branch `bazaar-combine` off this
+one (2026-08-20). Buy cheap low-tier books, combine `2^(T-k)` of them up to tier `T` at the anvil,
+sell the top tier on an offer; off the NPC cap, and ranked on net per anvil combine rather than per
+hour because its whole point is coins per click for a player who cannot grind. It is its own quote
+(`CombineQuote`, not `CraftQuote`) because the best targets are one-sided ask books that
+`CraftQuote.liquid()` rejects — the exit gate is target ask orders ≥15, no bid side. The combine
+table is curated game data, not price-inferred. Read `docs/combine-flipping.md` and
+`docs/adr/0003-combine-is-its-own-quote.md` before touching it. Every figure is offline: one live
+book snapshot, nothing combined and sold in play yet, so it joins the same unverified-in-play queue
+as craft.
+
 `BazaarSpreadStrategy` came out of the same audit sound: ranking on profit per hour is right (a
 greedy portfolio by that axis spends the whole 400M bankroll on 7 flips for 19.2M/h, against 5.5M/h
 ranking by profit per coin), capital binds where slots do not (6 of 130 plans), and the only defect
@@ -57,10 +68,14 @@ joined that queue.
 
 Two items stand, and both are the same shape: work finished offline that has never been seen in play.
 
-1. **Play a craft flip.** Nothing in the craft strategy has been crafted and sold on Hypixel. What
-   only play can answer: whether a recipe's materials really fill on a resting order inside the
-   horizon, whether the sell offer sheds at the rate `FillModel` predicts, and how much of the
-   ranked list the player cannot craft at all because of unlocks the mod does not read.
+1. **Play a craft flip, and a combine flip.** Nothing in either transformation strategy has been
+   made and sold on Hypixel. What only play can answer for craft: whether a recipe's materials really
+   fill on a resting order inside the horizon, whether the sell offer sheds at the rate `FillModel`
+   predicts, and how much of the ranked list the player cannot craft because of unlocks the mod does
+   not read. For combine: whether a source buy order at the bid fills at the predicted rate, whether
+   a competitor parks under the sell offer the way the killed NPC drift premium was, whether the
+   anvil is really coin-free, and whether the big net-per-combine whale rows (`VICIOUS_5` and the
+   like) that the ≥15-ask gate admits are worth setting and forgetting or are manipulated.
 2. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
    signature splits and the Midas ratio quote are all offline-only. This is a long queue of
    unverified-in-game work, and it needs the built jar played on live Hypixel — the user's job, no
