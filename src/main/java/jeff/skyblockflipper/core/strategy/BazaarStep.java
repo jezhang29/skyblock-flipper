@@ -135,22 +135,10 @@ public final class BazaarStep {
 	 * price gets typed, and the order rests behind the top until the book comes back to it. That is the
 	 * strategy: an NPC flip's profit is the gap to a fixed NPC price, and chasing past the plan's price
 	 * spends it.
-	 *
-	 * <p><b>A premium order never uses the button.</b> When the drift premium lifts the plan's price
-	 * above the live top of the book ({@link NpcWorklist.Task#postsAboveBook()}), the order is meant to
-	 * rest above the book so it holds the top through the window's drift. The button posts one increment
-	 * above the current top, which is below the premium price by exactly the premium - pressing it would
-	 * spend the whole thing and leave the order at the front for a poll rather than the window. So the
-	 * premium price is always typed on the sign, whatever the button offers.
 	 */
 	private static Optional<Step> onPrice(NpcWorklist.Task task, CapturedMenu menu) {
 		if (!task.hasPrice()) {
 			return Optional.empty();
-		}
-
-		if (task.postsAboveBook()) {
-			return sign(BazaarSlots.CUSTOM_PRICE, menu, "price per unit",
-					String.format("%.1f", task.price()));
 		}
 
 		OptionalInt button = BazaarSlots.TOP_ORDER_PLUS.in(menu);

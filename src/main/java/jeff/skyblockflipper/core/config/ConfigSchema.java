@@ -200,13 +200,6 @@ public final class ConfigSchema {
 							+ "other flipping.",
 					0, Fees.MAX_BAZAAR_ORDER_SLOTS, 1,
 					c -> c.npcMaxOrderSlots, (c, v) -> c.npcMaxOrderSlots = v),
-			new Entry.Ratio("npcDriftPremium", "Pay to stay on top",
-					"Post a little above the going price so your order holds the top of the book on "
-							+ "its own, instead of you returning to raise it. 1.0 pays enough to hold "
-							+ "it for a whole resting window and suits long gaps between visits; 0 "
-							+ "posts at the plain price and expects you to come back and reprice.",
-					0.0d, 2.0d, 0.05d,
-					c -> c.npcDriftPremium, (c, v) -> c.npcDriftPremium = v),
 			new Entry.Choice("npcRankingKey", "What the basket should favour",
 					"Which item gets a slot when the basket cannot fit everything. \"" + RANK_FEWER_TRIPS
 							+ "\" picks what earns most per inventory load, so you carry less to the "
@@ -348,11 +341,7 @@ public final class ConfigSchema {
 							+ "download once auction searching is off - about 434KB a time, so 20 "
 							+ "seconds is roughly 56GB a month. Applies after the next reload.",
 					10, 600, 5,
-					c -> c.bazaarPollSeconds, (c, v) -> c.bazaarPollSeconds = v),
-			new Entry.Text("apiKey", "Hypixel API key",
-					"Not used by anything. Every price the mod reads is public, so you can leave this "
-							+ "blank.",
-					c -> c.apiKey, (c, v) -> c.apiKey = v)));
+					c -> c.bazaarPollSeconds, (c, v) -> c.bazaarPollSeconds = v)));
 
 	private static final Group COLLECTOR = new Group("Collector sync", List.of(
 			new Entry.Flag("tapeSyncEnabled", "Fetch history from your recorder",

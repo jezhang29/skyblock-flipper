@@ -148,8 +148,9 @@ code; do not re-derive them from the bazaar.** The pieces:
   only for judging a row worked and sizing its reservation.
 - `NpcEdge` / `NpcEdgeSnapshot` / `NpcEdgeHistory` — the per-item edge, from `data.npcEdges()`.
   **It is empty for the first ~20s of a session** until `MarketPoller` builds it; until then every
-  `NpcEdge` is null and `npcDriftPremium` is silently 0. The plan now refuses rather than misprices
-  in that window (`NpcBasket.Bound.DRIFT_UNMEASURED`).
+  `NpcEdge` is null and the chase is charged at 0, which only under-prices the cost. **Paying the
+  drift into the posted price (`npcDriftPremium`) was removed 2026-08-19 on measurement** — read
+  "Removed: paying the chase up front" in `docs/npc-flipping.md` before proposing it again.
 - `NpcProbe` / `NpcProbeService` — `/flip npc probe <item>`, memory-only, settles the one thing the
   tape cannot: whether a competitor presses +0.1 at the user's order specifically.
 - `NpcContext` — the parameters; `maxOrdersPerItem` is a sweep dimension only, shipped unlimited.
@@ -251,9 +252,9 @@ satisfy it.
 ## Hypixel API
 
 All endpoints used (`bazaar`, `auctions`, `auctions_ended`, `resources/skyblock/items`, `election`)
-are public and unauthenticated. `FlipperConfig.apiKey` is offered in the settings screen but read by
-nothing — don't add key-gated paths without a reason. See the `hypixel-api-quirks` memory for the
-short version.
+are public and unauthenticated. There is no API key setting — one existed, was read by nothing, and
+was deleted 2026-08-19; don't add key-gated paths without a reason. See the `hypixel-api-quirks`
+memory for the short version.
 
 ### Two traps that produce plausible wrong numbers, not errors
 

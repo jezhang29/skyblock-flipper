@@ -17,7 +17,7 @@ Deep records live elsewhere and are linked from here:
 ## Current state (2026-08-19)
 
 The whole NPC basket strategy is merged to `main` (2026-08-17) — the basket, the reprice rounds, the
-check-in reminder, the Basket tab, the bazaar slot highlighting and the drift premium. The squash
+check-in reminder, the Basket tab and the bazaar slot highlighting. The squash
 folded 40+ `wip:` commits into a clean history and the branch is deleted. It has run in real play
 across several sessions. `main` is ahead of `origin/main`; nothing is pushed until the user asks.
 
@@ -97,11 +97,14 @@ rather than a memory.
   the frozen *list* is what the measurement was about, and the price on each row is quoted live
   because the player is standing at Hypixel's own live "+0.1 coins" button. See ADR 0002 and
   `npc-live-bugs-2026-08-12`.
-- **The drift premium pays the chase into the posted price instead of into 16 reprice rounds.** Same
-  coins, no trips. Trap: the market peaks at 0.25x the drift and this mod's fill model peaks at 1.0x,
-  because `FillModel` never returns a displaced order to the front of the book. The `/flip npc probe`
-  command settles the one thing the tape cannot: a competitor pressing +0.1 at the user's order
-  specifically.
+- **A buy order is posted at the plain "+0.1" price and never above it.** Paying the chase into the
+  posted price (`npcDriftPremium`) shipped 2026-08-14 and was removed 2026-08-19. Tape said it held
+  the top of the book 96.7% of a window; in play it held 3%, because a competitor parks a coin or two
+  above your specific order whatever you paid — and every tape sample came from a book with none of
+  your orders in it. It also charged the wrong number: `chaseCostRatio` sums every upward tick, and a
+  price posted once only has to beat the window's running maximum (202 median against 3,704 charged
+  on `ENCHANTED_ANCIENT_CLAW`). `/flip npc probe` stays as the experiment that would have to produce
+  new evidence first. See `docs/npc-flipping.md`, "Removed: paying the chase up front".
 
 ### Valuation (see the `signature-findings` skill for the full record)
 

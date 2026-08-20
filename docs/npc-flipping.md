@@ -413,137 +413,89 @@ offers one that does not — so a player who has already moved one of two is poi
 **Open:** `NpcSettingsSweepTest` for a max-orders-per-item cap (1, 2, unlimited). An unstackable line
 costs four times the clicks of a stackable one; the profit cost of capping it is not yet measured.
 
-### Paying the chase up front, so a cycle needs two visits instead of seventeen
+### Removed: paying the chase up front (`npcDriftPremium`)
 
-Asked for in play 2026-08-14: run 4 to 8 hours unattended, claim everything at once, sell at once.
-The reprice curve above prices that at 11.5M a cycle against 59.7M, which reads as a 5x penalty for
-not being there. **It is not, and the reason is already in this document.**
+**Shipped 2026-08-14, removed 2026-08-19.** A buy order is posted at Hypixel's own "+0.1" price and
+the chase is charged against the margin, paid a reprice at a time. Do not re-open this without
+evidence of a kind the sections below do not already contain.
 
-The chase cost is charged against every candidate's margin — `NpcEdge.chaseCostRatio` over the
-resting window — and the mod then expects the player to *spend* those coins sixteen times over. Pay
-the identical coins into the posted price instead and the order starts above the book, so nothing
-displaces it until the book has climbed the premium. Same margin, same unit cost, no trips.
+The idea was sound on paper. The chase cost is already charged against every candidate's margin —
+`NpcEdge.chaseCostRatio` over the resting window — and the mod then expects the player to *spend*
+those coins sixteen times over. Pay the identical coins into the posted price instead and the order
+starts above the book, so nothing displaces it until the book has climbed the premium. Same margin,
+same unit cost, no trips.
 
-**Measured 2026-08-14** over the four most recent days of the user's tape, 1,966 eight-hour windows
-across 153 candidates that clear the live filters. Share of a window an order spends at or above the
-live top bid:
+**The tape agreed, and the tape was wrong.** Measured 2026-08-14 over four days and 1,966 eight-hour
+windows across 153 live candidates, the share of a window an order spends at or above the top bid
+was 62.6% at the plain outbid price, 93.2% at half the drift and 96.7% at all of it. Re-scoring the
+shipped allocator's own basket against the same tape backed every premium row in full and left the
+zero-premium row quoting 47.3M and collecting 24.7M.
 
-| posted at | share of an 8h window at the top | `BEADY_EYES` |
-| --- | --- | --- |
-| top + 0.1 | 62.6% | 38.5% |
-| top + 0.5x the window's drift | 93.2% | 99.0% |
-| top + 1.0x | **96.7%** | 99.0% |
+Every sample behind those numbers came from a book with **none of the user's own orders in it**, so
+none of them could see a competitor who re-posts above *your specific order*. That was flagged at
+the time as the one assumption the tape could not check, and `/flip npc probe` was built to settle
+it. It settled it against the premium.
 
-Run through the allocator at the user's live settings (21 slots, 0.20 floor, 800M, 500M cap), one
-8-hour cycle, against the same reprice regime measured the same way:
+#### What happened in play
 
-| regime | profit/cycle | reprice trips |
-| --- | --- | --- |
-| reprice every 30 min, FillModel's own arithmetic | 47.3M | 16 |
-| reprice every 30 min, measured on the tape | 58.9M | 16 |
-| post once at top + 0.1, walk away | 37.5M | 0 |
-| **post once at top + 0.25x drift** | **69.9M** | **0** |
-| post once at top + 1.0x drift | 65.7M | 0 |
-
-**The market peaks at a quarter of the drift. The mod peaks at all of it, and that is not a
-contradiction.** `FillModel` never lets a displaced order return to the front of the book, while on
-the tape the top bid falls back below a posted price constantly — the order above it fills, or is
-pulled. So the model credits a premium with far less fill than the tape shows, and the gap narrows
-as the premium grows. Running the shipped allocator and then re-scoring the very same basket against
-what the tape says an order at that price collects:
-
-| premium | the basket the mod plans | what the tape backs |
-| --- | --- | --- |
-| 0.00x | 47.3M | **24.7M** |
-| 0.25x | 36.1M | 36.1M |
-| 0.50x | 40.3M | 40.3M |
-| 1.00x | **50.0M** | **50.0M** |
-
-Two readings. Every premium is **fully backed** — the mod plans less than the tape says it collects,
-which is the direction to be wrong in. And the shipped zero-premium row is the one that is **not**:
-it quotes 47.3M on the assumption of sixteen reprice rounds and collects 24.7M without them.
-
-So `npcDriftPremium` ships at 0 and the setting worth using is **1.0**, paired with a long
-`npcCheckInMinutes` so the reminder does not ask you back. The premium is capped at the chase stop
-in `NpcFlipStrategy`, because the floor is also a ceiling on the price typed and charging the cost is
-not the same test as checking the price once the two have been separated.
-
-**The one thing the tape cannot check.** Every sample in it came from a book with none of the
-player's orders in it. If an item's competition re-posts one increment above whatever is on top, the
-premium buys one poll rather than eight hours. The drift on the quiet items argues against that
-(`LOG:2` at 0.14 coins an hour is nobody jumping anything) and `CLIPPED_WINGS` at 76.8 argues it is
-a real question. `/flip npc probe <ITEM_ID>` settles it per item: it quotes the premium price, then
-watches the top bid — which now *includes* your own order — and reports how long you held it.
-Memory only, one session, nothing placed for you.
-
-### What the +0.1 button actually does, and why a premium is still worth paying
-
-The obvious objection to paying a premium: the bazaar has a button that posts one increment above
-the highest offer, so whatever you post, somebody presses it and you are outbid anyway. You cannot
-pre-empt a rule that is defined relative to you.
-
-The objection is right about the mechanism and wrong about the size. Every upward move in the top
-bid, three days of tape, 2026-08-12 to 2026-08-14, split by how big it was:
-
-| item | +0.1 moves | coins from them | bigger moves | coins from them |
-| --- | --- | --- | --- | --- |
-| `BEADY_EYES` | 95 (78%) | 9.5 | 27 | 4,478.0 |
-| `BRONZE_BOWL` | 187 (71%) | 18.7 | 78 | 753.4 |
-| `REVENANT_CATALYST` | 52 (80%) | 5.2 | 13 | 2,591.3 |
-| `TRANSMISSION_TUNER` | 234 (68%) | 23.4 | 109 | 15,905.4 |
-
-**Two-thirds to four-fifths of all bidding is the button, and it carries under 1% of the drift.**
-Revenant Catalyst's bid climbed 2,596 coins in three days and the button supplied 5 of them. The
-premium is not paid to stop the button, which is impossible; it is paid to sit above the dozen real
-repricings that move the price, which is the rest of the column.
-
-The button is also slow. Revenant Catalyst took 65 upward moves in 72 hours — fewer than one an
-hour. An order is not being nudged continuously; it is being nudged occasionally, by somebody who
-then fills and leaves.
-
-What the premium buys, measured directly by replaying every sample as an entry point and counting
-the share of the following 8 hours the book stayed at or below a posted price:
-
-| item | post +0.1 | +0.5% | +1% | +2% | +5% |
-| --- | --- | --- | --- | --- | --- |
-| `BEADY_EYES` | 31.5% | 88.4% | 88.4% | 88.4% | 99.9% |
-| `BRONZE_BOWL` | 9.9% | 83.9% | 83.9% | 83.9% | 91.9% |
-| `REVENANT_CATALYST` | 36.9% | 76.8% | 76.8% | 84.4% | 89.2% |
-| `TRANSMISSION_TUNER` | 10.5% | 81.1% | 81.1% | 84.9% | 99.8% |
-
-Posting one increment above the book — the shipped zero-premium behaviour — holds the top for a
-tenth to a third of an unattended window. Half a percent above it holds the top for four fifths.
-That gap is the whole case for `npcDriftPremium`, and it is why the setting pays for itself despite
-the button.
-
-**Still not answered by any of this**: these samples contain none of your own orders, so a
-competitor who presses +0.1 *at you specifically* is invisible here. That is what `NpcProbe` now
-separates. It records the largest amount anything ever outbid the probe by, and reports an overbid
-of a coin or less as the button and anything larger as a real reprice — plus how many times the
-order took the top back, which is what tells you the nudge was given up rather than held.
-
-### The premium held 3% in play, not the 88% the ownerless tape predicted
-
-Measured live, first unattended night 2026-08-16, two orders placed with a real premium and left
-11.6 hours. The tape now records the top bid *including* the user's own resting order, so the
-question line 519 left open — a competitor pressing +0.1 at you specifically — is finally in view.
+First unattended night, 2026-08-16, two orders placed with a real premium and left 11.6 hours:
 
 | item | posted premium | held top (of 145 samples) | worst outbid all night |
 | --- | --- | --- | --- |
 | `BEADY_EYES` | +659 (+3.9%) | 4/145 = 3% | +5.5 coins |
 | `OVERFLOWING_TRASH_CAN` | +277 (+11%) | 2/145 = 1% | +3.1 coins |
 
-The premium held for roughly ten minutes, then a competitor parked one or two coins above and
-stayed there the whole night — never out-pricing, just nudging. The +0.1 button table above
-(two-thirds of moves, under 1% of drift) describes the *market's* aggregate bidding; it does not
-describe what one competitor does to *your specific order* once it is the thing to beat. That
-second effect dominates, and it makes holding top offline impossible on any contested item. The
-88% hold at +0.5% is an artefact of a backtest that never contained the order it was pricing.
+The premium held for roughly ten minutes, then a competitor parked one or two coins above and stayed
+there all night — never out-pricing, just nudging. Measured over three days, 68–80% of every upward
+move in the book is that same +0.1 button and it carries under 1% of the drift (5 coins of 2,596 on
+`REVENANT_CATALYST`), which was the original argument that a premium could sit safely above the
+churn. That describes the *market's* aggregate bidding; it does not describe what one competitor
+does to *your* order once it is the thing to beat. That second effect dominates. The 88% hold at +0.5% was an artefact of a
+backtest that never contained the order it was pricing. The 7 units that filled on `BEADY_EYES`
+filled during the ~10 minutes it was genuinely top.
 
-The 7 units that did fill on `BEADY_EYES` filled during the ~10 minutes it was genuinely top, not
-from flow reaching a premium order. **The premium is worth paying only while you are present to
-reprice; unattended it buys about ten minutes.** Keep `npcDriftPremium` for check-in cycles; do
-not build any offline strategy on top of it.
+#### Why the price it charged was wrong even taking the tape at face value
+
+Asked in play 2026-08-19: `ENCHANTED_ANCIENT_CLAW`, NPC 32,000, top bid 21,592.6, and the mod asked
+for 25,284.6 — 3,692 coins over the book, a third of the margin. Reproduced exactly from the tape:
+the three-day sum of every upward tick is 463 coins an hour, times an eight-hour window, is 3,704.
+
+`chaseCostRatio` is documented as the **pessimistic** reading of the drift, on purpose: it sums every
+upward step separately because it was built to *discount quoted profit*, and erring toward quoting
+less is the safe direction for a cost. It is the wrong number for a **price**. An order posted once
+has to beat the window's **running maximum**, not the sum of its ticks. Over 1,699 eight-hour windows
+on that item the running-max rise is 202 coins at the median and 1,232 at p95, against the 3,704
+charged — fifteen times the median requirement. Worse, 83% of the measured drift on that item is 26
+jumps over 500 coins, the largest three being ~9,000 apiece as the whole bid wall moved between
+11,000, 20,000 and 30,000. A 3,692 premium neither survives those nor is needed for anything else.
+
+Swept over the whole candidate set — 543 products, 10,349 eight-hour windows, scoring
+`time at top x margin` on the same ownerless tape that argued *for* the premium:
+
+| posted at | time at top | profit per unit, vs plain |
+| --- | --- | --- |
+| bid + 0.1 | 58.0% | 1.00x |
+| +1% of the NPC price | 74.1% | 1.22x |
+| +5% of the NPC price | 83.4% | **1.29x** |
+| the drift premium at 1.0 | 93.8% | 0.98x |
+| the chase stop | 96.2% | 0.54x |
+
+So the shipped premium bought the most time at the top and the least money, in the arm of the
+measurement most favourable to it. A small fixed premium scored best here, and it is **not** shipped
+either: the 3%-in-play result above says this whole column overstates the hold, and a tuning
+parameter that only pays off on a market model already shown to be wrong is not worth the setting.
+
+#### What went with it
+
+`NpcContext.driftPremium`, `paysThePremium`, `driftUnmeasured`, `fillHorizon` and
+`displacementDelayHours`; `NpcBasket.Bound.DRIFT_UNMEASURED`; `NpcPlan.postsAboveBook` and the
+`BazaarStep` branch that typed a premium price on the sign instead of pressing the button;
+`FillModel`'s displacement-delay overload. `NpcFlipStrategy`'s post-price chase-stop check went too,
+being unreachable once the posted price is always at or under the cost the floor already tests.
+
+`/flip npc probe` **stays**, on a fixed full window's drift — the largest premium the strategy ever
+asked for, because an order that cannot hold the top at that price will not hold it at less. It is
+the experiment that would have to produce new evidence before any of this came back.
 
 ### Rejected: unattended sit-below-top ("catch the dumps")
 

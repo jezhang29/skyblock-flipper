@@ -262,24 +262,27 @@ public final class Guide {
 					+ "now and then, and that is measured from how fast the best offer has really been "
 					+ "climbing. It is taken off before you see the profit, so the number shown is the "
 					+ "profit after chasing"),
-			new Term("Pay to stay on top", "A setting that spends those same coins on your opening "
-					+ "price instead. An order posted above the crowd is not outbid until the crowd "
-					+ "climbs to it, so it holds first place while you are away. Measured over four "
-					+ "days of recorded prices, an order at the plain price spends about two thirds of "
-					+ "an eight hour stretch in first place, and one posted above it spends nearly all "
-					+ "of it. Use it with a long gap between check-ins. It is off by default because "
-					+ "one thing about it can only be checked in play - see Probe"),
+			new Term("Paying to stay on top", "Spending those same coins on your opening price "
+					+ "instead, so the order sits above the crowd and is not outbid until the crowd "
+					+ "climbs to it. This was a setting and was removed. Recorded prices said it "
+					+ "worked, but every one of those recordings came from a market with none of your "
+					+ "own orders in it. Tried overnight in play, an order posted 3.9% above the book "
+					+ "held first place for about ten minutes of eleven hours: a rival simply parks a "
+					+ "coin or two above your order, whatever you paid. Post at the plain price and "
+					+ "raise it when you check in"),
 			new Term("Probe", "/flip npc probe <item> works out a higher price for one item, then "
 					+ "watches whether anyone outbids an order left there. All the recorded history "
 					+ "comes from a market with none of your orders in it, so whether rivals will "
-					+ "climb above whatever is on top is the one thing history cannot answer. Run one "
-					+ "per item, on as many items as you like, and /flip npc probe reports them all. A "
-					+ "fill ends that item's probe. It is remembered only while the game is open"),
+					+ "climb above whatever is on top is the one thing history cannot answer - it "
+					+ "answered no, which is why paying to stay on top is gone. The probe stays, "
+					+ "because it is how you would find out otherwise. Run one per item, on as many "
+					+ "items as you like, and /flip npc probe reports them all. A fill ends that "
+					+ "item's probe. It is remembered only while the game is open"),
 			new Term("Nudge", "Being outbid by the bazaar's own \"+0.1\" button rather than by somebody "
-					+ "deliberately pricing the item. No premium can stop one, and none needs to: "
-					+ "across three days these were most of the upward moves and under 1% of the "
-					+ "climbing. The probe reports an outbid of a coin or less as a nudge, and counts "
-					+ "how often your order took first place back"),
+					+ "deliberately pricing the item. Across three days these were most of the upward "
+					+ "moves and under 1% of the climbing, so they are not what a higher opening price "
+					+ "would be paid to sit above. The probe reports an outbid of a coin or less as a "
+					+ "nudge, and counts how often your order took first place back"),
 			new Term("Item names", "Anywhere the mod asks for an item you can type the name you read in "
 					+ "game, in any capitalisation and any word order. The internal codes cannot be "
 					+ "guessed from names - Nether Wart Distillate is NETHER_STALK_DISTILLATE - so do "

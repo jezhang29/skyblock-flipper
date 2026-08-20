@@ -336,10 +336,11 @@ public final class FlipCommand {
 	/**
 	 * Quotes the premium price for one item and starts watching what happens to an order there.
 	 *
-	 * <p>Settles the one assumption behind {@code npcDriftPremium} that no amount of tape can:
-	 * every sample on the tape came from a book with none of the player's orders in it, so whether
-	 * competitors re-post above whatever is on top is unobservable from outside. One order and one
-	 * session answers it. See {@link NpcProbe}.
+	 * <p>Settles the one assumption no amount of tape can: every sample on it came from a book with
+	 * none of the player's orders in it, so whether competitors re-post above whatever is on top is
+	 * unobservable from outside. One order and one session answers it. It answered no on 2026-08-16,
+	 * which is why the mod no longer posts above the book at all - so this is now an experiment
+	 * rather than a setup step, and the only thing that could re-open that. See {@link NpcProbe}.
 	 */
 	private static int startProbe(FabricClientCommandSource source, String id) {
 		if (!marketReady(source)) {
@@ -379,10 +380,9 @@ public final class FlipCommand {
 			return 0;
 		}
 
-		// The premium the settings ask for, or a quarter of the drift where they ask for none - which
-		// is the measured peak, and the number somebody probing before turning the setting on wants.
-		double multiple = config.npcDriftPremium > 0.0d ? config.npcDriftPremium : DEFAULT_PROBE_PREMIUM;
-		double premium = multiple * edge.bidDriftPerHour() * config.npcRestingHours;
+		// Fixed rather than read from a setting: paying a premium is no longer something the strategy
+		// does, so this is the experiment that would have to produce new evidence before it were.
+		double premium = DEFAULT_PROBE_PREMIUM * edge.bidDriftPerHour() * config.npcRestingHours;
 		double price = outbid.getAsDouble() + premium;
 
 		if (premium <= 0.0d) {
@@ -399,7 +399,7 @@ public final class FlipCommand {
 				.withStyle(ChatFormatting.GREEN)));
 		line(source, "post one buy order at", String.format("%.1f", price));
 		line(source, "which is", String.format("%.1f above the book, %.2gx the %.1fh drift",
-				premium, multiple, config.npcRestingHours));
+				premium, DEFAULT_PROBE_PREMIUM, config.npcRestingHours));
 		line(source, "then", "leave it. /flip npc probe says whether anything outbid it.");
 		source.sendFeedback(Component.literal(
 						"  Being outbid by 0.1 is the increment button and is expected - watch for an "
@@ -514,11 +514,12 @@ public final class FlipCommand {
 	}
 
 	/**
-	 * The premium to probe with when the setting is still off.
+	 * The premium to probe with.
 	 *
-	 * <p>A whole window's drift, which is the setting worth turning on: the shipped fill model is
-	 * conservative about a premium and its own arithmetic peaks there. See
-	 * {@code FlipperConfig.npcDriftPremium}.
+	 * <p>A whole resting window's measured drift, which is the largest premium the strategy ever
+	 * asked for while it asked for one. The probe is asking whether a competitor will climb above
+	 * your order whatever you paid, so the useful test is the generous end: an order that cannot
+	 * hold the top at a full window's drift will not hold it at less.
 	 */
 	private static final double DEFAULT_PROBE_PREMIUM = 1.0d;
 

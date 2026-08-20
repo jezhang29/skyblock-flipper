@@ -44,7 +44,7 @@ class BazaarStepTest {
 	}
 
 	private static NpcWorklist.Task task(NpcWorklist.Kind kind, String itemId, String name) {
-		return new NpcWorklist.Task(kind, itemId, name, 100.0d, 64L, "64", 0.0d, 0L, "", false);
+		return new NpcWorklist.Task(kind, itemId, name, 100.0d, 64L, "64", 0.0d, 0L, "");
 	}
 
 	@Test
@@ -216,7 +216,7 @@ class BazaarStepTest {
 	@Test
 	void pointsAtTheAmountSignAndSaysWhatToTypeOnIt() {
 		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", 100.0d, 880L, "3 x 256 + 112", 0.0d, 0L, "", false);
+				"Transmission Tuner", 100.0d, 880L, "3 x 256 + 112", 0.0d, 0L, "");
 
 		Optional<BazaarStep.Step> step = BazaarStep.next(task, 0.0d, amountPage());
 
@@ -235,7 +235,7 @@ class BazaarStepTest {
 				new CapturedSlot(16, "Custom Price", List.of("Click to specify!"), "", 1, "")));
 
 		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", 84_999.94d, 256L, "256", 0.0d, 0L, "", false);
+				"Transmission Tuner", 84_999.94d, 256L, "256", 0.0d, 0L, "");
 
 		Optional<BazaarStep.Step> step = BazaarStep.next(task, 0.0d, pricePage);
 
@@ -265,12 +265,7 @@ class BazaarStepTest {
 
 	private static NpcWorklist.Task placeAt(double price) {
 		return new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", price, 256L, "256", 0.0d, 0L, "", false);
-	}
-
-	private static NpcWorklist.Task placeAboveTheBookAt(double price) {
-		return new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", price, 256L, "256", 0.0d, 0L, "", true);
+				"Transmission Tuner", price, 256L, "256", 0.0d, 0L, "");
 	}
 
 	@Test
@@ -290,20 +285,6 @@ class BazaarStepTest {
 		// Cheaper than planned and still the top of the book: strictly the better order.
 		assertEquals(11, BazaarStep.next(placeAt(30_808.0d), 0.0d, pricePage("30,102.4"))
 				.orElseThrow().slot());
-	}
-
-	@Test
-	void typesThePremiumOnTheSignEvenThoughTheButtonOffersLess() {
-		// The drift premium posts the order above the book on purpose, so it holds the top through the
-		// window's drift. The button offers one increment over the current top - far below the premium
-		// price - and pressing it would spend the whole premium and rest the order at the front for one
-		// poll. So the premium price is typed on the sign whatever the button says.
-		Optional<BazaarStep.Step> step =
-				BazaarStep.next(placeAboveTheBookAt(41_600.0d), 0.0d, pricePage("30,808.0"));
-
-		assertTrue(step.isPresent());
-		assertEquals(15, step.get().slot());
-		assertEquals("41600.0", step.get().type());
 	}
 
 	@Test
@@ -342,7 +323,7 @@ class BazaarStepTest {
 	@Test
 	void saysNothingOnTheAmountSignWithNoSizeToType() {
 		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "X", "Thing", 1.0d, 0L,
-				"", 0.0d, 0L, "", false);
+				"", 0.0d, 0L, "");
 
 		assertTrue(BazaarStep.next(task, 0.0d, amountPage()).isEmpty());
 	}
