@@ -1,6 +1,6 @@
 package jeff.skyblockflipper.core.strategy;
 
-/** The four things you can actually get paid for, plus where each one's edge comes from. */
+/** The things you can actually get paid for, plus where each one's edge comes from. */
 public enum StrategyKind {
 	/** Providing immediacy: post orders on both sides and collect the spread. */
 	BAZAAR_SPREAD("Bazaar", "immediacy"),
@@ -10,6 +10,9 @@ public enum StrategyKind {
 
 	/** Turning cheap inputs into an expensive output. */
 	CRAFT("Craft", "transformation"),
+
+	/** Combining low-tier enchanted books up to a dearer tier at the anvil. */
+	COMBINE("Combine", "transformation"),
 
 	/** Knowing what a specific item configuration is worth when the market does not. */
 	AUCTION_VALUE("Auction", "valuation");

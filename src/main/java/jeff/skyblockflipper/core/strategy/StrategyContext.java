@@ -39,6 +39,8 @@ import java.util.List;
  * @param craft            the craft-specific half: whether crafting is offered at all, and the
  *                         order-slot budget one craft plan may spend out of the account's shared
  *                         pool
+ * @param combine          the combine-specific half: whether enchanted-book combining is offered at
+ *                         all
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -53,7 +55,8 @@ public record StrategyContext(
 		Duration fillHorizon,
 		double maxCapitalShare,
 		NpcContext npc,
-		CraftContext craft
+		CraftContext craft,
+		CombineContext combine
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
@@ -71,6 +74,16 @@ public record StrategyContext(
 		maxCapitalShare = maxCapitalShare <= 0.0d ? UNCAPPED : Math.min(maxCapitalShare, UNCAPPED);
 		npc = npc == null ? NpcContext.unlimited() : npc;
 		craft = craft == null ? CraftContext.defaults() : craft;
+		combine = combine == null ? CombineContext.defaults() : combine;
+	}
+
+	/** The shape before combining had settings of its own, for callers that state only NPC and craft. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc, CraftContext craft) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, craft, CombineContext.defaults());
 	}
 
 	/**

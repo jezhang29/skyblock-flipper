@@ -6,6 +6,7 @@ import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.PlannedQuotes;
 import jeff.skyblockflipper.core.ledger.Quote;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.CombineContext;
 import jeff.skyblockflipper.core.strategy.CraftContext;
 import jeff.skyblockflipper.core.strategy.CraftFlipStrategy;
 import jeff.skyblockflipper.core.strategy.CraftJob;
@@ -134,7 +135,8 @@ public final class CandidateFeed {
 						// against the same allocator the mod plans with.
 						NpcContext.UNLIMITED_ORDERS_PER_ITEM,
 						config.npcRanking()),
-				new CraftContext(config.craftFlipsEnabled, config.craftMaxOrderSlots));
+				new CraftContext(config.craftFlipsEnabled, config.craftMaxOrderSlots),
+				new CombineContext(config.combineFlipsEnabled));
 	}
 
 	/**
