@@ -108,6 +108,24 @@ class CombineQuoteTest {
 	}
 
 	@Test
+	void picksTheCheapestTierEvenWhenAHigherTierPaysMorePerCombine() {
+		// The Rejuvenate shape, and the reason the tier pick ranks on total profit rather than net per
+		// anvil combine. TEST 1->5: tier 3 is four books and three merges an output; tier 2 is eight
+		// books and seven merges. Price tier 3 dear enough that its fewer merges win on net-per-combine
+		// but its higher per-book cost loses on net-per-output. The cheaper tier 2 must be chosen.
+		Entry entry = new Entry("TEST", 1, 5);
+		askOnly("ENCHANTMENT_TEST_5", 300_000.0d, 20, 168_000L);
+		book("ENCHANTMENT_TEST_3", 30_000.0d, 25_999.9d, 168_000L, 168_000L); // 4 x 26000 = 104,000
+		book("ENCHANTMENT_TEST_2", 6_000.0d, 4_799.9d, 168_000L, 168_000L);   // 8 x 4800  =  38,400
+
+		CombineQuote q = quote(entry).orElseThrow();
+
+		// tier 3 wins net-per-combine (64,083 > 36,835) but loses net-per-output (192,250 < 257,850).
+		assertEquals(2, q.sourceTier(), "the cheapest source per output book must be chosen");
+		assertEquals(8 * 4_800.0d, q.sourceCostPerOutput(), 1e-9);
+	}
+
+	@Test
 	void instantBuysASourceWithNoBidSide() {
 		// Feather Falling 6 has a deep ask and no bid: it cannot be rested, only taken at the ask.
 		Entry entry = new Entry("TEST", 2, 3);
@@ -123,15 +141,16 @@ class CombineQuoteTest {
 	@Test
 	void prefersTheCheaperRestingSourceEvenWhenInstantFillsFaster() {
 		// The source dumps slowly (a slow resting fill) but is lifted fast (a fast instant fill), and
-		// resting is a touch cheaper. Profit per hour would take the instant route for its speed; net
-		// per combine takes the cheaper one, because this player is spending clicks, not hours.
+		// resting is a touch cheaper. Profit per hour would take the instant route for its speed; total
+		// profit per output takes the cheaper one, because capital and patience are slack, not fill
+		// speed.
 		Entry entry = new Entry("TEST", 2, 3);
 		askOnly("ENCHANTMENT_TEST_3", 100_000.0d, 20, 168_000_000L); // demand never binds
 		book("ENCHANTMENT_TEST_2", 200.0d, 100.0d, 1_680_000L, 1_680L);
 
 		CombineQuote q = quote(entry).orElseThrow();
 
-		assertEquals(SourceRoute.BUY_ORDER, q.route(), "the cheaper resting source must win on net/click");
+		assertEquals(SourceRoute.BUY_ORDER, q.route(), "the cheaper resting source must win on net per output");
 		assertEquals(2 * 100.1d, q.sourceCostPerOutput(), 1e-9);
 	}
 
