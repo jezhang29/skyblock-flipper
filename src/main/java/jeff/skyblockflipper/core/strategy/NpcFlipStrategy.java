@@ -389,42 +389,26 @@ public final class NpcFlipStrategy implements FlipStrategy {
 		// which turns a 30% margin into 15.6%, while CLIPPED_WINGS pays 0.00%.
 		double chaseCost = edge == null ? 0.0d : edge.chaseCostRatio(npc.restingWindow()) * npcPrice;
 
-		// The premium is the same coins, spent in the other order: paid into the posted price so the
-		// order holds the top on its own, rather than paid out over a series of reprices. So it is
-		// taken out of the chase rather than added to it, and at a premium of 1.0 the unit cost is
-		// unchanged and only where those coins sit has moved. Measured 2026-08-14 over 1,966 8-hour
-		// windows of the user's tape: an order at the plain outbid price spends 62.6% of a window at
-		// the front of the book, one at 0.25x the drift spends 96%, and the cycle is worth 69.9M
-		// against 58.9M for repricing every half hour.
-		double premium = Math.min(npc.driftPremium(), 1.0d) * chaseCost;
-		double postPrice = outbid + premium;
-		double unitCost = postPrice + Math.max(0.0d, chaseCost - premium);
+		// You post one increment above the book and pay the chase a reprice at a time. Paying it up
+		// front instead was a setting until 2026-08-19 and is gone: measured live overnight on
+		// 2026-08-16 a premium of +3.9% held the top of the book for 3% of the night, because a
+		// competitor parks a coin or two above your specific order whatever you paid. See
+		// docs/npc-flipping.md, "Removed: paying the chase up front".
+		double postPrice = outbid;
+		double unitCost = postPrice + chaseCost;
 		double unitNet = npcPrice - unitCost;
 
 		if (unitNet <= 0.0d || unitNet / npcPrice < npc.minMarginRatio()) {
 			return null;
 		}
 
-		// Above the chase stop the premium has spent the margin the trade exists to collect, and an
-		// order there is one the strategy would refuse to reprice to. The floor above already rejects
-		// the plan on cost; this rejects it on the price actually typed, which is not the same test
-		// once the two have been separated.
-		if (postPrice > npc.maxChasePrice(npcPrice)) {
-			return null;
-		}
-
 		// Horizon is the check-in interval: an order that gets repriced back to the top every 30
 		// minutes collects the 30-minute average rate, not the rate of one left alone all cycle.
-		//
-		// The premium buys the other half of that trade - an order posted above the book is not
-		// displaced until the book climbs to it - so what it is sized over is the resting window,
-		// which is the horizon it is actually left alone for.
 		FillEstimate fill = FillModel.estimate(
 				product,
 				context.trends().fillStatsFor(product.productId()).orElse(null),
-				npc.fillHorizon(),
-				UNMEASURED_FILL_SHARE,
-				npc.displacementDelayHours());
+				npc.checkIn(),
+				UNMEASURED_FILL_SHARE);
 
 		double fillPerHour = fill.buyUnitsPerHour();
 		long affordable = (long) (context.maxCapitalPerFlip() / unitCost);
@@ -455,8 +439,7 @@ public final class NpcFlipStrategy implements FlipStrategy {
 				fillPerHour,
 				fill.measured(),
 				edge,
-				confidence,
-				premium > 0.0d);
+				confidence);
 	}
 
 	private static Route better(Route a, Route b) {

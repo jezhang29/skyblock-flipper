@@ -25,13 +25,6 @@ import java.util.List;
  * file. That means adding a new setting later does not invalidate existing configs.
  */
 public final class FlipperConfig {
-	/**
-	 * Hypixel API key. Optional: every endpoint this mod needs (bazaar, auctions,
-	 * auctions_ended, items, election) is public and unauthenticated. Only set this if we
-	 * later add profile-aware features.
-	 */
-	public String apiKey = "";
-
 	/** Coins available to deploy. Candidates needing more capital than this are hidden. */
 	public long bankroll = 10_000_000L;
 
@@ -275,50 +268,6 @@ public final class FlipperConfig {
 	 * which rests nothing but the sell offer, rather than dropped.
 	 */
 	public int craftMaxOrderSlots = CraftContext.DEFAULT_MAX_ORDER_SLOTS;
-
-	/**
-	 * How much of a resting window's measured upward bid drift to pay up front, as a multiple of it.
-	 *
-	 * <p><b>The setting that turns this trade into one you can leave.</b> Chasing the book is already
-	 * charged against every candidate's margin - {@code NpcEdge.chaseCostRatio} over
-	 * {@link #npcRestingHours} - the mod simply expects you to pay it a reprice at a time. Paying the
-	 * same coins into the posted price instead buys the front of the book for the whole window
-	 * without a single trip back.
-	 *
-	 * <p>Measured 2026-08-14 over four days of the user's own tape, 1,966 eight-hour windows across
-	 * 153 candidates: share of a window spent at the top of the book is 62.6% posting at the plain
-	 * outbid price, 93.2% at 0.5x and 96.7% at 1.0x.
-	 *
-	 * <p><b>Set it to 1.0.</b> Not because that is where the market peaks - a perfect-foresight sizing
-	 * peaks at 0.25x and is flat to 1.0x - but because it is where <i>this mod's</i> arithmetic peaks,
-	 * and the two questions have different answers. {@code FillModel} never lets a displaced order
-	 * return to the front of the book, while on the tape the top bid falls back constantly, so the
-	 * fill it credits a premium with is far under what the tape shows. That gap shrinks as the premium
-	 * grows. Running the shipped allocator over the live book at the user's settings, and then
-	 * re-scoring the very same basket against what the tape says an order at that price collects:
-	 *
-	 * <pre>
-	 * premium   the basket it plans   what the tape backs
-	 * 0.00x     47.3M                 24.7M
-	 * 0.25x     36.1M                 36.1M
-	 * 0.50x     40.3M                 40.3M
-	 * 1.00x     50.0M                 50.0M
-	 * </pre>
-	 *
-	 * <p>Two things to read out of that. Every premium is <b>fully backed</b> - the mod plans less
-	 * than the tape says it would collect, which is the direction to be wrong in. And the shipped
-	 * zero-premium plan is the one row that is <b>not</b> backed: it quotes 47.3M on the assumption
-	 * that you come back and reprice sixteen times, and collects 24.7M if you do not.
-	 *
-	 * <p><b>Zero is still the default</b>, because the measurement rests on one assumption the tape
-	 * cannot check: every sample in it came from a book with none of your orders in it, so an item
-	 * whose competition re-posts one increment above whatever is on top would give back the premium
-	 * immediately. {@code /flip npc probe} is how that gets settled per item.
-	 *
-	 * <p>Pair it with a long {@link #npcCheckInMinutes} for a genuinely unattended cycle: the premium
-	 * holds the book and the interval stops the reminder asking you back.
-	 */
-	public double npcDriftPremium = 0.0d;
 
 	/**
 	 * What the basket ranks candidates on when it has to choose between them.
@@ -569,10 +518,6 @@ public final class FlipperConfig {
 		// measured against is not observable.
 		npcCheckInMinutes = Math.clamp(npcCheckInMinutes, 5, 480);
 		npcRestingHours = Math.clamp(npcRestingHours, 0.5d, 24.0d);
-		// Zero is the shipped behaviour and has to stay reachable. The ceiling is where the premium
-		// costs more margin than the fills it buys are worth: the measured curve peaks at 0.25 and
-		// is already falling by 1.5.
-		npcDriftPremium = Math.clamp(npcDriftPremium, 0.0d, 2.0d);
 		npcRankingKey = npcRanking().name();
 		// Zero means "all of them", so it stays; the ceiling is the most any Bazaar Flipper level
 		// could give. What the account actually has still wins at plan time.

@@ -133,7 +133,6 @@ public final class CandidateFeed {
 						// Not a setting: the per-item order cap exists so the sweep can price one
 						// against the same allocator the mod plans with.
 						NpcContext.UNLIMITED_ORDERS_PER_ITEM,
-						config.npcDriftPremium,
 						config.npcRanking()),
 				new CraftContext(config.craftFlipsEnabled, config.craftMaxOrderSlots));
 	}

@@ -43,10 +43,6 @@ import java.util.Optional;
  *                       {@link #UNLIMITED_ORDERS_PER_ITEM}. Not a setting: it exists so
  *                       {@code NpcSettingsSweepTest} can price a cap against the same allocator the
  *                       mod plans with, which is the only way to know what capping one costs
- * @param driftPremium   how much of the resting window's measured upward drift to pay into the
- *                       posted price rather than into repricing, as a multiple of it. Zero is the
- *                       shipped behaviour: post one increment above the book and chase it. See
- *                       {@code FlipperConfig.npcDriftPremium} for what the alternative measured
  * @param ranking        which resource the basket ranks candidates against when it has to choose,
  *                       from {@code FlipperConfig.npcRankingKey}
  */
@@ -58,7 +54,6 @@ public record NpcContext(
 		int maxOrderSlots,
 		long capRemaining,
 		int maxOrdersPerItem,
-		double driftPremium,
 		NpcRanking ranking
 ) {
 	/**
@@ -101,19 +96,17 @@ public record NpcContext(
 		// into producing plans rather than suppressing them. Unlimited survives the clamp.
 		capRemaining = Math.max(0L, capRemaining);
 		maxOrdersPerItem = Math.max(UNLIMITED_ORDERS_PER_ITEM, maxOrdersPerItem);
-		// A negative premium would post under the book, which is not a cheaper order but no order.
-		driftPremium = Math.max(0.0d, driftPremium);
 		ranking = ranking == null ? NpcRanking.LOAD : ranking;
 	}
 
 	/**
-	 * The shape before the premium and the ranking key were settings, which is what every test and
-	 * every sweep that has no opinion on either is written against.
+	 * The shape before the ranking key was a setting, which is what every test and every sweep that
+	 * has no opinion on it is written against.
 	 */
 	public NpcContext(NpcEdgeSnapshot edges, double minMarginRatio, Duration checkIn,
 			double restingHours, int maxOrderSlots, long capRemaining, int maxOrdersPerItem) {
 		this(edges, minMarginRatio, checkIn, restingHours, maxOrderSlots, capRemaining,
-				maxOrdersPerItem, 0.0d, NpcRanking.LOAD);
+				maxOrdersPerItem, NpcRanking.LOAD);
 	}
 
 	/**
@@ -143,57 +136,6 @@ public record NpcContext(
 	/** {@link #restingHours()} as a duration, which is what {@link NpcEdge#chaseCostRatio} takes. */
 	public Duration restingWindow() {
 		return Duration.ofMillis(Math.round(restingHours * MILLIS_PER_HOUR));
-	}
-
-	/** Whether orders are posted above the book rather than one increment inside it. */
-	public boolean paysThePremium() {
-		return driftPremium > 0.0d;
-	}
-
-	/**
-	 * Whether a premium is asked for that nothing measured can price.
-	 *
-	 * <p>The premium is a multiple of {@link NpcEdge#chaseCostRatio}, so with no measured drift
-	 * behind it there is nothing to take a multiple of and it comes out at zero. That is not a
-	 * smaller premium, it is the plain outbid price - the shipped behaviour of the setting turned
-	 * off - and a plan priced there while the setting says otherwise is a plan the player has no way
-	 * of recognising. <b>Measured live on 2026-08-15: a 111.5M basket placed 2m19s after launch went
-	 * in at top bid plus 0.1 on all thirteen items, with the premium at 1.0, and filled 11.2% of its
-	 * capital over ten hours.</b>
-	 *
-	 * <p>Covers both ways there can be nothing: the snapshot has not been published yet, which is
-	 * the first seconds of a session, and a client whose tape is too short for any product to clear
-	 * {@link NpcEdge#MIN_SAMPLES}, which is a fresh install. Both are temporary and neither is a
-	 * fact about the market, so the answer is to wait rather than to plan.
-	 */
-	public boolean driftUnmeasured() {
-		return paysThePremium() && edges.productsWithMeasuredEdge() == 0;
-	}
-
-	/**
-	 * How long a plan is actually left alone for, which is what its fill is worth measuring over.
-	 *
-	 * <p>Without a premium that is the check-in interval: the order is moved back to the front every
-	 * time the player returns, so what it collects is the interval's average rate. With one, the
-	 * whole point is that the player does not return, so the horizon is the resting window - and the
-	 * premium is what stops the longer horizon simply reporting a worse fill, because it delays the
-	 * displacement the horizon is being averaged over. See
-	 * {@code FillModel.estimate(..., displacementDelayHours)}.
-	 */
-	public Duration fillHorizon() {
-		return paysThePremium() ? restingWindow() : checkIn;
-	}
-
-	/**
-	 * How long the book must climb before anything can outbid an order posted at the premium.
-	 *
-	 * <p>The premium is {@code driftPremium} multiples of what the book drifts upward over a whole
-	 * resting window, so at the drift rate it measured, climbing it takes exactly that fraction of
-	 * the window. It cancels down to a number of hours with no drift rate in it, which is what makes
-	 * it safe to hand a model that has its own opinion about rates.
-	 */
-	public double displacementDelayHours() {
-		return driftPremium * restingHours;
 	}
 
 	/**
