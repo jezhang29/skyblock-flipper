@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -564,6 +565,55 @@ class NpcWorklistTest {
 
 		assertFalse(reprices.isEmpty());
 		assertEquals(600.0d, worklist.restingPriceFor(reprices.getFirst()), 1e-9d);
+	}
+
+	// Orders another strategy placed, which the NPC side must not adopt as its own.
+
+	/**
+	 * A buy order the player runs under another strategy is reserved but never reviewed.
+	 *
+	 * <p>The bug this fixes: an NPC-sellable item bought to feed a craft, a combine or the buy leg of
+	 * a spread rests a buy order like any other, and the NPC side used to reprice or cancel it. Its
+	 * slot still has to be held - slots bind - so the basket cannot plan an NPC order into a slot the
+	 * book physically occupies, but no click is offered for the order itself.
+	 */
+	@Test
+	void leavesAnotherStrategysOrderAloneButKeepsItsSlot() {
+		StrategyContext context = context(10, 4);
+		List<NpcReprice.Order> resting = List.of(outbid("ITEM_0", 500L));
+
+		// Unmarked, the NPC side reviews it and wants to move it back to the top of the book.
+		assertEquals(1, NpcWorklist.of(resting, context, NOW).count(NpcWorklist.Kind.REPRICE));
+
+		// Marked as another strategy's: no click of any kind is offered for it.
+		NpcWorklist.Worklist worklist = NpcWorklist.of(resting, context, NOW, null,
+				Set.of(), Map.of(), Set.of("ITEM_0"));
+
+		assertEquals(0, worklist.count(NpcWorklist.Kind.REPRICE));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.CANCEL));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.HOLD));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.CLAIM));
+		assertTrue(worklist.pending().stream().noneMatch(task -> task.itemId().equals("ITEM_0")));
+
+		// But its slot is still held, so the basket fills three of the four rather than four.
+		assertEquals(3, worklist.count(NpcWorklist.Kind.PLACE));
+	}
+
+	/** Past its window, another strategy's order is still not the NPC side's to cancel. */
+	@Test
+	void doesNotExpireAnotherStrategysOrder() {
+		long expired = NOW - Math.round(NpcContext.DEFAULT_RESTING_HOURS * 3_600_000.0d) - 1L;
+		List<NpcReprice.Order> resting =
+				List.of(new NpcReprice.Order("ITEM_0", "ITEM_0", 699.0d, 500L, 500L, 0L, expired));
+
+		// Unmarked, a resting-window expiry cancels it.
+		assertEquals(1, NpcWorklist.of(resting, context(10, 5), NOW).count(NpcWorklist.Kind.CANCEL));
+
+		// Marked as another strategy's, the window is not the NPC side's to enforce.
+		NpcWorklist.Worklist worklist = NpcWorklist.of(resting, context(10, 5), NOW, null,
+				Set.of(), Map.of(), Set.of("ITEM_0"));
+
+		assertEquals(0, worklist.count(NpcWorklist.Kind.CANCEL));
 	}
 
 	/** A place has no order behind it, so there is nothing for the price to point at. */

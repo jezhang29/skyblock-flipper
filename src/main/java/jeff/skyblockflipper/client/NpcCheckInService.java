@@ -143,7 +143,8 @@ public final class NpcCheckInService {
 		// whole basket - a pass over every product on the book - for a player who has not asked for
 		// one. It is the same NpcReprice.review the worklist runs on the same orders, so the two
 		// cannot disagree about what needs a click, and the round supplies the reprices either way.
-		List<NpcReprice.Advice> advice = NpcReprice.review(TrackerService.restingBuyOrders(),
+		List<NpcReprice.Advice> advice = NpcReprice.review(
+				FlipIntentsService.mine(TrackerService.restingBuyOrders(), now),
 				CandidateFeed.context(), now);
 
 		NpcCheckIn.due(advice, config.minProfitPerFlip, round)

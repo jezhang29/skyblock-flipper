@@ -60,7 +60,10 @@ public final class NpcRoundService {
 			return null;
 		}
 
-		List<NpcReprice.Order> resting = TrackerService.restingBuyOrders();
+		// Only the orders the NPC side owns: a craft ingredient or combine source order must not enter
+		// a round, or its reprice would be frozen and offered as an NPC click for the interval.
+		List<NpcReprice.Order> resting = FlipIntentsService.mine(
+				TrackerService.restingBuyOrders(), now);
 
 		// Nothing on the book: opening here would spend the interval on an empty round, and the mod
 		// would then be inside a round for the whole half hour after the first basket is placed.

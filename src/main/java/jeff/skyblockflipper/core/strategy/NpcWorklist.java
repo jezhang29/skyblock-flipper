@@ -395,10 +395,45 @@ public final class NpcWorklist {
 	 */
 	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
 			NpcRound round, Set<String> filled, Map<String, Long> cancelledAt) {
+		return of(resting, context, now, round, filled, cancelledAt, Set.of());
+	}
+
+	/**
+	 * The same trip, told which resting orders belong to another strategy.
+	 *
+	 * <p>The one thing the orders menu cannot say: whose flip a buy order is. A buy order on an
+	 * NPC-sellable item looks identical whether the player placed it to sell to the NPC or to feed a
+	 * craft, a combine or the buy leg of a spread - and without this the NPC side reviewed all of
+	 * them, so a combine source order or a craft ingredient got a reprice or a cancel the moment its
+	 * window ran out. Reported from play.
+	 *
+	 * <p>A foreign order is <b>reserved but never reviewed</b>. Its slot is subtracted from the basket
+	 * so the plan cannot try to place an NPC order into a slot the book physically holds - slots bind,
+	 * which is the whole shape of this strategy - but no claim, reprice, cancel or hold task is emitted
+	 * for it, because it is not the NPC side's to touch. Its coins are left out of the reservation:
+	 * coins do not bind, and the NPC bankroll is already the coins earmarked for NPC flips, so counting
+	 * a combine order's capital against it would shrink the basket twice for one budget.
+	 *
+	 * @param foreign item ids the player is flipping under a non-NPC strategy, from
+	 *                {@code FlipIntents.foreignItems}. Empty is the old behaviour: every resting buy
+	 *                order is the NPC side's to review
+	 */
+	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
+			NpcRound round, Set<String> filled, Map<String, Long> cancelledAt, Set<String> foreign) {
+		// Orders on an item the player is running another strategy on are set aside before the review
+		// ever sees them: they hold a slot the basket must respect, but they are not repriced, cancelled
+		// or held by the NPC side.
+		List<NpcReprice.Order> mine = new ArrayList<>();
+		List<NpcReprice.Order> foreignOrders = new ArrayList<>();
+
+		for (NpcReprice.Order order : resting) {
+			(foreign.contains(order.itemId()) ? foreignOrders : mine).add(order);
+		}
+
 		// A reprice is only worth what it fills before the next trip, so a round part way through
 		// values its rows over what is left of it. Null is a full interval, not no time at all.
 		Duration horizon = round == null ? null : round.remaining(now);
-		List<NpcReprice.Advice> advice = NpcReprice.review(resting, context, now, horizon);
+		List<NpcReprice.Advice> advice = NpcReprice.review(mine, context, now, horizon);
 
 		// Only the orders the review recognised. One it dropped - an item no NPC buys, or a product
 		// missing from this snapshot - is not an NPC position, so charging the basket a slot for it
@@ -413,7 +448,8 @@ public final class NpcWorklist {
 		// must not happen. See NpcReprice.repriceNow.
 		List<LivePlan> plans = livePlans(rows, context);
 		List<NpcRound.Row> working = plans.stream().map(LivePlan::row).toList();
-		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, working, advice));
+		NpcBasket.Basket basket = NpcBasket.plan(context,
+				reserve(recognised, working, advice, foreignOrders));
 
 		List<Task> tasks = new ArrayList<>();
 
@@ -501,7 +537,7 @@ public final class NpcWorklist {
 	 * a position is sized on what its orders were placed for rather than on what is still unfilled.
 	 */
 	private static NpcBasket.Held reserve(List<NpcReprice.Order> resting, List<NpcRound.Row> rows,
-			List<NpcReprice.Advice> advice) {
+			List<NpcReprice.Advice> advice, List<NpcReprice.Order> foreign) {
 		Map<String, Reservation> perItem = new LinkedHashMap<>();
 
 		for (NpcReprice.Order order : resting) {
@@ -510,6 +546,17 @@ public final class NpcWorklist {
 			held.orders++;
 			held.units += order.total();
 			held.capital += Math.round(order.unitPrice() * order.remaining());
+		}
+
+		// Another strategy's orders hold their slots against the basket - slots bind - but not their
+		// coins, which are not the NPC bankroll, and never their advice, which is not the NPC side's to
+		// give. Marked spoken for so the basket leaves the item alone rather than topping it up.
+		for (NpcReprice.Order order : foreign) {
+			Reservation held = perItem.computeIfAbsent(order.itemId(), id -> new Reservation());
+
+			held.orders++;
+			held.units += order.total();
+			held.spokenFor = true;
 		}
 
 		for (NpcRound.Row row : rows) {

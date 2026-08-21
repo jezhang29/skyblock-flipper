@@ -11,6 +11,7 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.FlipIntentsService;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.NpcCheckInService;
@@ -755,6 +756,8 @@ public final class FlipCommand {
 
 		try {
 			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
+			// So the NPC side does not later adopt this buy order as its own, on an item it could sell.
+			FlipIntentsService.record(candidate.itemId(), candidate.kind(), System.currentTimeMillis());
 
 			source.sendFeedback(Chat.prefixed(Component.literal("Took " + entry.displayName() + " as ")
 					.withStyle(ChatFormatting.WHITE)

@@ -2,6 +2,7 @@ package jeff.skyblockflipper.client.gui;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.FlipIntentsService;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
@@ -1097,6 +1098,8 @@ public final class FlipScreen extends Screen {
 		try {
 			// Exactly the path /flip take uses, so both routes write one ledger with one format.
 			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
+			// So the NPC side does not later adopt this buy order as its own, on an item it could sell.
+			FlipIntentsService.record(candidate.itemId(), candidate.kind(), System.currentTimeMillis());
 			notice = "Took " + entry.displayName() + " as " + entry.id()
 					+ " - close it with /flip close " + entry.id() + " <units> <price>";
 		} catch (IOException e) {
