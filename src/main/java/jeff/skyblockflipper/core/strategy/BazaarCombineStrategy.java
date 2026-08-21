@@ -1,10 +1,7 @@
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
-import jeff.skyblockflipper.core.model.ItemCatalog;
-import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.pricing.CombineQuote;
-import jeff.skyblockflipper.core.pricing.CombineQuote.SourceRoute;
 import jeff.skyblockflipper.core.pricing.CraftQuote;
 import jeff.skyblockflipper.core.strategy.CombineTable.Entry;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
@@ -12,7 +9,6 @@ import jeff.skyblockflipper.core.valuation.PriceTrend;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -39,6 +35,10 @@ import java.util.Optional;
  *       closing faster than {@link StrategyContext#maxAdverseDrift()} is refused - the same guard the
  *       craft and spread strategies apply.</li>
  * </ul>
+ *
+ * <p>The click steps come from a {@link CombineJob}, the same object the bazaar overlay follows, so
+ * the flip screen and the panel beside Hypixel's menu cannot disagree about a price - the reason
+ * craft routes its steps through {@link CraftJob}.
  *
  * <p>The table is a field rather than part of {@link StrategyContext} because it is game data, not
  * market state: the same on every client, and it never changes between polls.
@@ -87,6 +87,31 @@ public final class BazaarCombineStrategy implements FlipStrategy {
 		return candidates;
 	}
 
+	/**
+	 * The plan for the top-tier book {@code targetId}, re-priced against the current book, or empty.
+	 *
+	 * <p>What the bazaar overlay follows once the player picks a combine row. Re-quoted here rather
+	 * than frozen at selection time, exactly as {@link CraftFlipStrategy#job}: the prices in it are
+	 * what the player is about to type, and the book moves every twenty seconds. Empty when the flip
+	 * no longer clears its own gates, which the overlay says rather than showing stale numbers.
+	 */
+	public Optional<CombineJob> job(String targetId, StrategyContext context) {
+		if (targetId == null || !context.combine().enabled()) {
+			return Optional.empty();
+		}
+
+		for (Entry entry : table) {
+			if (!entry.targetId().equals(targetId)) {
+				continue;
+			}
+
+			return evaluate(entry, context)
+					.flatMap(quote -> CombineJob.of(quote, context.catalog(), context.bazaar()));
+		}
+
+		return Optional.empty();
+	}
+
 	private Optional<CombineQuote> evaluate(Entry entry, StrategyContext context) {
 		// Cheapest rejection first: no target book on the bazaar, no flip to price.
 		if (context.bazaar().product(entry.targetId()).isEmpty()) {
@@ -118,10 +143,15 @@ public final class BazaarCombineStrategy implements FlipStrategy {
 	private FlipCandidate candidate(CombineQuote quote, StrategyContext context) {
 		Entry entry = quote.entry();
 		double marginDrift = marginDrift(quote, context);
+		CombineJob job = CombineJob.of(quote, context.catalog(), context.bazaar()).orElse(null);
+
+		String name = job != null
+				? job.displayName()
+				: CombineJob.nameOf(entry, entry.maxTier(), context.catalog());
 
 		return new FlipCandidate(
 				entry.targetId(),
-				displayName(entry, entry.maxTier(), context.catalog()),
+				name,
 				kind(),
 				quote.sourceCostPerOutput(),
 				quote.unitSellPrice(),
@@ -130,54 +160,28 @@ public final class BazaarCombineStrategy implements FlipStrategy {
 				quote.capitalRequired(),
 				quote.profitPerHour(),
 				confidence(quote, context, marginDrift),
-				steps(quote, context),
+				steps(job),
 				List.of(),
 				notes(quote),
 				quote.fill());
 	}
 
 	/**
-	 * The clicks, in the order to make them: source the books, combine them up, rest the sell offer.
-	 *
-	 * <p>Split through {@link Stacking} on both resting legs, because books do not stack and a plan
-	 * wanting more than 256 of one is more than one order - a total typed straight into the box is a
-	 * number the box refuses.
+	 * The clicks, in the order to make them, drawn from the {@link CombineJob} so the flip screen and
+	 * the overlay quote one set of numbers. Empty where the book emptied out from under the quote.
 	 */
-	private static List<String> steps(CombineQuote quote, StrategyContext context) {
-		Entry entry = quote.entry();
-		int tier = quote.sourceTier();
-		String sourceName = displayName(entry, tier, context.catalog());
-		String outputName = displayName(entry, entry.maxTier(), context.catalog());
-
-		List<String> steps = new ArrayList<>();
-
-		if (quote.route() == SourceRoute.BUY_ORDER) {
-			double price = context.bazaar().product(entry.bookId(tier))
-					.map(p -> p.outbidBuyOrder().orElse(0.0d))
-					.orElse(0.0d);
-
-			steps.add(String.format("Buy order: %s %s at %.1f", sourceName,
-					amount(quote.sourceBooks(), entry.bookId(tier), context), price));
-		} else {
-			steps.add(String.format("Buy instantly: %s x%d", sourceName, quote.sourceBooks()));
+	private static List<String> steps(CombineJob job) {
+		if (job == null) {
+			return List.of();
 		}
 
-		steps.add(String.format("Combine to %s: %d books an output, %d anvil merges in all", outputName,
-				entry.booksPerOutput(tier), quote.totalCombines()));
+		List<String> steps = new ArrayList<>(job.rows().size());
 
-		steps.add(String.format("Sell offer: %s %s at %.1f", outputName,
-				amount(quote.outputs(), entry.targetId(), context), quote.unitSellPrice()));
+		for (CombineJob.Row row : job.rows()) {
+			steps.add(row.describe());
+		}
 
 		return steps;
-	}
-
-	/** A count with its order split appended where it is more than one order, e.g. {@code x520 (2 x 256 + 8)}. */
-	private static String amount(long units, String productId, StrategyContext context) {
-		long perOrder = Stacking.unitsPerOrder(context.catalog().get(productId).orElse(null),
-				context.bazaar().product(productId).orElse(null));
-		String split = Stacking.orderSplit(units, perOrder);
-
-		return split.equals(String.valueOf(units)) ? "x" + units : "x" + units + " (" + split + ")";
 	}
 
 	/**
@@ -229,39 +233,5 @@ public final class BazaarCombineStrategy implements FlipStrategy {
 		double driftPenalty = marginDrift < 0.0d ? Math.min(0.30d, -marginDrift * 4.0d) : 0.0d;
 
 		return Math.clamp(base - driftPenalty, 0.05d, 1.0d);
-	}
-
-	/**
-	 * The book's name: the catalog's where it has one, otherwise built from the id.
-	 *
-	 * <p>Most enchanted books are not in {@code /v2/resources/skyblock/items} at all, so the catalog
-	 * returns the raw id for them and a bare {@code ENCHANTMENT_FEATHER_FALLING_10} would reach the
-	 * screen. Title-casing the enchant and appending the tier gives "Feather Falling 10", which is
-	 * what the player is looking for in the bazaar search.
-	 */
-	private static String displayName(Entry entry, int tier, ItemCatalog catalog) {
-		String id = entry.bookId(tier);
-		String known = catalog == null ? id : catalog.displayName(id);
-
-		if (!known.equals(id)) {
-			return known;
-		}
-
-		StringBuilder name = new StringBuilder();
-
-		for (String part : entry.enchantId().split("_")) {
-			if (part.isEmpty()) {
-				continue;
-			}
-
-			if (name.length() > 0) {
-				name.append(' ');
-			}
-
-			name.append(Character.toUpperCase(part.charAt(0)))
-					.append(part.substring(1).toLowerCase(Locale.ROOT));
-		}
-
-		return name.append(' ').append(tier).toString();
 	}
 }

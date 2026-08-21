@@ -271,6 +271,12 @@ public final class Guide {
 			new Term("The fantasy-price guard", "A book is only offered when its top tier has at least "
 					+ "fifteen sell offers resting. A tier priced by a single seller at a made-up number "
 					+ "is not a real price, and this is the filter that tells the two apart"),
+			new Term("Working one", "Click a combine row in the flip screen and the bazaar panel "
+					+ "follows that job instead of the basket: the source buy, the anvil merges and the "
+					+ "sell offer, each with the price and the amount to type, beside Hypixel's own menu. "
+					+ "Click a name or a number to copy it. The prices are re-worked every poll, so the "
+					+ "panel shows the book as it is, not as it was when you picked the row. /flip combine "
+					+ "stop puts the basket back, and so does clicking any other kind of flip"),
 			new Term("Unverified", "Nothing here has been combined and sold in play yet, and the anvil "
 					+ "is assumed to cost no coins. Treat the first runs as a test")));
 

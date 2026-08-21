@@ -30,6 +30,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.CombineJob;
 import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
@@ -144,7 +145,9 @@ public final class FlipCommand {
 						.executes(ctx -> {
 							showCombines(ctx.getSource());
 							return 1;
-						}))
+						})
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopCombine(ctx.getSource()))))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
@@ -681,7 +684,27 @@ public final class FlipCommand {
 			return;
 		}
 
+		CombineJob job = CandidateFeed.combineJob();
+
+		if (job != null) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Working " + job.displayName() + " - the bazaar panel has the steps. "
+							+ "/flip combine stop to leave it.").withStyle(ChatFormatting.GRAY)));
+		}
+
 		showTop(source, StrategyKind.COMBINE, "Best books to combine and sell");
+	}
+
+	/** Stops the bazaar panel following a combine, so it goes back to the NPC basket. */
+	private static int stopCombine(FabricClientCommandSource source) {
+		String following = CandidateFeed.combineOutputId();
+
+		CandidateFeed.stopCombine();
+		source.sendFeedback(Chat.prefixed(Component.literal(following == null
+				? "No combine was being worked."
+				: "Stopped working that combine.").withStyle(ChatFormatting.GRAY)));
+
+		return 1;
 	}
 
 	private static void showSnipes(FabricClientCommandSource source) {

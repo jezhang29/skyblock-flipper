@@ -66,7 +66,7 @@ class BazaarCombineStrategyTest {
 		FlipCandidate candidate = found.getFirst();
 		assertEquals(StrategyKind.COMBINE, candidate.kind());
 		assertEquals("ENCHANTMENT_TEST_3", candidate.itemId());
-		assertTrue(candidate.steps().stream().anyMatch(s -> s.startsWith("Combine to")),
+		assertTrue(candidate.steps().stream().anyMatch(s -> s.startsWith("Combine:")),
 				"the anvil step must be shown");
 		assertTrue(candidate.notes().stream().anyMatch(s -> s.contains("per anvil combine")),
 				"net per combine is the honest axis and must be a note");
@@ -93,5 +93,40 @@ class BazaarCombineStrategyTest {
 
 		assertFalse(found.isEmpty());
 		assertEquals("Feather Falling 10", found.getFirst().displayName());
+	}
+
+	@Test
+	void jobFollowsTheChosenTargetAsThreeStations() {
+		// What the bazaar overlay picks up when the player works a combine row: source, anvil, offer.
+		Entry featherFalling = new Entry("FEATHER_FALLING", 9, 10);
+		askOnly("ENCHANTMENT_FEATHER_FALLING_10", 155_000.0d, 37, 693_000L);
+		askOnly("ENCHANTMENT_FEATHER_FALLING_9", 30.0d, 20, 168_000L);
+
+		CombineJob job = new BazaarCombineStrategy(List.of(featherFalling))
+				.job("ENCHANTMENT_FEATHER_FALLING_10", context(true)).orElseThrow();
+
+		assertEquals("ENCHANTMENT_FEATHER_FALLING_10", job.targetId());
+		assertEquals("Feather Falling 10", job.displayName());
+		assertEquals(3, job.rows().size());
+		assertEquals(CombineJob.Action.COMBINE, job.rows().get(1).action());
+		assertEquals(CombineJob.Action.SELL_OFFER, job.rows().get(2).action());
+		// One tier-9 pair combines into one tier-10 in a single merge, so the anvil row counts merges,
+		// not output books.
+		assertEquals(job.quote().totalCombines(), job.rows().get(1).units());
+		assertEquals(job.quote().sourceBooks(), job.rows().getFirst().units());
+	}
+
+	@Test
+	void jobIsEmptyForATargetNotInTheTable() {
+		Entry featherFalling = new Entry("FEATHER_FALLING", 9, 10);
+		askOnly("ENCHANTMENT_FEATHER_FALLING_10", 155_000.0d, 37, 693_000L);
+		askOnly("ENCHANTMENT_FEATHER_FALLING_9", 30.0d, 20, 168_000L);
+
+		BazaarCombineStrategy strategy = new BazaarCombineStrategy(List.of(featherFalling));
+
+		assertTrue(strategy.job("ENCHANTMENT_SHARPNESS_10", context(true)).isEmpty());
+		assertTrue(strategy.job(null, context(true)).isEmpty());
+		assertTrue(strategy.job("ENCHANTMENT_FEATHER_FALLING_10", context(false)).isEmpty(),
+				"a combine off in config follows nothing");
 	}
 }

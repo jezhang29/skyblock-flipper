@@ -6,7 +6,9 @@ import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.PlannedQuotes;
 import jeff.skyblockflipper.core.ledger.Quote;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.BazaarCombineStrategy;
 import jeff.skyblockflipper.core.strategy.CombineContext;
+import jeff.skyblockflipper.core.strategy.CombineJob;
 import jeff.skyblockflipper.core.strategy.CraftContext;
 import jeff.skyblockflipper.core.strategy.CraftFlipStrategy;
 import jeff.skyblockflipper.core.strategy.CraftJob;
@@ -46,6 +48,13 @@ public final class CandidateFeed {
 	 */
 	private static final CraftFlipStrategy CRAFT = new CraftFlipStrategy();
 
+	/**
+	 * The combine planner, kept beside the engine for the same reason as {@link #CRAFT}: the overlay
+	 * re-plans one chosen enchant every poll. The allowlist is parsed once, so a second instance is
+	 * free.
+	 */
+	private static final BazaarCombineStrategy COMBINE = new BazaarCombineStrategy();
+
 	/** Deep enough to serve any allowed {@code hudLines} without re-ranking when it changes. */
 	private static final int CACHE_DEPTH = 10;
 
@@ -76,6 +85,18 @@ public final class CandidateFeed {
 	private static volatile String craftOutputId;
 	private static CraftJob craftJob;
 	private static long craftJobRevision = -1L;
+
+	/**
+	 * The top-tier book the player said they are combining, and the plan for it as of the last book.
+	 *
+	 * <p>Held exactly as {@link #craftOutputId}: an id that persists across a poll, with the job
+	 * rebuilt beneath it because the prices in it are what the player is about to type. Only one
+	 * transformation is followed at a time, so setting this clears {@link #craftOutputId} and the
+	 * reverse - the overlay draws whichever the player last picked.
+	 */
+	private static volatile String combineTargetId;
+	private static CombineJob combineJob;
+	private static long combineJobRevision = -1L;
 
 	private static NpcWorklist.Worklist worklist;
 	private static long worklistRevision = -1L;
@@ -257,16 +278,73 @@ public final class CandidateFeed {
 		craftOutputId = outputId;
 		craftJob = null;
 		craftJobRevision = -1L;
+
+		// One transformation is followed at a time: picking a craft drops a combine that was being
+		// worked, or the overlay would have two panels to choose between beside one menu.
+		if (outputId != null) {
+			combineTargetId = null;
+			combineJob = null;
+		}
 	}
 
 	/** Stop following a craft, so the bazaar panel goes back to the NPC basket. */
 	public static void stopCraft() {
-		workCraft(null);
+		craftOutputId = null;
+		craftJob = null;
+		craftJobRevision = -1L;
 	}
 
 	/** The crafted item being worked, or null. Set even when the plan has stopped clearing. */
 	public static String craftOutputId() {
 		return craftOutputId;
+	}
+
+	/**
+	 * Work this combine: the bazaar overlay follows it until told otherwise.
+	 *
+	 * <p>Set from the flip screen when a combine row is picked. Drops a craft being worked for the
+	 * same reason {@link #workCraft} drops a combine - only one plan sits beside the menu.
+	 */
+	public static void workCombine(String targetId) {
+		combineTargetId = targetId;
+		combineJob = null;
+		combineJobRevision = -1L;
+
+		if (targetId != null) {
+			craftOutputId = null;
+			craftJob = null;
+		}
+	}
+
+	/** Stop following a combine, so the bazaar panel goes back to the NPC basket. */
+	public static void stopCombine() {
+		combineTargetId = null;
+		combineJob = null;
+		combineJobRevision = -1L;
+	}
+
+	/** The top-tier book being combined, or null. Set even when the plan has stopped clearing. */
+	public static String combineOutputId() {
+		return combineTargetId;
+	}
+
+	/**
+	 * The combine plan re-priced against the current book, or null. Client-thread only, like
+	 * {@link #craftJob}.
+	 */
+	public static CombineJob combineJob() {
+		if (combineTargetId == null) {
+			return null;
+		}
+
+		long revision = MarketDataService.data().bazaarRevision();
+
+		if (combineJob == null || revision != combineJobRevision) {
+			combineJobRevision = revision;
+			combineJob = COMBINE.job(combineTargetId, context()).orElse(null);
+		}
+
+		return combineJob;
 	}
 
 	/**
@@ -296,6 +374,7 @@ public final class CandidateFeed {
 		worklistRevision = -1L;
 		worklist = null;
 		craftJobRevision = -1L;
+		combineJobRevision = -1L;
 		// The open round froze the check-in interval along with its prices, so an edit to it would
 		// otherwise not be felt until the round opened under the old one had run out.
 		NpcRoundService.clear();
