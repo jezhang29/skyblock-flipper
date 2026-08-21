@@ -54,6 +54,13 @@ table is curated game data, not price-inferred. Read `docs/combine-flipping.md` 
 book snapshot, nothing combined and sold in play yet, so it joins the same unverified-in-play queue
 as craft.
 
+**Combine now follows in the overlay the way craft does** (2026-08-20): picking a combine row in the
+flip screen makes the bazaar panel follow that job — source buy, anvil merges, sell offer, each with
+the price and amount to type beside Hypixel's menu — through a `CombineJob` that is the single source
+for both the panel and the `/flip combine` step text. `/flip combine stop` leaves it. This closes the
+parity gap where a combine was text-only in the GUI while a craft was guided in-menu, and it is what
+makes the combine play-verification below workable.
+
 `BazaarSpreadStrategy` came out of the same audit sound: ranking on profit per hour is right (a
 greedy portfolio by that axis spends the whole 400M bankroll on 7 flips for 19.2M/h, against 5.5M/h
 ranking by profit per coin), capital binds where slots do not (6 of 130 plans), and the only defect

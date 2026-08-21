@@ -8,6 +8,7 @@ import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.core.config.OverlaySide;
 import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
+import jeff.skyblockflipper.core.strategy.CombineJob;
 import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.track.BazaarMenu;
@@ -113,6 +114,16 @@ public final class BazaarOverlay {
 			case BUY_ORDER -> 0xFF6FD98A;
 			case INSTANT_BUY -> 0xFF7FB8FF;
 			case CRAFT -> 0xFFD59BFF;
+			case SELL_OFFER -> 0xFFFFD24A;
+		};
+	}
+
+	/** The same idea for a combine job. The anvil step borrows the craft colour: both are the station. */
+	private static int colourOf(CombineJob.Action action) {
+		return switch (action) {
+			case BUY_ORDER -> 0xFF6FD98A;
+			case INSTANT_BUY -> 0xFF7FB8FF;
+			case COMBINE -> 0xFFD59BFF;
 			case SELL_OFFER -> 0xFFFFD24A;
 		};
 	}
@@ -226,6 +237,13 @@ public final class BazaarOverlay {
 			return;
 		}
 
+		String combineOutput = CandidateFeed.combineOutputId();
+
+		if (combineOutput != null) {
+			renderCombine(screen, graphics, mouseX, mouseY, combineOutput);
+			return;
+		}
+
 		NpcWorklist.Worklist worklist = CandidateFeed.worklist();
 		String note = note(worklist);
 
@@ -336,6 +354,47 @@ public final class BazaarOverlay {
 		Hit.clear();
 	}
 
+	/**
+	 * The combine job, drawn wherever the basket would have been. The twin of {@link #renderCraft}:
+	 * three stations - the source buy, the anvil, the sell offer - laid out by the same code.
+	 *
+	 * <p><b>No green box.</b> {@code BazaarStep} works a slot out from an {@code NpcWorklist.Task} and
+	 * has nothing to say about a combine row; a box left over from the basket would sit behind a slot
+	 * this list is not asking for. The panel names the price to type and the player finds the button.
+	 */
+	private static void renderCombine(Screen screen, GuiGraphicsExtractor graphics, int mouseX,
+			int mouseY, String outputId) {
+		String title = screen.getTitle().getString();
+		Font font = Minecraft.getInstance().font;
+		Board board = combineBoard(CandidateFeed.combineJob(), outputId, title, font);
+
+		if (screen instanceof ContainerScreenLayout layout
+				&& screen instanceof AbstractContainerScreen<?> container) {
+			if (bazaarFlow(container) || BazaarMenu.isBazaar(title)
+					|| !board.openProduct().isEmpty()) {
+				leftBazaarAt = System.currentTimeMillis();
+				Guidance.clear();
+				drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
+				return;
+			}
+
+			Guidance.clear();
+			Hit.clear();
+			return;
+		}
+
+		boolean onASign = screen instanceof AbstractSignEditScreen;
+
+		Guidance.leftTheMenu(onASign);
+
+		if (onASign && System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
+			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
+			return;
+		}
+
+		Hit.clear();
+	}
+
 	private static WeakReference<Screen> flowScreen = new WeakReference<>(null);
 	private static long flowReadAt;
 	private static boolean flowValue;
@@ -379,6 +438,25 @@ public final class BazaarOverlay {
 		}
 
 		return craftBoard;
+	}
+
+	private static Board combineBoard;
+	private static CombineJob combineBoardJob;
+	private static String combineBoardOutput = "";
+	private static String combineBoardTitle = "";
+
+	/** The laid-out combine board, rebuilt only when the job or the screen behind it changes. */
+	private static Board combineBoard(CombineJob job, String outputId, String title, Font font) {
+		if (combineBoard == null || job != combineBoardJob || !outputId.equals(combineBoardOutput)
+				|| !title.equals(combineBoardTitle)) {
+			combineBoardJob = job;
+			combineBoardOutput = outputId;
+			combineBoardTitle = title;
+			combineBoard = Board.ofCombine(job, outputId, title, font);
+			Hit.reset(combineBoard);
+		}
+
+		return combineBoard;
 	}
 
 	/** Beside Hypixel's menu, on the side the settings name. */
@@ -599,6 +677,45 @@ public final class BazaarOverlay {
 			}
 
 			String label = "Craft " + (job == null ? outputId : job.displayName());
+
+			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
+
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, false, 0,
+					width, font.lineHeight * 2 + LINE_GAP + 2,
+					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
+		}
+
+		/**
+		 * The same panel for one combine job: buy the source, merge it up at the anvil, offer the top
+		 * tier. The twin of {@link #ofCraft} - the same layout code, because a combine is the same
+		 * problem of prices and sizes to type into a menu you are standing in front of.
+		 */
+		static Board ofCombine(CombineJob job, String outputId, String title, Font font) {
+			List<Row> rows = new ArrayList<>();
+			List<String> names = new ArrayList<>();
+			int indent = PAD + ACCENT + ACCENT_GAP;
+			String note = job == null
+					? "no longer clears - check the flip screen"
+					: "";
+			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
+
+			for (CombineJob.Row source : job == null ? List.<CombineJob.Row>of() : job.rows()) {
+				Row row = new Row(colourOf(source.action()), source.action().ordinal(),
+						source.action().label(), source.displayName(),
+						source.action().priced() ? String.format("%.1f", source.price()) : "",
+						source.orderSplit());
+
+				rows.add(row);
+				names.add(source.displayName());
+
+				int nameLine = text(font, row.verb() + " " + row.name());
+				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
+						+ text(font, row.units()) + text(font, UNITS_MARK);
+
+				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
+			}
+
+			String label = "Combine " + (job == null ? outputId : job.displayName());
 
 			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
 

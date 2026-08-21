@@ -1319,17 +1319,20 @@ public final class FlipScreen extends Screen {
 			return false;
 		}
 
-		// Picking a craft row is what tells the bazaar panel which job to follow, so the steps are
-		// beside Hypixel's menu while the orders are typed instead of behind this screen. Picking
-		// any other kind stops following one: the player has moved on to a different trade, and a
-		// craft panel left up beside a basket they are now working would be the wrong list.
+		// Picking a craft or combine row is what tells the bazaar panel which job to follow, so the
+		// steps are beside Hypixel's menu while the orders are typed instead of behind this screen.
+		// Picking any other kind stops following one: the player has moved on to a different trade,
+		// and a transformation panel left up beside a basket they are now working is the wrong list.
 		FlipCandidate picked = table.selection();
 
 		if (picked != null) {
 			if (picked.kind() == StrategyKind.CRAFT) {
 				CandidateFeed.workCraft(picked.itemId());
+			} else if (picked.kind() == StrategyKind.COMBINE) {
+				CandidateFeed.workCombine(picked.itemId());
 			} else {
 				CandidateFeed.stopCraft();
+				CandidateFeed.stopCombine();
 			}
 		}
 

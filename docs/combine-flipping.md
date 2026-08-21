@@ -143,6 +143,23 @@ negative almost everywhere, because high-tier spreads are enormous (Hardened 10 
 where the source book has a real bid side, which is 3-40% cheaper than the ask, and instant-bought
 only where it has none (Feather Falling 6 rests 0 bid orders, so it is taken at its 30-coin ask).
 
+## Following one in play
+
+Picking a combine row in the flip screen makes the bazaar overlay follow that job, the same way it
+follows a chosen craft. `CombineJob` is the one source the panel and the `/flip combine` step text
+both read from, so the two cannot disagree by a tenth of a coin — the reason craft routes through
+`CraftJob`. The job is three stations, each counted in its own unit: the **source buy** (books, on a
+resting order at the bid or an instant buy where the source has none), the **anvil** (merges, e.g. 15
+for a Feather Falling 10, not one output), and the **sell offer** (output books, split into orders
+the box will take). It is re-quoted from the live book every poll, so a flip that stops clearing
+while it is worked shows "no longer clears" rather than a stale price. `/flip combine stop`, or
+picking any other kind of flip, puts the basket back.
+
+There is **no green box** on a combine row: the slot highlighter works a slot out from an NPC task
+and has nothing to say about a combine, so the panel names the price and the player finds the button.
+Only one transformation is followed at a time — working a combine drops a craft that was being
+worked, and the reverse.
+
 ## Throughput and its cap
 
 Every book is thin. The exit rate is the target's instant-buy demand at the 5% share; the source
