@@ -104,6 +104,40 @@ on 19 ask orders at 71M with a demand of 125 books a week — a real price by th
 every few weeks. Treat the biggest per-combine rows as set-and-forget bets that are unverified in
 play, and read the profit-per-hour beside them.
 
+### Re-measured live, 2026-08-21
+
+The shipped `BazaarCombineStrategy` run against a fresh book
+(`LiveApiTest.printLiveCombinePicks`, `-PliveApi`), Bazaar Flipper 1, 1h horizon, 5% flow, ordered by
+net per combine as `/flip combine` is. This is the **current** rule — best total profit per output
+book — so every source tier below is the shipped pick, not the 2026-08-20 one above.
+
+| enchant | source → T | merges/output | net/combine | net/output | ~profit/hr |
+|---|---|---|---|---|---|
+| Vicious | 4 → 5 | 1 | 65,325,354 | 65,325,354 | 117k |
+| Dedication | 2 → 3 | 1 | 1,789,162 | 1,789,162 | 12k |
+| Green Thumb | 1 → 5 | 15 | 409,093 | 6,136,397 | 1.03M |
+| Hardened Mana (Vitality) | 3 → 10 | 127 | 132,183 | 16,787,189 | 17k |
+| Turbo-Cane | 1 → 5 | 15 | 88,905 | 1,333,575 | 261k |
+| Charm | 1 → 5 | 15 | 63,081 | 946,222 | 510k |
+| Rejuvenate | 2 → 5 | 7 | 45,841 | 320,885 | 321k |
+| Turbo-Melon | 1 → 5 | 15 | 41,917 | 628,762 | 233k |
+
+Seventeen enchants cleared; the rows above are the notable ones. Three things moved against the
+2026-08-20 run, and each is the market, not a rule change:
+
+- **`VICIOUS_5` still tops the list** — 65.3M a combine on one merge, resting on ≥15 ask orders so the
+  gate admits it, and one output every few weeks. The set-and-forget caveat above stands.
+- **Prosperity and Feather Falling 10 dropped out.** Prosperity 5 now rests 10 target ask orders,
+  under the 15 gate; Feather Falling 10 passes the gate at 36 ask orders but no source tier still
+  clears money after tax. Both headlined the old table; the book moved.
+- **Hardened Mana 10 now sources from tier 3, 127 merges an output, not tier 5's 31.** Tier 3 became
+  the cheapest liquid source per output book, so the profit-per-output rule reaches for it. 127 anvil
+  merges for one book is deep in set-and-forget territory — read net per combine (132k), not the fat
+  16.8M net per output, before working it.
+
+Rejuvenate's shipped pick is confirmed tier 2 (7 merges), the lower, cheaper source the 2026-08-20
+rule change was made to take.
+
 ### The ≥15-ask-order gate does the work
 
 The gate is the target's resting **ask** order count, and it is what separates a real edge from a
@@ -129,8 +163,9 @@ for shared item ids: the wrong number is silent and plausible right up to the cl
 The best source is not the bottom tier, so the solver quotes every listed tier and keeps the cheapest
 per output book after tax. On this snapshot Rejuvenate tier 1 carries a fat bid (9,003, on 183k weekly
 dumps of combiner demand) while tier 2's is 4,867, so tier 2 is cheaper per output despite being
-higher, and tier 2 is the shipped pick. The scan also handles the Vitality enchants, whose only liquid
-source is tier 5 rather than tier 1. It does not climb higher for the sake of fewer merges: tier 3
+higher, and tier 2 is the shipped pick. The scan also handles the Vitality enchants, whose lowest
+liquid source floats: tier 5 on 2026-08-20, but tier 3 on 2026-08-21, and the scan takes whichever is
+cheapest per output that day. It does not climb higher for the sake of fewer merges: tier 3
 makes a Rejuvenate 5 in three merges against tier 2's seven but costs ~65k more per book. An earlier
 rule ranked the tier pick on net per merge and so chose tier 3; it was dropped 2026-08-20 because at
 these volumes the anvil grind never binds, while capital and patience are slack.
