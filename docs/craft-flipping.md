@@ -290,13 +290,19 @@ that earns a line in front of someone who is mid-trade. **All of it is cut.** Wh
 The sparkline column is gone from the candidate table. A trend the ranking already acts on does not
 also need to be read off a 14-pixel graph.
 
-## The bazaar panel follows one job
+## The bazaar panel carries the job
 
-Clicking a craft row calls `CandidateFeed.workCraft(outputId)`, and `BazaarOverlay` then draws that
-job's rows — materials, craft, sell offer, each with the price and the split to type — beside
-Hypixel's own menu, in place of the NPC basket. That is the point of the strategy being usable at
-all: the alternative is closing the flip screen, placing an order, and reopening it for the next
-line. `/flip craft stop`, or picking a row of any other kind, puts the basket back.
+Selecting a craft row and pressing **Work** calls `CandidateFeed.work(CRAFT, outputId, name)`, and
+`BazaarOverlay` then draws that job's rows — materials, craft, sell offer, each with the price and
+the split to type — beside Hypixel's own menu, in its own section above the NPC basket. That is the
+point of the strategy being usable at all: the alternative is closing the flip screen, placing an
+order, and reopening it for the next line. `/flip craft stop` drops every craft; `/flip jobs stop
+<name>` drops one.
+
+**Several jobs run at once**, and selecting a row commits nothing — both were changed 2026-08-21
+after a craft was lost mid-materials by clicking a bazaar row to read it. The shared model, the
+progress badges and the Jobs tab are in `docs/worked-flips.md`; `CraftJob` itself is unchanged and
+is still what the panel renders from.
 
 The job is **re-planned every poll**, not frozen at selection. The prices in it are what the player
 is about to type, and a panel quoting a book from twenty minutes ago is worse than no panel because

@@ -88,8 +88,9 @@ there, verify against decompiled sources (the `decomp-lookup` agent) before writ
   `validated()` would clamp. `FlipConfigScreen` is a loop over it — don't restate a setting there.
 - `FlipCommand` registers `/flip` via `ClientCommandRegistrationCallback` (client-side only). New
   strategies graft subcommands onto that tree. Subcommands today: `bazaar`, `snipe`, `npc` (`plan`,
-  `reprice`, `probe`), `ledger`, `capture`, `track`, `unquoted`, `sync`, `config` (`edit`), `guide`,
-  `hud`, `gui`, `menu`, `status`, `take`, `close`, `abandon`, `forget`, `clear`, `stop`, `reload`.
+  `reprice`, `probe`), `craft` (`stop`), `combine` (`stop`), `jobs` (`stop`), `ledger`, `capture`,
+  `track`, `unquoted`, `sync`, `config` (`edit`), `guide`, `hud`, `gui`, `menu`, `status`, `take`,
+  `close`, `abandon`, `forget`, `clear`, `stop`, `reload`.
 - **Cloth Config and Mod Menu are optional dependencies.** Loom 1.17 has no `mod*` configurations;
   they are plain `implementation` and Loom remaps them. `FlipConfigScreen` imports Cloth, so it must
   only ever be named inside a method body guarded by `Settings.available()` — `Settings` is the
@@ -126,9 +127,16 @@ there, verify against decompiled sources (the `decomp-lookup` agent) before writ
 ### Strategies
 
 `core/strategy` holds `FlipStrategy` implementations dispatched by `StrategyEngine`; `StrategyKind`
-is `BAZAAR_SPREAD`, `AUCTION_VALUE`, `NPC_FLIP`, `CRAFT` (seat empty, no recipe source).
+is `BAZAAR_SPREAD`, `AUCTION_VALUE`, `NPC_FLIP`, `CRAFT` and `COMBINE`.
 `FlipCandidate` is the ranked unit. `strategyFilter` (ALL or one kind) selects what `/flip`, the HUD
 and the screen's opening tab show.
+
+**A flip the player has started is a `core/strategy/WorkedJob`** — one shape for a spread, a craft
+and a combine, so the bazaar panel, the Jobs tab and `/flip jobs` render one thing. Several run at
+once, in the order picked; **selecting a row commits nothing**, the Work button does. Progress
+badges come from the order tracker and are blank rather than guessed. **Read `docs/worked-flips.md`
+before touching the overlay's board, `CandidateFeed`'s follow list, or the flip screen's selection
+handling.**
 
 **NPC basket** is the active strategy and the user's daily driver. Its full measured design is in
 `docs/npc-flipping.md` and `docs/adr/0002-reprice-in-rounds.md` — **read those before touching NPC

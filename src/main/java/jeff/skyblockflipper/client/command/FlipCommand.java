@@ -31,16 +31,16 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
-import jeff.skyblockflipper.core.strategy.CombineJob;
-import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcProbe;
 import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.track.BazaarSlots;
+import jeff.skyblockflipper.core.track.TrackedOrder;
 import jeff.skyblockflipper.core.track.CaptureLog;
 import jeff.skyblockflipper.core.track.CapturedMenu;
 import jeff.skyblockflipper.core.track.CapturedSlot;
@@ -60,6 +60,7 @@ import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -149,6 +150,16 @@ public final class FlipCommand {
 						})
 						.then(ClientCommands.literal("stop")
 								.executes(ctx -> stopCombine(ctx.getSource()))))
+				.then(ClientCommands.literal("jobs")
+						.executes(ctx -> showJobs(ctx.getSource()))
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopJobs(ctx.getSource(), null))
+								// Greedy, because the way in is the name off the screen and names
+								// have spaces in them.
+								.then(ClientCommands.argument("id", StringArgumentType.greedyString())
+										.suggests(FlipCommand::suggestWorkedItems)
+										.executes(ctx -> stopJobs(ctx.getSource(),
+												StringArgumentType.getString(ctx, "id"))))))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
@@ -615,6 +626,90 @@ public final class FlipCommand {
 		return 1;
 	}
 
+	/**
+	 * Every flip being worked, as the clicks each one still needs.
+	 *
+	 * <p>The chat twin of the bazaar panel and the Jobs tab, and it renders the same
+	 * {@link WorkedJob} rows, so none of the three can quote a different price for one line.
+	 */
+	private static int showJobs(FabricClientCommandSource source) {
+		List<WorkedJob> jobs = CandidateFeed.jobs();
+
+		if (jobs.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"No flips are being worked - pick one in /flip gui and press Work.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 0;
+		}
+
+		List<TrackedOrder> orders = TrackerService.orders();
+
+		for (WorkedJob job : jobs) {
+			source.sendFeedback(Component.literal(job.displayName() + " - "
+					+ job.kind().label()).withStyle(ChatFormatting.GOLD));
+
+			if (!job.note().isEmpty()) {
+				source.sendFeedback(Component.literal("  " + job.note())
+						.withStyle(ChatFormatting.YELLOW));
+				continue;
+			}
+
+			for (WorkedJob.Step step : job.steps()) {
+				source.sendFeedback(Component.literal("  " + job.describe(step, orders))
+						.withStyle(ChatFormatting.GRAY));
+			}
+		}
+
+		if (orders.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Turn on autoTrackEnabled to see which steps are done.")
+					.withStyle(ChatFormatting.DARK_GRAY)));
+		}
+
+		return 1;
+	}
+
+	/** Stops working one flip by name, or all of them when none is named. */
+	private static int stopJobs(FabricClientCommandSource source, String name) {
+		if (name == null) {
+			int dropped = CandidateFeed.stopWork();
+
+			source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
+					? "No flips were being worked."
+					: "Stopped working " + dropped + (dropped == 1 ? " flip." : " flips."))
+					.withStyle(ChatFormatting.GRAY)));
+			return 1;
+		}
+
+		for (WorkedJob job : CandidateFeed.jobs()) {
+			if (job.displayName().equalsIgnoreCase(name) || job.itemId().equalsIgnoreCase(name)) {
+				CandidateFeed.stopWork(job.itemId());
+				source.sendFeedback(Chat.prefixed(Component.literal(
+						"Stopped working " + job.displayName() + ".")
+						.withStyle(ChatFormatting.GRAY)));
+				return 1;
+			}
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Nothing called \"" + name + "\" is being worked.")
+				.withStyle(ChatFormatting.YELLOW)));
+		return 0;
+	}
+
+	private static CompletableFuture<Suggestions> suggestWorkedItems(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+
+		for (WorkedJob job : CandidateFeed.jobs()) {
+			if (job.displayName().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(job.displayName());
+			}
+		}
+
+		return builder.buildFuture();
+	}
+
 	/** Whether there is a book to answer with, with the reason there is not if there is not. */
 	private static boolean marketReady(FabricClientCommandSource source) {
 		if (MarketDataService.data().hasBazaar()) {
@@ -647,25 +742,19 @@ public final class FlipCommand {
 			return;
 		}
 
-		CraftJob job = CandidateFeed.craftJob();
-
-		if (job != null) {
-			source.sendFeedback(Chat.prefixed(Component.literal(
-					"Working " + job.displayName() + " - the bazaar panel has the steps. "
-							+ "/flip craft stop to leave it.").withStyle(ChatFormatting.GRAY)));
-		}
+		reportWorked(source, StrategyKind.CRAFT, "/flip craft stop");
 
 		showTop(source, StrategyKind.CRAFT, "Best things to craft and sell");
 	}
 
-	/** Stops the bazaar panel following a craft, so it goes back to the NPC basket. */
+	/** Stops working every craft, leaving any combine or spread job on the panel. */
 	private static int stopCraft(FabricClientCommandSource source) {
-		String following = CandidateFeed.craftOutputId();
+		int dropped = CandidateFeed.stopWork(StrategyKind.CRAFT);
 
-		CandidateFeed.stopCraft();
-		source.sendFeedback(Chat.prefixed(Component.literal(following == null
+		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
 				? "No craft was being worked."
-				: "Stopped working that craft.").withStyle(ChatFormatting.GRAY)));
+				: "Stopped working " + dropped + (dropped == 1 ? " craft." : " crafts."))
+				.withStyle(ChatFormatting.GRAY)));
 
 		return 1;
 	}
@@ -685,27 +774,46 @@ public final class FlipCommand {
 			return;
 		}
 
-		CombineJob job = CandidateFeed.combineJob();
-
-		if (job != null) {
-			source.sendFeedback(Chat.prefixed(Component.literal(
-					"Working " + job.displayName() + " - the bazaar panel has the steps. "
-							+ "/flip combine stop to leave it.").withStyle(ChatFormatting.GRAY)));
-		}
+		reportWorked(source, StrategyKind.COMBINE, "/flip combine stop");
 
 		showTop(source, StrategyKind.COMBINE, "Best books to combine and sell");
 	}
 
-	/** Stops the bazaar panel following a combine, so it goes back to the NPC basket. */
+	/** Stops working every combine, leaving any craft or spread job on the panel. */
 	private static int stopCombine(FabricClientCommandSource source) {
-		String following = CandidateFeed.combineOutputId();
+		int dropped = CandidateFeed.stopWork(StrategyKind.COMBINE);
 
-		CandidateFeed.stopCombine();
-		source.sendFeedback(Chat.prefixed(Component.literal(following == null
+		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
 				? "No combine was being worked."
-				: "Stopped working that combine.").withStyle(ChatFormatting.GRAY)));
+				: "Stopped working " + dropped + (dropped == 1 ? " combine." : " combines."))
+				.withStyle(ChatFormatting.GRAY)));
 
 		return 1;
+	}
+
+	/**
+	 * What of this strategy is already being worked, said before the ranking rather than after it.
+	 *
+	 * <p>A player who has four flips open and asks for the list needs to know which of the rows
+	 * below they are already standing on, or they pick the same one twice.
+	 */
+	private static void reportWorked(FabricClientCommandSource source, StrategyKind kind,
+			String stopCommand) {
+		List<String> names = new ArrayList<>();
+
+		for (WorkedJob job : CandidateFeed.jobs()) {
+			if (job.kind() == kind) {
+				names.add(job.displayName());
+			}
+		}
+
+		if (names.isEmpty()) {
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Working " + String.join(", ", names) + " - /flip jobs for the steps, "
+						+ stopCommand + " to leave them.").withStyle(ChatFormatting.GRAY)));
 	}
 
 	private static void showSnipes(FabricClientCommandSource source) {

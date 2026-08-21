@@ -12,6 +12,8 @@ Deep records live elsewhere and are linked from here:
 - `docs/adr/0001-defer-the-signature-term-model.md` — why signature terms are read individually.
 - The `signature-findings` skill — which auction attributes ship, which measured out, and the probe
   method. Read it before proposing any new signature key term.
+- `docs/worked-flips.md` — the one model behind a flip the player has actually started: the shared
+  job shape, the progress badges, and the three views that render it.
 - `docs/headless-collector.md`, `docs/trade-capture.md` — the collector and the capture protocol.
 
 ## Current state (2026-08-20)
@@ -70,6 +72,28 @@ Everything the valuation side ships (pet levels, the fill model, the rune/potion
 ethermerge signature splits, the Midas ratio quote) is verified offline only. Getting it seen in a
 running client is still the largest unverified-work risk in the project, and craft flipping has now
 joined that queue.
+
+**Several flips are now worked at once** (2026-08-21). Reported from play: picking any row in the
+flip screen handed the bazaar panel that one job and took away whatever it was showing, and
+selecting a *bazaar* row merely to read it called `stopCraft()` and `stopCombine()` — so comparing
+two rows silently ended a craft whose materials were still resting. Nothing anywhere listed what was
+open.
+
+- `core/strategy/WorkedJob` is the shared shape for a spread, a craft and a combine, with a `Stage`
+  that names the order side each step would show up on. `CraftJob` and `CombineJob` are unchanged
+  and still what the strategies produce; `BazaarSpreadStrategy.job(productId, context)` is new, the
+  twin of the craft and combine `job` methods.
+- **Progress comes from the order tracker, never from a guess.** `[ ]` nothing placed, `[~]`
+  resting, `[x]` filled and collected, blank for a step nothing can see — an anvil merge, or
+  `autoTrackEnabled` off. Matched on item id and side and summed, because a step is several orders
+  by the time `Stacking.orderSplit` is through with it. Tested against the recorded capture session
+  rather than against invented orders.
+- **Selection is not commitment.** Clicking a row selects it; the Work button starts or stops a job.
+- The bazaar panel draws a section per job in the order picked, then the basket under them, in one
+  scrollable board. A new **Jobs tab** and `/flip jobs` render the same rows, and the tab totals the
+  capital every worked flip has tied up — which nothing else adds up.
+
+Full record in `docs/worked-flips.md`. **Unverified in play**, like craft and combine.
 
 ## What is next
 

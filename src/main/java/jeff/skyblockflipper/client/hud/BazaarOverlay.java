@@ -5,15 +5,17 @@ import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
 import jeff.skyblockflipper.client.track.MenuReader;
+import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.config.OverlaySide;
 import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
-import jeff.skyblockflipper.core.strategy.CombineJob;
-import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
+import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.track.BazaarMenu;
 import jeff.skyblockflipper.core.track.BazaarSlots;
 import jeff.skyblockflipper.core.track.CapturedMenu;
+import jeff.skyblockflipper.core.track.TrackedOrder;
 
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
@@ -85,6 +87,15 @@ public final class BazaarOverlay {
 	/** The between-rounds line: the colour of a reprice, dimmed, because that is what it is about. */
 	private static final int TEXT_WAITING = 0xFFC98A4B;
 	private static final int ROW_OPEN = 0x50FFD700;
+
+	/** A section title: which job the rows under it belong to. Gold, like the panel's own heading. */
+	private static final int TEXT_HEADING = 0xFFFFD24A;
+
+	/**
+	 * The group a heading belongs to, which is no group at all - it exists so the rule that
+	 * separates one kind of work from the next also lands above every section title.
+	 */
+	private static final int HEADING_GROUP = -1;
 	private static final int ROW_HOVER = 0x30FFFFFF;
 
 	/**
@@ -106,24 +117,15 @@ public final class BazaarOverlay {
 	}
 
 	/**
-	 * The same idea for a craft job: one colour per action, so the materials, the crafting and the
-	 * sale read as three blocks rather than as one wall.
+	 * The same idea for a worked flip: one colour per stage, so the buying, the transformation and
+	 * the sale read as three blocks rather than as one wall. Shared by craft, combine and spread,
+	 * because a player working two of them at once should not have to learn two colour schemes.
 	 */
-	private static int colourOf(CraftJob.Action action) {
-		return switch (action) {
+	private static int colourOf(WorkedJob.Stage stage) {
+		return switch (stage) {
 			case BUY_ORDER -> 0xFF6FD98A;
 			case INSTANT_BUY -> 0xFF7FB8FF;
-			case CRAFT -> 0xFFD59BFF;
-			case SELL_OFFER -> 0xFFFFD24A;
-		};
-	}
-
-	/** The same idea for a combine job. The anvil step borrows the craft colour: both are the station. */
-	private static int colourOf(CombineJob.Action action) {
-		return switch (action) {
-			case BUY_ORDER -> 0xFF6FD98A;
-			case INSTANT_BUY -> 0xFF7FB8FF;
-			case COMBINE -> 0xFFD59BFF;
+			case TRANSFORM -> 0xFFD59BFF;
 			case SELL_OFFER -> 0xFFFFD24A;
 		};
 	}
@@ -227,30 +229,18 @@ public final class BazaarOverlay {
 			return;
 		}
 
-		// A craft job the player picked wins over the basket. Both are lists of prices to type at
-		// this menu, and two panels beside one menu is two panels to read; the player said which
-		// one they are working by choosing it, so that is the one drawn until they stop it.
-		String craftOutput = CandidateFeed.craftOutputId();
-
-		if (craftOutput != null) {
-			renderCraft(screen, graphics, mouseX, mouseY, craftOutput);
-			return;
-		}
-
-		String combineOutput = CandidateFeed.combineOutputId();
-
-		if (combineOutput != null) {
-			renderCombine(screen, graphics, mouseX, mouseY, combineOutput);
-			return;
-		}
-
+		// Every flip the player said they are working, then the basket under them. The panel used to
+		// draw exactly one of the three, so picking a second flip - or picking a bazaar row merely to
+		// read it - took the first one off the screen while its orders were still resting. One list
+		// with a section per job is what the player actually has open.
+		List<WorkedJob> jobs = CandidateFeed.jobs();
 		NpcWorklist.Worklist worklist = CandidateFeed.worklist();
 		String note = note(worklist);
 
 		// Drawn for the note alone when there are no rows, which is the between-rounds case: the book
 		// has walked past orders this round is not asking about, and a panel that simply vanishes then
 		// is indistinguishable from a panel that has stopped working.
-		if (worklist.pending().isEmpty() && note.isEmpty()) {
+		if (jobs.isEmpty() && worklist.pending().isEmpty() && note.isEmpty()) {
 			Hit.clear();
 			return;
 		}
@@ -273,7 +263,7 @@ public final class BazaarOverlay {
 			// said at all: the row above says "reprice", and the click the menu actually wants first
 			// is the claim on the same row.
 			String stepNote = Guidance.stepNote();
-			Board board = board(worklist, title, stepNote.isEmpty() ? note : stepNote, font);
+			Board board = board(jobs, worklist, title, stepNote.isEmpty() ? note : stepNote, font);
 
 			if (flow || BazaarMenu.isBazaar(title) || !board.openProduct().isEmpty()) {
 				leftBazaarAt = System.currentTimeMillis();
@@ -297,7 +287,8 @@ public final class BazaarOverlay {
 
 		// On a sign, the panel says the one thing the screen is asking for rather than the whole
 		// list: the number or the name to type into it.
-		Board board = board(worklist, title, Guidance.typing() ? Guidance.typeNote() : note, font);
+		Board board = board(jobs, worklist, title,
+				Guidance.typing() ? Guidance.typeNote() : note, font);
 
 		// Typing a price or an amount happens on a sign, which is not a container menu and carries
 		// no title worth matching - and it is the moment the numbers are actually needed. So the
@@ -311,152 +302,6 @@ public final class BazaarOverlay {
 		}
 
 		Hit.clear();
-	}
-
-	/**
-	 * The craft job, drawn wherever the basket would have been.
-	 *
-	 * <p><b>No green box.</b> {@code BazaarStep} works a slot out from an {@code NpcWorklist.Task},
-	 * so it has nothing to say about a craft row, and a box left over from the basket would sit
-	 * behind a slot this list is not asking for. The panel says what to type and the player finds
-	 * the button, which is how this worked before the highlight existed.
-	 */
-	private static void renderCraft(Screen screen, GuiGraphicsExtractor graphics, int mouseX,
-			int mouseY, String outputId) {
-		String title = screen.getTitle().getString();
-		Font font = Minecraft.getInstance().font;
-		Board board = craftBoard(CandidateFeed.craftJob(), outputId, title, font);
-
-		if (screen instanceof ContainerScreenLayout layout
-				&& screen instanceof AbstractContainerScreen<?> container) {
-			if (bazaarFlow(container) || BazaarMenu.isBazaar(title)
-					|| !board.openProduct().isEmpty()) {
-				leftBazaarAt = System.currentTimeMillis();
-				Guidance.clear();
-				drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
-				return;
-			}
-
-			Guidance.clear();
-			Hit.clear();
-			return;
-		}
-
-		boolean onASign = screen instanceof AbstractSignEditScreen;
-
-		Guidance.leftTheMenu(onASign);
-
-		if (onASign && System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
-			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
-			return;
-		}
-
-		Hit.clear();
-	}
-
-	/**
-	 * The combine job, drawn wherever the basket would have been. The twin of {@link #renderCraft}:
-	 * three stations - the source buy, the anvil, the sell offer - laid out by the same code.
-	 *
-	 * <p><b>No green box.</b> {@code BazaarStep} works a slot out from an {@code NpcWorklist.Task} and
-	 * has nothing to say about a combine row; a box left over from the basket would sit behind a slot
-	 * this list is not asking for. The panel names the price to type and the player finds the button.
-	 */
-	private static void renderCombine(Screen screen, GuiGraphicsExtractor graphics, int mouseX,
-			int mouseY, String outputId) {
-		String title = screen.getTitle().getString();
-		Font font = Minecraft.getInstance().font;
-		Board board = combineBoard(CandidateFeed.combineJob(), outputId, title, font);
-
-		if (screen instanceof ContainerScreenLayout layout
-				&& screen instanceof AbstractContainerScreen<?> container) {
-			if (bazaarFlow(container) || BazaarMenu.isBazaar(title)
-					|| !board.openProduct().isEmpty()) {
-				leftBazaarAt = System.currentTimeMillis();
-				Guidance.clear();
-				drawBesideMenu(screen, layout, graphics, board, font, mouseX, mouseY);
-				return;
-			}
-
-			Guidance.clear();
-			Hit.clear();
-			return;
-		}
-
-		boolean onASign = screen instanceof AbstractSignEditScreen;
-
-		Guidance.leftTheMenu(onASign);
-
-		if (onASign && System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
-			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
-			return;
-		}
-
-		Hit.clear();
-	}
-
-	private static WeakReference<Screen> flowScreen = new WeakReference<>(null);
-	private static long flowReadAt;
-	private static boolean flowValue;
-
-	/**
-	 * Whether this menu is part of the bazaar, read from its contents rather than its title.
-	 *
-	 * <p>The three screens an order is actually placed on - the create screen, the amount, the price
-	 * - are titled nothing that names the bazaar, which is why {@code BazaarSlots} recognises them
-	 * by their buttons. Throttled on the same interval {@link Guidance} reads a menu at, because
-	 * this runs every frame and describing a menu is not free.
-	 */
-	private static boolean bazaarFlow(AbstractContainerScreen<?> container) {
-		long now = System.currentTimeMillis();
-
-		if (flowScreen.get() == container && now - flowReadAt < Guidance.REREAD_MILLIS) {
-			return flowValue;
-		}
-
-		flowScreen = new WeakReference<>(container);
-		flowReadAt = now;
-		flowValue = BazaarSlots.isBazaarFlow(MenuReader.describe(container, now));
-
-		return flowValue;
-	}
-
-	private static Board craftBoard;
-	private static CraftJob craftBoardJob;
-	private static String craftBoardOutput = "";
-	private static String craftBoardTitle = "";
-
-	/** The laid-out craft board, rebuilt only when the job or the screen behind it changes. */
-	private static Board craftBoard(CraftJob job, String outputId, String title, Font font) {
-		if (craftBoard == null || job != craftBoardJob || !outputId.equals(craftBoardOutput)
-				|| !title.equals(craftBoardTitle)) {
-			craftBoardJob = job;
-			craftBoardOutput = outputId;
-			craftBoardTitle = title;
-			craftBoard = Board.ofCraft(job, outputId, title, font);
-			Hit.reset(craftBoard);
-		}
-
-		return craftBoard;
-	}
-
-	private static Board combineBoard;
-	private static CombineJob combineBoardJob;
-	private static String combineBoardOutput = "";
-	private static String combineBoardTitle = "";
-
-	/** The laid-out combine board, rebuilt only when the job or the screen behind it changes. */
-	private static Board combineBoard(CombineJob job, String outputId, String title, Font font) {
-		if (combineBoard == null || job != combineBoardJob || !outputId.equals(combineBoardOutput)
-				|| !title.equals(combineBoardTitle)) {
-			combineBoardJob = job;
-			combineBoardOutput = outputId;
-			combineBoardTitle = title;
-			combineBoard = Board.ofCombine(job, outputId, title, font);
-			Hit.reset(combineBoard);
-		}
-
-		return combineBoard;
 	}
 
 	/** Beside Hypixel's menu, on the side the settings name. */
@@ -538,6 +383,8 @@ public final class BazaarOverlay {
 	}
 
 	private static Board board;
+	private static List<WorkedJob> boardJobs = List.of();
+	private static long boardOrders = -1L;
 	private static NpcWorklist.Worklist boardWorklist;
 	private static String boardTitle = "";
 	private static String boardNote = "";
@@ -549,13 +396,18 @@ public final class BazaarOverlay {
 	 * second to arrive at the same widths is the same waste {@code CandidateFeed} exists to avoid
 	 * for the ranked list, and the list only changes once a poll.
 	 */
-	private static Board board(NpcWorklist.Worklist worklist, String title, String note, Font font) {
-		if (board == null || worklist != boardWorklist || !title.equals(boardTitle)
-				|| !note.equals(boardNote)) {
+	private static Board board(List<WorkedJob> jobs, NpcWorklist.Worklist worklist, String title,
+			String note, Font font) {
+		long orders = TrackerService.orderRevision();
+
+		if (board == null || jobs != boardJobs || orders != boardOrders || worklist != boardWorklist
+				|| !title.equals(boardTitle) || !note.equals(boardNote)) {
+			boardJobs = jobs;
+			boardOrders = orders;
 			boardWorklist = worklist;
 			boardTitle = title;
 			boardNote = note;
-			board = Board.of(worklist, title, note, font);
+			board = Board.of(jobs, TrackerService.orders(), worklist, title, note, font);
 			Hit.reset(board);
 		}
 
@@ -600,7 +452,8 @@ public final class BazaarOverlay {
 	 * @param note        the between-rounds line under the heading, empty when nothing is waiting
 	 */
 	private record Board(List<Row> rows, String openProduct, String note, String label,
-			boolean guided, int holding, int width, int rowHeight, int headerHeight) {
+			boolean guided, int holding, int width, int rowHeight, int headerHeight,
+			int basketFirstRow) {
 		/**
 		 * One line of work: what to search for, what to type, and how the units divide into orders.
 		 *
@@ -609,24 +462,86 @@ public final class BazaarOverlay {
 		 *              Empty on a claim or a cancel, which are a button rather than a number
 		 */
 		private record Row(int colour, int group, String verb, String name, String price,
-				String units) {
+				String units, boolean heading) {
+			Row(int colour, int group, String verb, String name, String price, String units) {
+				this(colour, group, verb, name, price, units, false);
+			}
+
+			/**
+			 * A section title: which job the rows under it belong to, and how much of it is done.
+			 *
+			 * <p>Laid out as an ordinary row rather than as a shorter one, because the panel's whole
+			 * scroll and hit-test arithmetic is one row height - a heading of its own height would
+			 * make every row index a search instead of a division.
+			 */
+			static Row heading(String verb, String name, String progress) {
+				return new Row(TEXT_HEADING, HEADING_GROUP, verb, name, "", progress, true);
+			}
 		}
 
-		static Board of(NpcWorklist.Worklist worklist, String title, String note, Font font) {
+		/**
+		 * Every worked flip, then the basket, as one scrollable list.
+		 *
+		 * <p><b>Jobs first.</b> They are what the player explicitly chose to work and what they have
+		 * coins committed to; the basket is the standing list and sits under them. The basket keeps
+		 * the panel's own heading when there are no jobs, so a session that only ever works the NPC
+		 * side sees exactly the panel it always did.
+		 *
+		 * <p><b>A section heading is an ordinary row.</b> One row height everywhere is what lets the
+		 * scroll offset and the hit test stay a division rather than a search, and the heading's
+		 * second line is not wasted - it carries the done count.
+		 *
+		 * @param orders every order the tracker holds, for the progress badges. Empty when
+		 *               auto-tracking is off, which draws no badges rather than wrong ones
+		 */
+		static Board of(List<WorkedJob> jobs, List<TrackedOrder> orders,
+				NpcWorklist.Worklist worklist, String title, String note, Font font) {
 			List<Row> rows = new ArrayList<>();
 			List<String> names = new ArrayList<>();
 			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
 			int indent = PAD + ACCENT + ACCENT_GAP;
+
+			for (WorkedJob job : jobs) {
+				rows.add(Row.heading(headingVerb(job.kind()), job.displayName(),
+						progressOf(job, orders)));
+				names.add(job.displayName());
+
+				for (WorkedJob.Step step : job.steps()) {
+					// The badge rides on the verb rather than in a column of its own: the verb is
+					// already the coloured half of the line, and a fourth column at this width costs
+					// more than it says.
+					rows.add(new Row(colourOf(step.stage()), step.stage().ordinal(),
+							job.progressOf(step, orders).badge() + " " + step.label(),
+							step.displayName(),
+							step.stage().priced() ? String.format("%.1f", step.price()) : "",
+							step.orderSplit()));
+					names.add(step.displayName());
+				}
+
+				// Said on the section rather than in the panel's note, which belongs to the basket.
+				if (!job.note().isEmpty()) {
+					rows.add(new Row(TEXT_WAITING, HEADING_GROUP, "", job.note(), "", "", true));
+				}
+			}
+
+			int basketFirstRow = rows.size();
+
+			// A heading of its own only when something is above it. On its own it keeps the panel's
+			// heading, which is where the scroll position and the resting count are already said.
+			if (!jobs.isEmpty() && !worklist.pending().isEmpty()) {
+				rows.add(Row.heading("NPC", "basket", ""));
+				basketFirstRow = rows.size();
+			}
 
 			for (NpcWorklist.Task task : worklist.pending()) {
-				Row row = new Row(colourOf(task.kind()), task.kind().ordinal(), task.verb(),
+				rows.add(new Row(colourOf(task.kind()), task.kind().ordinal(), task.verb(),
 						task.displayName(),
 						task.hasPrice() ? String.format("%.1f", task.price()) : "",
-						task.orderSplit());
-
-				rows.add(row);
+						task.orderSplit()));
 				names.add(task.displayName());
+			}
 
+			for (Row row : rows) {
 				int nameLine = text(font, row.verb() + " " + row.name());
 				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
 						+ text(font, row.units()) + text(font, UNITS_MARK);
@@ -634,94 +549,33 @@ public final class BazaarOverlay {
 				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
 			}
 
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, "Do these", true,
+			String label = jobs.isEmpty() ? "Do these" : "Work";
+
+			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
+
+			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, true,
 					worklist.holding(), width, font.lineHeight * 2 + LINE_GAP + 2,
-					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
+					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP),
+					basketFirstRow);
 		}
 
-		/**
-		 * The same panel for one craft job: buy the materials, craft, offer the result.
-		 *
-		 * <p>Laid out by the same code as the basket because it is the same problem - a list of
-		 * prices and sizes to type into a menu you are standing in front of - and because a second
-		 * panel drawn a different way beside the same menu is two things for the player to learn.
-		 *
-		 * <p>A null job with an item still selected means the flip stopped clearing its gates while
-		 * it was being worked. That draws the heading and the reason and no rows, rather than
-		 * vanishing: a panel that disappears is indistinguishable from one that has broken, and the
-		 * player may be halfway through buying the materials.
-		 */
-		static Board ofCraft(CraftJob job, String outputId, String title, Font font) {
-			List<Row> rows = new ArrayList<>();
-			List<String> names = new ArrayList<>();
-			int indent = PAD + ACCENT + ACCENT_GAP;
-			String note = job == null
-					? "no longer clears - check the flip screen"
-					: "";
-			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
-
-			for (CraftJob.Row source : job == null ? List.<CraftJob.Row>of() : job.rows()) {
-				Row row = new Row(colourOf(source.action()), source.action().ordinal(),
-						source.action().label(), source.displayName(),
-						source.action().priced() ? String.format("%.1f", source.price()) : "",
-						source.orderSplit());
-
-				rows.add(row);
-				names.add(source.displayName());
-
-				int nameLine = text(font, row.verb() + " " + row.name());
-				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
-						+ text(font, row.units()) + text(font, UNITS_MARK);
-
-				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
-			}
-
-			String label = "Craft " + (job == null ? outputId : job.displayName());
-
-			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
-
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, false, 0,
-					width, font.lineHeight * 2 + LINE_GAP + 2,
-					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
+		/** The word that names a job's strategy in a section heading. */
+		private static String headingVerb(StrategyKind kind) {
+			return switch (kind) {
+				case CRAFT -> "Craft";
+				case COMBINE -> "Combine";
+				case BAZAAR_SPREAD -> "Spread";
+				default -> "Flip";
+			};
 		}
 
-		/**
-		 * The same panel for one combine job: buy the source, merge it up at the anvil, offer the top
-		 * tier. The twin of {@link #ofCraft} - the same layout code, because a combine is the same
-		 * problem of prices and sizes to type into a menu you are standing in front of.
-		 */
-		static Board ofCombine(CombineJob job, String outputId, String title, Font font) {
-			List<Row> rows = new ArrayList<>();
-			List<String> names = new ArrayList<>();
-			int indent = PAD + ACCENT + ACCENT_GAP;
-			String note = job == null
-					? "no longer clears - check the flip screen"
-					: "";
-			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
+		/** {@code 1/3 done}, or nothing when the tracker cannot see any of this job's steps. */
+		private static String progressOf(WorkedJob job, List<TrackedOrder> orders) {
+			int trackable = job.trackableCount();
 
-			for (CombineJob.Row source : job == null ? List.<CombineJob.Row>of() : job.rows()) {
-				Row row = new Row(colourOf(source.action()), source.action().ordinal(),
-						source.action().label(), source.displayName(),
-						source.action().priced() ? String.format("%.1f", source.price()) : "",
-						source.orderSplit());
-
-				rows.add(row);
-				names.add(source.displayName());
-
-				int nameLine = text(font, row.verb() + " " + row.name());
-				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
-						+ text(font, row.units()) + text(font, UNITS_MARK);
-
-				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
-			}
-
-			String label = "Combine " + (job == null ? outputId : job.displayName());
-
-			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
-
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, false, 0,
-					width, font.lineHeight * 2 + LINE_GAP + 2,
-					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP));
+			return orders.isEmpty() || trackable == 0
+					? ""
+					: job.doneCount(orders) + "/" + trackable + " done";
 		}
 
 		private static int text(Font font, String value) {
@@ -791,8 +645,10 @@ public final class BazaarOverlay {
 
 				// The row for the product page actually open, and the row the green box in the menu
 				// is serving, so a list of twenty does not have to be read through to find the one
-				// in front of you.
-				if ((guided && i == Guidance.row()) || (!openProduct.isEmpty()
+				// in front of you. Guidance counts within the basket, which no longer starts at the
+				// top of the panel - the worked jobs are above it.
+				if ((guided && i >= basketFirstRow && i - basketFirstRow == Guidance.row())
+						|| (!row.heading() && !openProduct.isEmpty()
 						&& row.name().equalsIgnoreCase(openProduct))) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_OPEN);
 				} else if (i == hovered) {
@@ -805,13 +661,20 @@ public final class BazaarOverlay {
 					graphics.fill(x + 1, cursor - 1, right - 1, cursor, GROUP_RULE);
 				}
 
-				graphics.fill(x + PAD, cursor, x + PAD + ACCENT, bottom, row.colour());
+				// A section title has no accent bar and starts at the panel edge, so it reads as a
+				// title rather than as one more thing to click.
+				int rowTextX = row.heading() ? x + PAD : textX;
 
-				graphics.text(font, Component.literal(row.verb()), textX, cursor, row.colour());
+				if (!row.heading()) {
+					graphics.fill(x + PAD, cursor, x + PAD + ACCENT, bottom, row.colour());
+				}
+
+				graphics.text(font, Component.literal(row.verb()), rowTextX, cursor, row.colour());
 				graphics.text(font, Component.literal(row.name()),
-						textX + text(font, row.verb() + " "), cursor, TEXT);
+						rowTextX + text(font, row.verb() + " "), cursor, TEXT);
 
-				drawNumbers(graphics, font, row, textX, right, cursor + font.lineHeight + LINE_GAP);
+				drawNumbers(graphics, font, row, rowTextX, right,
+						cursor + font.lineHeight + LINE_GAP);
 
 				cursor += rowHeight;
 			}
@@ -829,6 +692,17 @@ public final class BazaarOverlay {
 		 */
 		private void drawNumbers(GuiGraphicsExtractor graphics, Font font, Row row, int textX,
 				int right, int y) {
+			// A section title's second line is the done count, which is not a size to type into a
+			// box - so no size mark, and dimmed.
+			if (row.heading()) {
+				if (!row.units().isEmpty()) {
+					graphics.text(font, Component.literal(row.units()),
+							right - PAD - text(font, row.units()), y, TEXT_DIM);
+				}
+
+				return;
+			}
+
 			int unitsX = right - PAD - text(font, UNITS_MARK) - text(font, row.units());
 
 			graphics.text(font, Component.literal(row.units()), unitsX, y, TEXT_UNITS);

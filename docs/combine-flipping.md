@@ -180,20 +180,21 @@ only where it has none (Feather Falling 6 rests 0 bid orders, so it is taken at 
 
 ## Following one in play
 
-Picking a combine row in the flip screen makes the bazaar overlay follow that job, the same way it
-follows a chosen craft. `CombineJob` is the one source the panel and the `/flip combine` step text
+Selecting a combine row in the flip screen and pressing **Work** makes the bazaar overlay carry that
+job, the same way it carries a chosen craft. `CombineJob` is the one source the panel and the `/flip combine` step text
 both read from, so the two cannot disagree by a tenth of a coin — the reason craft routes through
 `CraftJob`. The job is three stations, each counted in its own unit: the **source buy** (books, on a
 resting order at the bid or an instant buy where the source has none), the **anvil** (merges, e.g. 15
 for a Feather Falling 10, not one output), and the **sell offer** (output books, split into orders
 the box will take). It is re-quoted from the live book every poll, so a flip that stops clearing
-while it is worked shows "no longer clears" rather than a stale price. `/flip combine stop`, or
-picking any other kind of flip, puts the basket back.
+while it is worked shows "no longer clears" rather than a stale price. `/flip combine stop` drops
+every combine; `/flip jobs stop <name>` drops one.
 
 There is **no green box** on a combine row: the slot highlighter works a slot out from an NPC task
 and has nothing to say about a combine, so the panel names the price and the player finds the button.
-Only one transformation is followed at a time — working a combine drops a craft that was being
-worked, and the reverse.
+A combine is worked **beside** a craft or a spread rather than instead of one, and it keeps its
+section on the panel until it is stopped — changed 2026-08-21, see `docs/worked-flips.md`. Selecting
+a row no longer commits anything; the Work button does.
 
 ## Throughput and its cap
 

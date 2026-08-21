@@ -20,7 +20,7 @@ final class TextButton {
 	private static final int LABEL = 0xFFFFFFFF;
 	private static final int LABEL_DISABLED = 0xFF777777;
 
-	private final Component label;
+	private Component label;
 	private final Runnable action;
 
 	private int x;
@@ -31,6 +31,15 @@ final class TextButton {
 	TextButton(String label, Runnable action) {
 		this.label = Component.literal(label);
 		this.action = action;
+	}
+
+	/**
+	 * Re-labels the button in place, for the one whose label is the state it is in - Work against
+	 * Stop working. Its bounds do not follow, so the wider of the two labels is what to size it at:
+	 * a button that resizes as the selection changes moves out from under the cursor.
+	 */
+	void setLabel(String text) {
+		label = Component.literal(text);
 	}
 
 	void setBounds(int x, int y, int width, int height) {

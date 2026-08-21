@@ -127,6 +127,23 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 		return candidates;
 	}
 
+	/**
+	 * This one product re-quoted against the live book, on the same gates the ranking uses.
+	 *
+	 * <p>The twin of {@code CraftFlipStrategy.job} and {@code BazaarCombineStrategy.job}, and it
+	 * exists for the same reason: a spread the player is working has to be re-priced every poll
+	 * while they type it, and an item that has dropped out of the top of the ranking is still the
+	 * item they have coins resting on. Empty means the flip stopped clearing its own gates, which
+	 * the panel says out loud rather than going on showing the last numbers that worked.
+	 */
+	public java.util.Optional<FlipCandidate> job(String productId, StrategyContext context) {
+		if (productId == null) {
+			return java.util.Optional.empty();
+		}
+
+		return context.bazaar().product(productId).flatMap(product -> evaluate(product, context));
+	}
+
 	private java.util.Optional<FlipCandidate> evaluate(BazaarProduct product, StrategyContext context) {
 		if (product.sellOffers().isEmpty() || product.buyOrders().isEmpty()) {
 			return java.util.Optional.empty();
