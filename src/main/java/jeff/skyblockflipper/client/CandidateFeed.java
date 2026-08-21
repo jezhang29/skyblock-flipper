@@ -4,9 +4,11 @@ import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.PlannedQuotes;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.ledger.Quote;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.BazaarCombineStrategy;
+import jeff.skyblockflipper.core.strategy.BazaarSpreadStrategy;
 import jeff.skyblockflipper.core.strategy.CombineContext;
 import jeff.skyblockflipper.core.strategy.CombineJob;
 import jeff.skyblockflipper.core.strategy.CraftContext;
@@ -21,10 +23,14 @@ import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.strategy.StrategyContext;
 import jeff.skyblockflipper.core.strategy.StrategyEngine;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.strategy.WorkedJob;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,7 +49,7 @@ public final class CandidateFeed {
 
 	/**
 	 * The craft planner, kept beside the engine because the overlay needs more from it than a
-	 * ranking: it re-plans one chosen recipe every poll. Free to hold a second instance -
+	 * ranking: it re-plans each worked recipe every poll. Free to hold a second instance -
 	 * {@code RecipeBook.bundled()} is parsed once and cached.
 	 */
 	private static final CraftFlipStrategy CRAFT = new CraftFlipStrategy();
@@ -54,6 +60,22 @@ public final class CandidateFeed {
 	 * free.
 	 */
 	private static final BazaarCombineStrategy COMBINE = new BazaarCombineStrategy();
+
+	/**
+	 * The spread planner, kept beside the engine so a worked spread can be re-quoted on its own.
+	 * The ranking scans every product; a followed flip needs one, every poll, while the player is
+	 * typing its prices.
+	 */
+	private static final BazaarSpreadStrategy SPREAD = new BazaarSpreadStrategy();
+
+	/**
+	 * The strategies whose plans are a list of clicks at the bazaar, which is what a worked job is.
+	 *
+	 * <p>An auction snipe is a search and a bid on a different screen entirely, and an NPC basket
+	 * line is already in the worklist, so neither is followable here.
+	 */
+	private static final Set<StrategyKind> FOLLOWABLE = EnumSet.of(
+			StrategyKind.CRAFT, StrategyKind.COMBINE, StrategyKind.BAZAAR_SPREAD);
 
 	/** Deep enough to serve any allowed {@code hudLines} without re-ranking when it changes. */
 	private static final int CACHE_DEPTH = 10;
@@ -72,31 +94,28 @@ public final class CandidateFeed {
 	private static long cachedRevision = -1L;
 
 	/**
-	 * The crafted item the player said they are working, and the plan for it as of the last book.
-	 *
-	 * <p>Held as an id rather than as a plan, because the plan goes stale: the prices in it are what
-	 * the player is about to type, and the book moves every twenty seconds. So the id is what
-	 * persists across a poll and the job is rebuilt beneath it, exactly as the NPC worklist is.
-	 *
-	 * <p>A null {@link #craftJob} against a non-null id is a real state and not a missing one: the
-	 * flip stopped clearing its own gates while it was being worked, and the panel says so rather
-	 * than going on showing the last numbers that happened to work.
+	 * The flips being worked, item id to the strategy that planned it, in the order they were
+	 * picked. Insertion-ordered because that order is the answer to "what am I in the middle of",
+	 * and re-sorting it every poll would move the row under a player halfway down the panel.
 	 */
-	private static volatile String craftOutputId;
-	private static CraftJob craftJob;
-	private static long craftJobRevision = -1L;
+	private static final Map<String, StrategyKind> FOLLOWED = new LinkedHashMap<>();
 
 	/**
-	 * The top-tier book the player said they are combining, and the plan for it as of the last book.
-	 *
-	 * <p>Held exactly as {@link #craftOutputId}: an id that persists across a poll, with the job
-	 * rebuilt beneath it because the prices in it are what the player is about to type. Only one
-	 * transformation is followed at a time, so setting this clears {@link #craftOutputId} and the
-	 * reverse - the overlay draws whichever the player last picked.
+	 * The name each worked id had when it was picked, so a job whose plan has stopped clearing can
+	 * still be named. Without it a stalled flip reads as a raw item id, which is the one thing the
+	 * player is never shown anywhere else.
 	 */
-	private static volatile String combineTargetId;
-	private static CombineJob combineJob;
-	private static long combineJobRevision = -1L;
+	private static final Map<String, String> FOLLOWED_NAMES = new LinkedHashMap<>();
+
+	private static volatile List<WorkedJob> jobs = List.of();
+	private static long jobsRevision = -1L;
+
+	/**
+	 * Bumped whenever the worked list changes, so a pick or a stop rebuilds the jobs without
+	 * waiting for the book to move. The book revision alone cannot see it.
+	 */
+	private static int jobsGeneration;
+	private static int builtGeneration = -1;
 
 	private static NpcWorklist.Worklist worklist;
 	private static long worklistRevision = -1L;
@@ -285,109 +304,171 @@ public final class CandidateFeed {
 	}
 
 	/**
-	 * Work this crafted item: the bazaar overlay follows it until told otherwise.
+	 * Work this flip: the bazaar panel and the Jobs tab carry its steps until it is stopped.
 	 *
-	 * <p>Set from the flip screen when a craft row is picked, which is the click that means "this is
-	 * the one". The alternative was a panel that follows whatever happens to rank first, which
-	 * changes under the player every poll while they are halfway through buying materials for the
-	 * one it used to show.
-	 */
-	public static void workCraft(String outputId) {
-		craftOutputId = outputId;
-		craftJob = null;
-		craftJobRevision = -1L;
-
-		// One transformation is followed at a time: picking a craft drops a combine that was being
-		// worked, or the overlay would have two panels to choose between beside one menu.
-		if (outputId != null) {
-			combineTargetId = null;
-			combineJob = null;
-		}
-	}
-
-	/** Stop following a craft, so the bazaar panel goes back to the NPC basket. */
-	public static void stopCraft() {
-		craftOutputId = null;
-		craftJob = null;
-		craftJobRevision = -1L;
-	}
-
-	/** The crafted item being worked, or null. Set even when the plan has stopped clearing. */
-	public static String craftOutputId() {
-		return craftOutputId;
-	}
-
-	/**
-	 * Work this combine: the bazaar overlay follows it until told otherwise.
+	 * <p><b>Several at once, in the order picked.</b> This used to hold one craft or one combine,
+	 * and picking either dropped the other - as did picking a bazaar row merely to read it, which
+	 * silently ended a craft the player was halfway through buying materials for. Working two flips
+	 * at a time is the normal case: a craft's materials rest for an hour while a combine's source
+	 * books fill, and neither is a reason to stop seeing the other.
 	 *
-	 * <p>Set from the flip screen when a combine row is picked. Drops a craft being worked for the
-	 * same reason {@link #workCraft} drops a combine - only one plan sits beside the menu.
+	 * <p>Held as ids rather than as plans, because the plans go stale: the prices in them are what
+	 * the player is about to type, and the book moves every twenty seconds. So the id is what
+	 * persists across a poll and the job is rebuilt beneath it, exactly as the NPC worklist is.
+	 *
+	 * @return false for a strategy with no bazaar steps to follow - an auction snipe or an NPC
+	 *         basket line, both of which have their own view
 	 */
-	public static void workCombine(String targetId) {
-		combineTargetId = targetId;
-		combineJob = null;
-		combineJobRevision = -1L;
-
-		if (targetId != null) {
-			craftOutputId = null;
-			craftJob = null;
+	public static boolean work(StrategyKind kind, String itemId, String displayName) {
+		if (itemId == null || !FOLLOWABLE.contains(kind)) {
+			return false;
 		}
+
+		FOLLOWED.put(itemId, kind);
+		FOLLOWED_NAMES.put(itemId, displayName == null ? itemId : displayName);
+		jobsGeneration++;
+		return true;
 	}
 
-	/** Stop following a combine, so the bazaar panel goes back to the NPC basket. */
-	public static void stopCombine() {
-		combineTargetId = null;
-		combineJob = null;
-		combineJobRevision = -1L;
+	/** Whether this item is one of the flips being worked. */
+	public static boolean working(String itemId) {
+		return itemId != null && FOLLOWED.containsKey(itemId);
 	}
 
-	/** The top-tier book being combined, or null. Set even when the plan has stopped clearing. */
-	public static String combineOutputId() {
-		return combineTargetId;
+	/** The strategy that put this item on the worked list, or null when it is not on it. */
+	public static StrategyKind workedAs(String itemId) {
+		return itemId == null ? null : FOLLOWED.get(itemId);
 	}
 
 	/**
-	 * The combine plan re-priced against the current book, or null. Client-thread only, like
-	 * {@link #craftJob}.
+	 * Stop working one flip.
+	 *
+	 * @return false when it was not being worked
 	 */
-	public static CombineJob combineJob() {
-		if (combineTargetId == null) {
-			return null;
+	public static boolean stopWork(String itemId) {
+		if (itemId == null || FOLLOWED.remove(itemId) == null) {
+			return false;
 		}
 
-		long revision = MarketDataService.data().bazaarRevision();
-
-		if (combineJob == null || revision != combineJobRevision) {
-			combineJobRevision = revision;
-			combineJob = COMBINE.job(combineTargetId, context()).orElse(null);
-			rememberForeign(combineJob == null ? List.of() : combineJob.restingBuyOrderIds(),
-					StrategyKind.COMBINE);
-		}
-
-		return combineJob;
+		FOLLOWED_NAMES.remove(itemId);
+		jobsGeneration++;
+		return true;
 	}
 
 	/**
-	 * The plan for the item being worked, re-priced against the current book, or null.
+	 * Stop working every flip of one strategy.
+	 *
+	 * @return how many were dropped
+	 */
+	public static int stopWork(StrategyKind kind) {
+		int dropped = 0;
+
+		for (String itemId : List.copyOf(FOLLOWED.keySet())) {
+			if (FOLLOWED.get(itemId) == kind) {
+				FOLLOWED.remove(itemId);
+				FOLLOWED_NAMES.remove(itemId);
+				dropped++;
+			}
+		}
+
+		if (dropped > 0) {
+			jobsGeneration++;
+		}
+
+		return dropped;
+	}
+
+	/**
+	 * Stop working everything.
+	 *
+	 * @return how many were dropped
+	 */
+	public static int stopWork() {
+		int dropped = FOLLOWED.size();
+
+		FOLLOWED.clear();
+		FOLLOWED_NAMES.clear();
+
+		if (dropped > 0) {
+			jobsGeneration++;
+		}
+
+		return dropped;
+	}
+
+	/** The ids being worked, in the order they were picked. */
+	public static List<String> workedIds() {
+		return List.copyOf(FOLLOWED.keySet());
+	}
+
+	/**
+	 * Every worked flip re-priced against the current book, in the order picked.
 	 *
 	 * <p>Call from the client thread only, like {@link #worklist()}: every caller is a render or a
-	 * tick path, which is why this needs no lock.
+	 * tick path, which is why this needs no lock. Rebuilt when the book moves or the list changes,
+	 * not every frame - the panel draws this sixty times a second and re-planning a recipe that
+	 * often is the waste this class exists to avoid.
 	 */
-	public static CraftJob craftJob() {
-		if (craftOutputId == null) {
-			return null;
+	public static List<WorkedJob> jobs() {
+		if (FOLLOWED.isEmpty()) {
+			jobs = List.of();
+			return jobs;
 		}
 
 		long revision = MarketDataService.data().bazaarRevision();
 
-		if (craftJob == null || revision != craftJobRevision) {
-			craftJobRevision = revision;
-			craftJob = CRAFT.job(craftOutputId, context()).orElse(null);
-			rememberForeign(craftJob == null ? List.of() : craftJob.quote().restingBuyOrders(),
-					StrategyKind.CRAFT);
+		if (revision == jobsRevision && jobsGeneration == builtGeneration) {
+			return jobs;
 		}
 
-		return craftJob;
+		jobsRevision = revision;
+		builtGeneration = jobsGeneration;
+
+		StrategyContext context = context();
+		List<WorkedJob> built = new ArrayList<>();
+
+		for (Map.Entry<String, StrategyKind> followed : FOLLOWED.entrySet()) {
+			String itemId = followed.getKey();
+			String name = FOLLOWED_NAMES.get(itemId);
+
+			WorkedJob job = switch (followed.getValue()) {
+				case CRAFT -> WorkedJob.ofCraft(itemId, name, CRAFT.job(itemId, context).orElse(null));
+				case COMBINE -> WorkedJob.ofCombine(itemId, name,
+						COMBINE.job(itemId, context).orElse(null));
+				case BAZAAR_SPREAD -> spreadJob(itemId, name, context);
+				default -> null;
+			};
+
+			if (job != null) {
+				built.add(job);
+				// So the NPC side does not reprice or cancel an order this flip is resting on.
+				rememberForeign(restingIdsOf(job), followed.getValue());
+			}
+		}
+
+		jobs = List.copyOf(built);
+		return jobs;
+	}
+
+	private static WorkedJob spreadJob(String itemId, String name, StrategyContext context) {
+		FlipCandidate candidate = SPREAD.job(itemId, context).orElse(null);
+		long unitsPerOrder = Stacking.unitsPerOrder(context.catalog().get(itemId).orElse(null),
+				context.bazaar().product(itemId).orElse(null));
+
+		return WorkedJob.ofSpread(itemId, name, candidate, unitsPerOrder);
+	}
+
+	/** The ids a job rests buy orders on, which is what the NPC side has to leave alone. */
+	private static List<String> restingIdsOf(WorkedJob job) {
+		List<String> ids = new ArrayList<>();
+
+		for (WorkedJob.Step step : job.steps()) {
+			if (step.stage() == WorkedJob.Stage.BUY_ORDER) {
+				ids.add(step.itemId());
+			}
+		}
+
+		return ids;
 	}
 
 	/** Forces a rebuild on the next tick, for changes the book revision cannot see. */
@@ -395,8 +476,7 @@ public final class CandidateFeed {
 		cachedRevision = -1L;
 		worklistRevision = -1L;
 		worklist = null;
-		craftJobRevision = -1L;
-		combineJobRevision = -1L;
+		jobsRevision = -1L;
 		// The open round froze the check-in interval along with its prices, so an edit to it would
 		// otherwise not be felt until the round opened under the old one had run out.
 		NpcRoundService.clear();

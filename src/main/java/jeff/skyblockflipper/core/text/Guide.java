@@ -31,8 +31,8 @@ public final class Guide {
 	}
 
 	public static List<Section> sections() {
-		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, CRAFT, COMBINE,
-				LIQUIDITY, LEDGER, SETTINGS, SYNC, LIMITS);
+		return List.of(START, COMMANDS, COLUMNS, STRATEGIES, ROUTES, NPC_CAP, BASKET, JOBS, CRAFT,
+				COMBINE, LIQUIDITY, LEDGER, SETTINGS, SYNC, LIMITS);
 	}
 
 	/**
@@ -131,6 +131,9 @@ public final class Guide {
 					+ "each one is in. You cannot type in chat with a menu open, so open the menu, "
 					+ "close it, then run this. It is how a button the green box has stopped finding "
 					+ "gets identified"),
+			new Term("/flip jobs", "The flips you are working and the clicks each one still needs, "
+					+ "with what your order tracker has seen done. Same list as the Jobs tab and the "
+					+ "bazaar panel. /flip jobs stop <name> drops one, /flip jobs stop drops all"),
 			new Term("/flip guide <section>", "This guide, one section at a time")));
 
 	private static final Section COLUMNS = new Section("columns", "Columns", List.of(
@@ -208,6 +211,42 @@ public final class Guide {
 					+ "against an NPC price, which cannot move away from you; a bazaar price can, which "
 					+ "is why bazaar flips come with a rule for when to give up instead")));
 
+	/**
+	 * Working several flips at once, which is the thing the screen used to make impossible.
+	 *
+	 * <p>Its own section rather than a line in each strategy, because the point of it is the part
+	 * no single strategy owns: what you have open across all of them, and what is still to click.
+	 */
+	private static final Section JOBS = new Section("jobs", "Flips you are working", List.of(
+			new Term("What a worked flip is", "A bazaar spread, a craft or a combine you told the mod "
+					+ "you are actually doing. Select its row on any tab and press Work. It then has a "
+					+ "block on the Jobs tab and a section on the bazaar panel until you stop it"),
+			new Term("Several at once", "As many as you like. A craft's materials rest for an hour "
+					+ "while a combine's source books fill and a spread sits on the book, so working "
+					+ "one flip at a time is not how a session actually goes. They are listed in the "
+					+ "order you picked them, above the NPC basket"),
+			new Term("Selecting is not working", "Clicking a row selects it so you can read the panel "
+					+ "beside it. Nothing is committed and nothing you are already working is dropped. "
+					+ "Only the Work button starts a flip, and pressing it on a flip you are already "
+					+ "working stops that one"),
+			new Term("The progress marks", "[ ] nothing on the book for that step yet, [~] an order is "
+					+ "resting, [x] it filled and was collected. They come from your order tracker, so "
+					+ "with /flip track off every step reads blank and the count says untracked. A "
+					+ "guessed mark would be worse than none"),
+			new Term("Steps nothing can see", "Crafting at a bench and merging at an anvil leave no "
+					+ "trace on the bazaar, so those steps never get a mark. Only the buy orders and "
+					+ "the sell offer are counted in the done count"),
+			new Term("Stopping one", "Press Stop working on the Jobs tab, or /flip jobs stop <name>. "
+					+ "It only stops the mod telling you about the flip - orders already on the book "
+					+ "are left exactly where they are, and the NPC side goes on leaving them alone "
+					+ "for as long as they rest"),
+			new Term("Falling behind", "If a flip stops clearing its own gates while you are working "
+					+ "it - the output crashes, a material climbs - its block says so and stops giving "
+					+ "prices, rather than quoting numbers that no longer earn anything"),
+			new Term("Committed", "The right-hand side adds up what every worked flip has tied up and "
+					+ "what it makes if it all fills. Nothing else in the mod adds them: the ranking "
+					+ "quotes each flip as if it were the only one")));
+
 	private static final Section CRAFT = new Section("craft", "Crafting to sell", List.of(
 			new Term("The trade", "/flip craft lists recipes whose materials cost less on the bazaar "
 					+ "than the finished item sells for. Every price is a live bazaar price on both "
@@ -231,13 +270,13 @@ public final class Guide {
 					+ "sell offer at the end. Those are the same slots your NPC basket wants, so a "
 					+ "limit in settings caps how many one job may take. A job over the limit is shown "
 					+ "with its materials bought instantly instead, which needs only the one slot"),
-			new Term("Working one", "Click a craft row in the flip screen and the bazaar panel "
-					+ "follows that job instead of the basket: the materials, the craft and the sell "
-					+ "offer, each with the price and the amount to type, beside Hypixel's own menu. "
-					+ "Click a name or a number to copy it. The prices are re-worked every poll, so "
-					+ "what the panel shows is the book as it is, not as it was when you picked the "
-					+ "row. /flip craft stop puts the basket back, and so does clicking any other "
-					+ "kind of flip"),
+			new Term("Working one", "Select a craft row in the flip screen and press Work. The bazaar "
+					+ "panel then carries that job - the materials, the craft and the sell offer, each "
+					+ "with the price and the amount to type - beside Hypixel's own menu. Click a name "
+					+ "or a number to copy it. The prices are re-worked every poll, so the panel shows "
+					+ "the book as it is, not as it was when you picked the row. Several crafts can be "
+					+ "worked at once, and selecting a row does not start one. /flip craft stop drops "
+					+ "every craft; see the Jobs section"),
 			new Term("Falling behind", "If the flip stops clearing while you are working it - the "
 					+ "output crashes, a material climbs - the panel says so and stops giving prices "
 					+ "rather than quoting numbers that no longer earn anything"),
@@ -271,12 +310,13 @@ public final class Guide {
 			new Term("The fantasy-price guard", "A book is only offered when its top tier has at least "
 					+ "fifteen sell offers resting. A tier priced by a single seller at a made-up number "
 					+ "is not a real price, and this is the filter that tells the two apart"),
-			new Term("Working one", "Click a combine row in the flip screen and the bazaar panel "
-					+ "follows that job instead of the basket: the source buy, the anvil merges and the "
-					+ "sell offer, each with the price and the amount to type, beside Hypixel's own menu. "
-					+ "Click a name or a number to copy it. The prices are re-worked every poll, so the "
-					+ "panel shows the book as it is, not as it was when you picked the row. /flip combine "
-					+ "stop puts the basket back, and so does clicking any other kind of flip"),
+			new Term("Working one", "Select a combine row in the flip screen and press Work. The bazaar "
+					+ "panel then carries that job - the source buy, the anvil merges and the sell offer, "
+					+ "each with the price and the amount to type - beside Hypixel's own menu. Click a "
+					+ "name or a number to copy it. The prices are re-worked every poll, so the panel "
+					+ "shows the book as it is, not as it was when you picked the row. A combine can be "
+					+ "worked beside a craft or a spread. /flip combine stop drops every combine; see the "
+					+ "Jobs section"),
 			new Term("Unverified", "Nothing here has been combined and sold in play yet, and the anvil "
 					+ "is assumed to cost no coins. Treat the first runs as a test")));
 

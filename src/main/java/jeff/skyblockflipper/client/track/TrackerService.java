@@ -102,6 +102,17 @@ public final class TrackerService {
 	}
 
 	/**
+	 * Every order the tracker holds, or nothing when auto-tracking is off.
+	 *
+	 * <p>What the worked-job panel measures progress against. Empty rather than absent when tracking
+	 * is off, because the caller's answer is the same either way - no step can be marked done - and
+	 * an empty list says that without every view having to test the setting.
+	 */
+	public static List<TrackedOrder> orders() {
+		return enabled() ? tracker().orders() : List.of();
+	}
+
+	/**
 	 * The resting buy orders as {@link NpcReprice} wants them, which is every one it could identify.
 	 *
 	 * <p>Lives here rather than at either caller because {@code /flip npc reprice} and the check-in
