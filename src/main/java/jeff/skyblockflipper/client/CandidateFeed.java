@@ -224,7 +224,8 @@ public final class CandidateFeed {
 							: Set.of(),
 					TrackerService.enabled() && round != null
 							? TrackerService.cancelledSince(round.openedAt())
-							: Map.of());
+							: Map.of(),
+					FlipIntentsService.foreign(System.currentTimeMillis()));
 
 			rememberQuotes(worklist);
 		}
@@ -253,6 +254,23 @@ public final class CandidateFeed {
 			QUOTES.quoted(new Quote(line.plan().itemId(), line.plan().displayName(),
 					StrategyKind.NPC_FLIP, line.plan().unitCost(), line.plan().unitNetProfit(),
 					line.units(), line.capital()), now);
+
+			// So an item now in an NPC basket overrides a stale craft or combine intent on the same id:
+			// last write wins, and the fresh NPC_FLIP is what releases it back to the NPC side.
+			FlipIntentsService.record(line.plan().itemId(), StrategyKind.NPC_FLIP, now);
+		}
+	}
+
+	/**
+	 * Marks the ids a followed craft or combine rests buy orders on, so the NPC side leaves them
+	 * alone. Recorded while the job is followed and persisted, so an order left resting after the
+	 * player stops following - or restarts - is still recognised as the other strategy's.
+	 */
+	private static void rememberForeign(List<String> itemIds, StrategyKind kind) {
+		long now = System.currentTimeMillis();
+
+		for (String itemId : itemIds) {
+			FlipIntentsService.record(itemId, kind, now);
 		}
 	}
 
@@ -342,6 +360,8 @@ public final class CandidateFeed {
 		if (combineJob == null || revision != combineJobRevision) {
 			combineJobRevision = revision;
 			combineJob = COMBINE.job(combineTargetId, context()).orElse(null);
+			rememberForeign(combineJob == null ? List.of() : combineJob.restingBuyOrderIds(),
+					StrategyKind.COMBINE);
 		}
 
 		return combineJob;
@@ -363,6 +383,8 @@ public final class CandidateFeed {
 		if (craftJob == null || revision != craftJobRevision) {
 			craftJobRevision = revision;
 			craftJob = CRAFT.job(craftOutputId, context()).orElse(null);
+			rememberForeign(craftJob == null ? List.of() : craftJob.quote().restingBuyOrders(),
+					StrategyKind.CRAFT);
 		}
 
 		return craftJob;

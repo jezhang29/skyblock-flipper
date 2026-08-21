@@ -91,6 +91,22 @@ public record CombineJob(String targetId, String displayName, List<Row> rows, Co
 	}
 
 	/**
+	 * The source-book ids this flip rests a buy order on, which are what the NPC side would otherwise
+	 * misread as its own.
+	 *
+	 * <p>Only {@link Action#BUY_ORDER} rows: an instant buy takes the ask and rests nothing, and the
+	 * sell offer is the finished book on the other leg. So this is the ids that appear in the orders
+	 * menu as resting buys and have to be marked the combine's, not the NPC basket's.
+	 */
+	public List<String> restingBuyOrderIds() {
+		return rows.stream()
+				.filter(row -> row.action() == Action.BUY_ORDER)
+				.map(Row::itemId)
+				.filter(id -> id != null && !id.isEmpty())
+				.toList();
+	}
+
+	/**
 	 * The clicks a quote implies, or empty where the book has moved out from under it.
 	 *
 	 * <p>Empty rather than partial for the same reason {@link CombineQuote} refuses rather than
