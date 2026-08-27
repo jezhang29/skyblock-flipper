@@ -97,7 +97,16 @@ Full record in `docs/worked-flips.md`. **Unverified in play**, like craft and co
 
 ## What is next
 
-Two items stand, and both are the same shape: work finished offline that has never been seen in play.
+**A fifth strategy is designed and specced but not built: attribute-shard fusion flipping**
+(`StrategyKind.FUSION`), decided in a grill on 2026-08-27. Buy `SHARD_*` inputs on the bazaar, fuse
+them at Galatea's machine (multi-step trees, depth cap 3, min-cost recursion), sell the output on an
+offer — off the NPC cap, combine's twin. Recipe data is the MIT `Campionnn/SkyShards` graph
+(`fusion-data.json`, 320/321 shards live on the bazaar). Offline it clears 131 outputs, top ~2.06M/
+click (5-40× combine). It is chosen as the **next strategy verified in play**, ahead of combine. The
+full settled design, data structure, cost formula and build plan are in `docs/fusion-flipping.md` —
+read that before starting; build on branch `fusion-flipping`.
+
+Two older items also stand, both the same shape: work finished offline that has never been seen in play.
 
 1. **Play a craft flip, and a combine flip.** Nothing in either transformation strategy has been
    made and sold on Hypixel. What only play can answer for craft: whether a recipe's materials really
