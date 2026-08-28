@@ -781,7 +781,7 @@ public final class BazaarOverlay {
 					names.add(task.displayName());
 				}
 
-				label = "Do these";
+				label = "Bazaar to NPC";
 				guided = true;
 				basketFirstRow = 0;
 			} else {

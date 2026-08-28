@@ -787,7 +787,7 @@ public final class FlipScreen extends Screen {
 
 		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
 
-		graphics.text(font, Component.literal("Do these").withStyle(ChatFormatting.GOLD),
+		graphics.text(font, Component.literal("Bazaar to NPC").withStyle(ChatFormatting.GOLD),
 				x + PANEL_PAD, cursor, TEXT);
 		cursor += font.lineHeight + 4;
 
