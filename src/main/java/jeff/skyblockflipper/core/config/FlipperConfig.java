@@ -401,6 +401,16 @@ public final class FlipperConfig {
 	public String bazaarOverlaySide = OverlaySide.LEFT.name();
 
 	/**
+	 * Which flip type the bazaar panel opens on, as a {@link StrategyKind} name.
+	 *
+	 * <p>The panel shows one bazaar flip type at a time and this remembers the last one picked. NPC by
+	 * default, which is what the panel always showed. Independent of {@link #strategyFilter}, which
+	 * also carries {@code ALL} and the auction snipe - neither of which is a type the in-bazaar panel
+	 * can draw a trip for, so this is its own setting rather than a reuse of that one.
+	 */
+	public String bazaarOverlayType = StrategyKind.NPC_FLIP.name();
+
+	/**
 	 * Put a green box behind the slot the top row of the basket is asking you to click.
 	 *
 	 * <p>Same rule as the panel it belongs to: nothing is clicked, nothing is typed, nothing is sent.
@@ -486,6 +496,25 @@ public final class FlipperConfig {
 		return OverlaySide.parse(bazaarOverlaySide);
 	}
 
+	/**
+	 * {@link #bazaarOverlayType} as a strategy, defaulting to the NPC basket.
+	 *
+	 * <p>Only ever a bazaar kind: a hand-edited name that is not one - or the auction snipe, which is
+	 * not at the bazaar - falls back to {@code NPC_FLIP} rather than leaving the panel with a type it
+	 * cannot draw.
+	 */
+	public StrategyKind bazaarOverlayType() {
+		String name = bazaarOverlayType == null ? "" : bazaarOverlayType.trim();
+
+		for (StrategyKind kind : StrategyKind.bazaarKinds()) {
+			if (kind.name().equalsIgnoreCase(name)) {
+				return kind;
+			}
+		}
+
+		return StrategyKind.NPC_FLIP;
+	}
+
 	/** Resolved at plan time, so a hand-edited name costs a default rather than a null. */
 	public NpcRanking npcRanking() {
 		return NpcRanking.parse(npcRankingKey);
@@ -522,6 +551,11 @@ public final class FlipperConfig {
 		}
 
 		return List.copyOf(options);
+	}
+
+	/** What the bazaar panel may open on: every bazaar flip type, by {@link StrategyKind} name. */
+	public static List<String> bazaarOverlayTypeOptions() {
+		return StrategyKind.bazaarKinds().stream().map(StrategyKind::name).toList();
 	}
 
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
@@ -590,6 +624,9 @@ public final class FlipperConfig {
 		hudMarginY = Math.clamp(hudMarginY, 0, 400);
 		hudAnchor = anchor().name();
 		bazaarOverlaySide = overlaySide().name();
+		// An unknown or non-bazaar name would leave the panel with a type it cannot draw a trip for;
+		// bazaarOverlayType() folds it back to the NPC basket.
+		bazaarOverlayType = bazaarOverlayType().name();
 		// An unknown name would silently mean "every strategy", which looks like the filter
 		// being ignored rather than being misspelled.
 		StrategyKind kind = filteredKind();

@@ -300,6 +300,11 @@ public final class ConfigSchema {
 							+ "kind still shows it.",
 					FlipperConfig.strategyFilterOptions(),
 					c -> c.strategyFilter, (c, v) -> c.strategyFilter = v),
+			new Entry.Choice("bazaarOverlayType", "Bazaar panel opens on",
+					"Which flip type the panel beside the bazaar menu opens on; it remembers the last "
+							+ "one you picked there.",
+					FlipperConfig.bazaarOverlayTypeOptions(),
+					c -> c.bazaarOverlayType, (c, v) -> c.bazaarOverlayType = v),
 			new Entry.IntRange("hudLines", "Lines in the corner list",
 					"How many flips the corner list shows; keep it short, the flip screen holds the "
 							+ "whole list.",
