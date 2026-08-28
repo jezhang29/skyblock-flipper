@@ -85,8 +85,6 @@ final class CandidateTable {
 		NAME("Item", Comparator.comparing(FlipCandidate::displayName)),
 		PROFIT("Profit/hr", Comparator.comparingDouble(FlipCandidate::profitPerHour)),
 		CAPITAL("Capital", Comparator.comparingLong(FlipCandidate::capitalRequired)),
-		RETURN("ROC", Comparator.comparingDouble(FlipCandidate::returnOnCapital)),
-		CONFIDENCE("Conf", Comparator.comparingDouble(FlipCandidate::confidence)),
 
 		/**
 		 * How long the plan takes to turn over, and the column the screen was missing.
@@ -234,8 +232,6 @@ final class CandidateTable {
 
 		rightAligned(graphics, font, Column.PROFIT, candidate, textY, TEXT_PROFIT);
 		rightAligned(graphics, font, Column.CAPITAL, candidate, textY, TEXT);
-		rightAligned(graphics, font, Column.RETURN, candidate, textY, TEXT_DIM);
-		rightAligned(graphics, font, Column.CONFIDENCE, candidate, textY, TEXT_DIM);
 		rightAligned(graphics, font, Column.FILL, candidate, textY,
 				candidate.fillMeasured() ? TEXT : TEXT_DIM);
 
@@ -421,8 +417,7 @@ final class CandidateTable {
 		// this list: "the two most useful columns" is explainable, "all but Capital" is a puzzle.
 		// Fill sits second: whether an order clears at all decides more than how hard the coins
 		// work while it does not.
-		for (Column column : List.of(Column.PROFIT, Column.FILL, Column.CAPITAL, Column.RETURN,
-				Column.CONFIDENCE)) {
+		for (Column column : List.of(Column.PROFIT, Column.FILL, Column.CAPITAL)) {
 			int widest = width(font, column);
 
 			// Profit is what the list is ranked by, so it is placed whether it fits or not.
@@ -435,8 +430,7 @@ final class CandidateTable {
 		}
 
 		// Right to left, because it is the right-hand edge each column is aligned to.
-		for (Column column : List.of(Column.CONFIDENCE, Column.RETURN, Column.CAPITAL, Column.FILL,
-				Column.PROFIT)) {
+		for (Column column : List.of(Column.CAPITAL, Column.FILL, Column.PROFIT)) {
 			if (shown.contains(column)) {
 				rightEdge.put(column, right);
 				right -= width(font, column) + GAP;
@@ -505,8 +499,6 @@ final class CandidateTable {
 			case NAME -> candidate.displayName();
 			case PROFIT -> Coins.format(candidate.profitPerHour());
 			case CAPITAL -> Coins.format(candidate.capitalRequired());
-			case RETURN -> String.format("%.0f%%", candidate.returnOnCapital() * 100.0d);
-			case CONFIDENCE -> String.format("%.2f", candidate.confidence());
 			// A tilde marks an estimate from an assumed share of flow rather than from recorded
 			// displacement, so a guess never reads as a measurement.
 			case FILL -> candidate.timeToTurnOver()

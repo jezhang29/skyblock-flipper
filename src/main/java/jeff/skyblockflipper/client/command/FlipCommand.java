@@ -1360,7 +1360,6 @@ public final class FlipCommand {
 				+ String.format("%.2gh", config.npcRestingHours) + " resting, "
 				+ config.npcCheckInMinutes + "m reprice rounds");
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
-		line(source, "min confidence", String.format("%.2f", config.minConfidence));
 		line(source, "max adverse drift", config.maxAdverseDrift <= 0.0d
 				? "off"
 				: String.format("%.1f%%", config.maxAdverseDrift * 100.0d));

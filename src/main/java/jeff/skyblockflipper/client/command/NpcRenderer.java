@@ -172,9 +172,8 @@ public final class NpcRenderer {
 				.append(Component.literal(" -> " + Coins.format(basket.profit()) + " over "
 								+ String.format("%.0fh", basket.restingHours()))
 						.withStyle(ChatFormatting.GREEN))
-				.append(Component.literal(String.format("  (%s/hr, %.0f%% on capital)",
-								Coins.format(basket.profitPerHour()),
-								basket.returnOnCapital() * 100.0d))
+				.append(Component.literal(String.format("  (%s/hr)",
+								Coins.format(basket.profitPerHour())))
 						.withStyle(ChatFormatting.DARK_GRAY)));
 
 		source.sendFeedback(Component.literal("  " + basket.boundExplanation())

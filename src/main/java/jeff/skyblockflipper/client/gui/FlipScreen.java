@@ -569,8 +569,6 @@ public final class FlipScreen extends Screen {
 		cursor = figures(graphics, candidate, x, cursor, wrapWidth);
 
 		cursor += 4;
-		cursor = section(graphics, x, cursor, wrapWidth, "Notes", candidate.notes(), TEXT_NOTE);
-		cursor += 2;
 		cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
 		cursor += 2;
 		return section(graphics, x, cursor, wrapWidth, "Risks", candidate.risks(), TEXT_WARN);
@@ -589,10 +587,6 @@ public final class FlipScreen extends Screen {
 		cursor = field(graphics, x, cursor, wrapWidth, "Capital", Coins.format(candidate.capitalRequired()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Total", Coins.format(candidate.totalNetProfit()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Per hour", Coins.format(candidate.profitPerHour()));
-		cursor = field(graphics, x, cursor, wrapWidth, "ROC",
-				String.format("%.0f%%", candidate.returnOnCapital() * 100.0d));
-		cursor = field(graphics, x, cursor, wrapWidth, "Confidence",
-				String.format("%.2f", candidate.confidence()));
 
 		// Stated as fields rather than left in the prose notes: whether an order fills is the first
 		// question about a resting plan, and it was three paragraphs down.
@@ -1114,8 +1108,6 @@ public final class FlipScreen extends Screen {
 							basket.restingHours()));
 			cursor = field(graphics, textX, cursor, contentWidth, "Per hour",
 					Coins.format(basket.profitPerHour()));
-			cursor = field(graphics, textX, cursor, contentWidth, "ROC",
-					String.format("%.0f%%", basket.returnOnCapital() * 100.0d));
 			cursor = field(graphics, textX, cursor, contentWidth, "NPC coins",
 					Coins.format(basket.npcPayout()) + " of the day's budget");
 			cursor = field(graphics, textX, cursor, contentWidth, "Hauling",
@@ -1226,12 +1218,9 @@ public final class FlipScreen extends Screen {
 		cursor = field(graphics, x, cursor, contentWidth, "Fill",
 				String.format("%.0f units an hour %s", plan.fillPerHour(),
 						plan.fillMeasured() ? "(measured)" : "(assumed)"));
-		cursor = field(graphics, x, cursor, contentWidth, "Edge", plan.edgeMeasured()
+		return field(graphics, x, cursor, contentWidth, "Edge", plan.edgeMeasured()
 				? String.format("held in %.0f%% of samples", plan.persistence() * 100.0d)
 				: "never taped");
-
-		return field(graphics, x, cursor, contentWidth, "Confidence",
-				String.format("%.2f", plan.confidence()));
 	}
 
 	private void renderLedgerStats(GuiGraphicsExtractor graphics, int x, int y, int panelWidth) {
