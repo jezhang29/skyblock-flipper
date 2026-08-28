@@ -15,11 +15,13 @@ import java.util.OptionalInt;
 import java.util.function.IntFunction;
 
 /**
- * The one click a worklist row is asking for on the menu that is open.
+ * The one click a panel row is asking for on the menu that is open.
  *
- * <p>{@link NpcWorklist} says what to do - reprice this, place that - and {@link BazaarSlots} says
- * where a named thing is on a menu. This is the join: given a row and an open screen, which slot to
- * point at, which button to press, and what to type if that click opens a sign.
+ * <p>A {@link BazaarAction} says what to do - reprice this, place that, offer the other - and
+ * {@link BazaarSlots} says where a named thing is on a menu. This is the join: given an action and an
+ * open screen, which slot to point at, which button to press, and what to type if that click opens a
+ * sign. The action comes from the NPC basket or from a worked craft, combine, fusion or spread, so the
+ * box follows whichever type the overlay is showing.
  *
  * <p><b>Nothing here clicks anything.</b> It returns a slot for something else to draw a box behind.
  * The mod does not send inventory packets, and a step it cannot work out is
@@ -71,29 +73,29 @@ public final class BazaarStep {
 	}
 
 	/**
-	 * Where to click for {@code task} on {@code menu}, or empty if this screen cannot serve it.
+	 * Where to click for {@code action} on {@code menu}, or empty if this screen cannot serve it.
 	 *
 	 * <p>Empty is the ordinary answer most of the time: the player is on the orders menu and the row
 	 * is a place, or on a screen nothing has measured. The caller draws nothing and says nothing.
 	 *
 	 * @param restingPrice the price the order already on the book rests at, which is what tells two
-	 *                     rows on one item apart. Pass 0 where the task has no order behind it, or
+	 *                     rows on one item apart. Pass 0 where the action has no order behind it, or
 	 *                     where the caller does not know it - the row is then found only if it is the
 	 *                     item's only one
 	 */
-	public static Optional<Step> next(NpcWorklist.Task task, double restingPrice, CapturedMenu menu) {
-		if (task == null || menu == null) {
+	public static Optional<Step> next(BazaarAction action, double restingPrice, CapturedMenu menu) {
+		if (action == null || menu == null) {
 			return Optional.empty();
 		}
 
 		return switch (BazaarSlots.screenOf(menu)) {
-			case ORDERS -> onOrders(task, restingPrice, menu);
-			case ORDER_OPTIONS -> onOrderOptions(task, menu);
-			case BROWSE -> onBrowse(task, menu);
-			case PRODUCT -> onProduct(task, menu);
+			case ORDERS -> onOrders(action, restingPrice, menu);
+			case ORDER_OPTIONS -> onOrderOptions(action, menu);
+			case BROWSE -> onBrowse(action, menu);
+			case PRODUCT -> onProduct(action, menu);
 			case AMOUNT -> sign(BazaarSlots.CUSTOM_AMOUNT, menu, "how many",
-					String.valueOf(Stacking.firstOrder(task.orderSplit())));
-			case PRICE -> onPrice(task, menu);
+					String.valueOf(Stacking.firstOrder(action.orderSplit())));
+			case PRICE -> onPrice(action, menu);
 			case CONFIRM_BUY -> confirm(BazaarSlots.CONFIRM_BUY_ORDER, menu, "confirm the order");
 			case CONFIRM_SELL -> confirm(BazaarSlots.CONFIRM_SELL_OFFER, menu, "confirm the offer");
 			case UNKNOWN -> Optional.empty();
@@ -103,21 +105,24 @@ public final class BazaarStep {
 	/**
 	 * One item's page.
 	 *
-	 * <p>Always the button that opens an order rather than the one that trades instantly. The whole
-	 * strategy is resting an order at a price the book has to come to; buying instantly pays the ask,
-	 * which is the price the plan was built to avoid.
+	 * <p>The button that opens an order rather than the one that trades instantly. On a buy that is
+	 * Create Buy Order; on a sell, Create Sell Offer. The whole point of a resting order is a price the
+	 * book has to come to, so instant buy - which pays the ask - is never pointed at.
 	 */
-	private static Optional<Step> onProduct(NpcWorklist.Task task, CapturedMenu menu) {
+	private static Optional<Step> onProduct(BazaarAction action, CapturedMenu menu) {
 		// The page has to be this row's item. Opening something else's page and being told to place
 		// an order on it is how the wrong item gets bought - and the title is the only thing on the
 		// page that says which item it is.
-		if (task.kind() == NpcWorklist.Kind.CLAIM
-				|| BazaarMenu.productPageFor(menu.title(), List.of(task.displayName())).isEmpty()) {
+		if (action.verb() == BazaarAction.Verb.CLAIM
+				|| BazaarMenu.productPageFor(menu.title(), List.of(action.displayName())).isEmpty()) {
 			return Optional.empty();
 		}
 
-		return at(BazaarSlots.CREATE_BUY_ORDER.in(menu),
-				slot -> Step.of(slot, Click.LEFT, "buy order"));
+		return action.side() == TradeEvent.Side.SELL
+				? at(BazaarSlots.CREATE_SELL_OFFER.in(menu),
+						slot -> Step.of(slot, Click.LEFT, "sell offer"))
+				: at(BazaarSlots.CREATE_BUY_ORDER.in(menu),
+						slot -> Step.of(slot, Click.LEFT, "buy order"));
 	}
 
 	/**
@@ -136,24 +141,29 @@ public final class BazaarStep {
 	 * strategy: an NPC flip's profit is the gap to a fixed NPC price, and chasing past the plan's price
 	 * spends it.
 	 */
-	private static Optional<Step> onPrice(NpcWorklist.Task task, CapturedMenu menu) {
-		if (!task.hasPrice()) {
+	private static Optional<Step> onPrice(BazaarAction action, CapturedMenu menu) {
+		if (!action.hasPrice()) {
 			return Optional.empty();
 		}
 
-		OptionalInt button = BazaarSlots.TOP_ORDER_PLUS.in(menu);
+		// The "+0.1" button outbids the top of the book, which is a buy order's move. A sell offer
+		// undercuts the cheapest ask instead, and the rule that decides whether to press the button -
+		// "at or under the plan's price" - is upside down there, so a sell always types its price.
+		if (action.side() != TradeEvent.Side.SELL) {
+			OptionalInt button = BazaarSlots.TOP_ORDER_PLUS.in(menu);
 
-		if (button.isPresent()) {
-			OptionalDouble offered = BazaarSlots.offeredPrice(menu, button.getAsInt());
+			if (button.isPresent()) {
+				OptionalDouble offered = BazaarSlots.offeredPrice(menu, button.getAsInt());
 
-			if (offered.isPresent() && offered.getAsDouble() <= task.price() + PRICE_EPSILON) {
-				return Optional.of(Step.of(button.getAsInt(), Click.LEFT,
-						String.format("+0.1, %.1f", offered.getAsDouble())));
+				if (offered.isPresent() && offered.getAsDouble() <= action.price() + PRICE_EPSILON) {
+					return Optional.of(Step.of(button.getAsInt(), Click.LEFT,
+							String.format("+0.1, %.1f", offered.getAsDouble())));
+				}
 			}
 		}
 
 		return sign(BazaarSlots.CUSTOM_PRICE, menu, "price per unit",
-				String.format("%.1f", task.price()));
+				String.format("%.1f", action.price()));
 	}
 
 	/**
@@ -188,15 +198,15 @@ public final class BazaarStep {
 	 * about orders that were placed to buy from the book - so the side is read from the row that is
 	 * there rather than assumed from the task.
 	 */
-	private static Optional<Step> onOrders(NpcWorklist.Task task, double restingPrice,
+	private static Optional<Step> onOrders(BazaarAction action, double restingPrice,
 			CapturedMenu menu) {
-		if (task.kind() == NpcWorklist.Kind.PLACE) {
+		if (action.verb() == BazaarAction.Verb.PLACE) {
 			// Nothing to point at: the order does not exist yet. Manage Orders is where the player
 			// already is, and the next click is the one that leaves for the browse page.
 			return Optional.empty();
 		}
 
-		OptionalInt slot = row(menu, task.displayName(), restingPrice);
+		OptionalInt slot = row(menu, action.displayName(), restingPrice);
 
 		if (slot.isEmpty()) {
 			return Optional.empty();
@@ -204,7 +214,7 @@ public final class BazaarStep {
 
 		boolean claimable = claimable(menu, slot.getAsInt());
 
-		if (task.kind() == NpcWorklist.Kind.CLAIM) {
+		if (action.verb() == BazaarAction.Verb.CLAIM) {
 			return claimable
 					? Optional.of(Step.of(slot.getAsInt(), Click.LEFT, "claim"))
 					: Optional.empty();
@@ -219,13 +229,13 @@ public final class BazaarStep {
 		// is read.
 		if (claimable) {
 			return Optional.of(Step.of(slot.getAsInt(), Click.LEFT,
-					task.kind() == NpcWorklist.Kind.CANCEL
+					action.verb() == BazaarAction.Verb.CANCEL
 							? "claim first, then cancel"
 							: "claim first, then reprice"));
 		}
 
 		return Optional.of(Step.of(slot.getAsInt(), Click.LEFT,
-				task.kind() == NpcWorklist.Kind.CANCEL ? "open, then cancel" : "open, then reprice"));
+				action.verb() == BazaarAction.Verb.CANCEL ? "open, then cancel" : "open, then reprice"));
 	}
 
 	/** Both sides are tried because the orders menu names the side and the worklist does not. */
@@ -246,14 +256,14 @@ public final class BazaarStep {
 		return false;
 	}
 
-	private static Optional<Step> onOrderOptions(NpcWorklist.Task task, CapturedMenu menu) {
-		if (task.kind() != NpcWorklist.Kind.CANCEL && task.kind() != NpcWorklist.Kind.REPRICE) {
+	private static Optional<Step> onOrderOptions(BazaarAction action, CapturedMenu menu) {
+		if (action.verb() != BazaarAction.Verb.CANCEL && action.verb() != BazaarAction.Verb.REPRICE) {
 			return Optional.empty();
 		}
 
 		// Both end here. A reprice is a cancel and then a fresh order at the new price, which is what
 		// the panel's price column is for; Flip Order is a different trade and is never pointed at.
-		String label = task.kind() == NpcWorklist.Kind.CANCEL ? "cancel" : "cancel, then re-post";
+		String label = action.verb() == BazaarAction.Verb.CANCEL ? "cancel" : "cancel, then re-post";
 
 		return at(BazaarSlots.CANCEL_ORDER.in(menu), slot -> Step.of(slot, Click.LEFT, label));
 	}
@@ -265,20 +275,20 @@ public final class BazaarStep {
 	 * category would take three clicks and land on a page the mod would then have to page through;
 	 * the search sign takes the name straight there.
 	 */
-	private static Optional<Step> onBrowse(NpcWorklist.Task task, CapturedMenu menu) {
-		if (task.kind() == NpcWorklist.Kind.CLAIM) {
+	private static Optional<Step> onBrowse(BazaarAction action, CapturedMenu menu) {
+		if (action.verb() == BazaarAction.Verb.CLAIM) {
 			return at(BazaarSlots.MANAGE_ORDERS.in(menu),
 					slot -> Step.of(slot, Click.LEFT, "your orders"));
 		}
 
-		OptionalInt tile = BazaarSlots.productTile(menu, task.itemId(), task.displayName());
+		OptionalInt tile = BazaarSlots.productTile(menu, action.itemId(), action.displayName());
 
 		if (tile.isPresent()) {
-			return Optional.of(Step.of(tile.getAsInt(), Click.LEFT, "open " + task.displayName()));
+			return Optional.of(Step.of(tile.getAsInt(), Click.LEFT, "open " + action.displayName()));
 		}
 
 		return at(BazaarSlots.SEARCH.in(menu),
-				slot -> new Step(slot, Click.LEFT, "search", task.displayName()));
+				slot -> new Step(slot, Click.LEFT, "search", action.displayName()));
 	}
 
 	private static Optional<Step> confirm(BazaarSlots.Button button, CapturedMenu menu, String label) {

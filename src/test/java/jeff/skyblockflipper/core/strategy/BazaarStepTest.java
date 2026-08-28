@@ -17,6 +17,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Against the same trimmed capture {@code BazaarSlotsTest} uses. */
@@ -43,14 +44,16 @@ class BazaarStepTest {
 				.orElseThrow();
 	}
 
-	private static NpcWorklist.Task task(NpcWorklist.Kind kind, String itemId, String name) {
-		return new NpcWorklist.Task(kind, itemId, name, 100.0d, 64L, "64", 0.0d, 0L, "");
+	/** An NPC basket task as the bazaar action the step is worked out from. */
+	private static BazaarAction npc(NpcWorklist.Kind kind, String itemId, String name) {
+		return BazaarAction.of(
+				new NpcWorklist.Task(kind, itemId, name, 100.0d, 64L, "64", 0.0d, 0L, ""));
 	}
 
 	@Test
 	void sendsAPlaceToTheSearchSignWithTheNameToType() {
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.PLACE, "ENCHANTED_FEATHER", "Enchanted Feather"), 0.0d,
+				npc(NpcWorklist.Kind.PLACE, "ENCHANTED_FEATHER", "Enchanted Feather"), 0.0d,
 				menu("Bazaar ➜ Mining"));
 
 		assertTrue(step.isPresent());
@@ -63,7 +66,7 @@ class BazaarStepTest {
 	@Test
 	void sendsAPlaceToTheItemsOwnTileOnceTheSearchHasRun() {
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.PLACE, "ENCHANTED_FEATHER", "Enchanted Feather"), 0.0d,
+				npc(NpcWorklist.Kind.PLACE, "ENCHANTED_FEATHER", "Enchanted Feather"), 0.0d,
 				menu("Bazaar ➜ \"feath\""));
 
 		assertTrue(step.isPresent());
@@ -80,7 +83,7 @@ class BazaarStepTest {
 		String name = claimable.name().replaceFirst("^(BUY|SELL) ", "");
 
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.CLAIM, "", name), 0.0d, orders);
+				npc(NpcWorklist.Kind.CLAIM, "", name), 0.0d, orders);
 
 		assertTrue(step.isPresent());
 		assertEquals(claimable.index(), step.get().slot());
@@ -95,7 +98,7 @@ class BazaarStepTest {
 		String name = claimable.name().replaceFirst("^(BUY|SELL) ", "");
 
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.CANCEL, "", name), 0.0d, orders);
+				npc(NpcWorklist.Kind.CANCEL, "", name), 0.0d, orders);
 
 		assertTrue(step.isPresent());
 		assertEquals(claimable.index(), step.get().slot());
@@ -113,7 +116,7 @@ class BazaarStepTest {
 		String name = claimable.name().replaceFirst("^(BUY|SELL) ", "");
 
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.REPRICE, "", name), 0.0d, orders);
+				npc(NpcWorklist.Kind.REPRICE, "", name), 0.0d, orders);
 
 		assertTrue(step.isPresent());
 		assertEquals(claimable.index(), step.get().slot());
@@ -124,8 +127,9 @@ class BazaarStepTest {
 	@Test
 	void leftClicksAnUnfilledRowToOpenItsOptions() {
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.REPRICE, "", "Optical Lens"), 84_621.2d,
-				menu("Co-op Bazaar Orders"));
+				BazaarAction.of(new NpcWorklist.Task(NpcWorklist.Kind.REPRICE, "", "Optical Lens",
+						84_621.2d, 64L, "64", 0.0d, 0L, "")),
+				84_621.2d, menu("Co-op Bazaar Orders"));
 
 		assertTrue(step.isPresent());
 		assertEquals(BazaarStep.Click.LEFT, step.get().click());
@@ -135,17 +139,17 @@ class BazaarStepTest {
 	void willNotPickBetweenTwoOrdersOnOneItem() {
 		// Two Diamante's Handle offers rest in this menu. Without a price to tell them apart, the
 		// wrong one is a cancelled order that was fine.
-		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.CANCEL, "", "Diamante's Handle"), 0.0d,
+		assertTrue(BazaarStep.next(npc(NpcWorklist.Kind.CANCEL, "", "Diamante's Handle"), 0.0d,
 				menu("Co-op Bazaar Orders")).isEmpty());
 
-		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.CANCEL, "", "Diamante's Handle"),
+		assertTrue(BazaarStep.next(npc(NpcWorklist.Kind.CANCEL, "", "Diamante's Handle"),
 				811_618.4d, menu("Co-op Bazaar Orders")).isPresent());
 	}
 
 	@Test
 	void pointsAtCancelOnTheOptionsScreen() {
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.CANCEL, "", "Optical Lens"), 0.0d, menu("Order options"));
+				npc(NpcWorklist.Kind.CANCEL, "", "Optical Lens"), 0.0d, menu("Order options"));
 
 		assertTrue(step.isPresent());
 		assertEquals(13, step.get().slot());
@@ -153,9 +157,9 @@ class BazaarStepTest {
 
 	@Test
 	void pointsAtTheConfirmButtonOnEitherConfirmScreen() {
-		assertEquals(13, BazaarStep.next(task(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
+		assertEquals(13, BazaarStep.next(npc(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
 				menu("Confirm Buy Order")).orElseThrow().slot());
-		assertEquals(13, BazaarStep.next(task(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
+		assertEquals(13, BazaarStep.next(npc(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
 				menu("Confirm Sell Offer")).orElseThrow().slot());
 	}
 
@@ -188,7 +192,7 @@ class BazaarStepTest {
 	void pointsAtCreateBuyOrderOnTheProductPage() {
 		// Never Buy Instantly: that pays the ask, which is the price the whole plan exists to avoid.
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER", "Transmission Tuner"), 0.0d,
+				npc(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER", "Transmission Tuner"), 0.0d,
 				productPage());
 
 		assertTrue(step.isPresent());
@@ -207,7 +211,7 @@ class BazaarStepTest {
 		assertEquals(31, page.title().length());
 
 		Optional<BazaarStep.Step> step = BazaarStep.next(
-				task(NpcWorklist.Kind.PLACE, "REVENANT_CATALYST", "Revenant Catalyst"), 0.0d, page);
+				npc(NpcWorklist.Kind.PLACE, "REVENANT_CATALYST", "Revenant Catalyst"), 0.0d, page);
 
 		assertTrue(step.isPresent());
 		assertEquals(11, step.get().slot());
@@ -215,10 +219,11 @@ class BazaarStepTest {
 
 	@Test
 	void pointsAtTheAmountSignAndSaysWhatToTypeOnIt() {
-		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", 100.0d, 880L, "3 x 256 + 112", 0.0d, 0L, "");
+		BazaarAction action = BazaarAction.of(new NpcWorklist.Task(NpcWorklist.Kind.PLACE,
+				"TRANSMISSION_TUNER", "Transmission Tuner", 100.0d, 880L, "3 x 256 + 112", 0.0d, 0L,
+				""));
 
-		Optional<BazaarStep.Step> step = BazaarStep.next(task, 0.0d, amountPage());
+		Optional<BazaarStep.Step> step = BazaarStep.next(action, 0.0d, amountPage());
 
 		assertTrue(step.isPresent());
 		assertEquals(16, step.get().slot());
@@ -234,10 +239,10 @@ class BazaarStepTest {
 				new CapturedSlot(13, "Best Offer", List.of(), "", 1, ""),
 				new CapturedSlot(16, "Custom Price", List.of("Click to specify!"), "", 1, "")));
 
-		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", 84_999.94d, 256L, "256", 0.0d, 0L, "");
+		BazaarAction action = BazaarAction.of(new NpcWorklist.Task(NpcWorklist.Kind.PLACE,
+				"TRANSMISSION_TUNER", "Transmission Tuner", 84_999.94d, 256L, "256", 0.0d, 0L, ""));
 
-		Optional<BazaarStep.Step> step = BazaarStep.next(task, 0.0d, pricePage);
+		Optional<BazaarStep.Step> step = BazaarStep.next(action, 0.0d, pricePage);
 
 		assertTrue(step.isPresent());
 		assertEquals(16, step.get().slot());
@@ -263,9 +268,9 @@ class BazaarStepTest {
 				new CapturedSlot(31, "Close", List.of(), "", 1, "")));
 	}
 
-	private static NpcWorklist.Task placeAt(double price) {
-		return new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
-				"Transmission Tuner", price, 256L, "256", 0.0d, 0L, "");
+	private static BazaarAction placeAt(double price) {
+		return BazaarAction.of(new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "TRANSMISSION_TUNER",
+				"Transmission Tuner", price, 256L, "256", 0.0d, 0L, ""));
 	}
 
 	@Test
@@ -316,24 +321,73 @@ class BazaarStepTest {
 				new CapturedSlot(10, "Buy It Now", List.of(), "", 1, ""),
 				new CapturedSlot(11, "Place An Order", List.of(), "", 1, "")));
 
-		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.PLACE, "", "Transmission Tuner"), 0.0d,
+		assertTrue(BazaarStep.next(npc(NpcWorklist.Kind.PLACE, "", "Transmission Tuner"), 0.0d,
 				unknown).isEmpty());
 	}
 
 	@Test
 	void saysNothingOnTheAmountSignWithNoSizeToType() {
-		NpcWorklist.Task task = new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "X", "Thing", 1.0d, 0L,
-				"", 0.0d, 0L, "");
+		BazaarAction action = BazaarAction.of(new NpcWorklist.Task(NpcWorklist.Kind.PLACE, "X",
+				"Thing", 1.0d, 0L, "", 0.0d, 0L, ""));
 
-		assertTrue(BazaarStep.next(task, 0.0d, amountPage()).isEmpty());
+		assertTrue(BazaarStep.next(action, 0.0d, amountPage()).isEmpty());
 	}
 
 	@Test
 	void saysNothingWhenTheOpenScreenCannotServeTheRow() {
-		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
+		assertTrue(BazaarStep.next(npc(NpcWorklist.Kind.PLACE, "", "Enchanted Feather"), 0.0d,
 				menu("Co-op Bazaar Orders")).isEmpty());
-		assertTrue(BazaarStep.next(task(NpcWorklist.Kind.CANCEL, "", "Nothing Resting"), 0.0d,
+		assertTrue(BazaarStep.next(npc(NpcWorklist.Kind.CANCEL, "", "Nothing Resting"), 0.0d,
 				menu("Co-op Bazaar Orders")).isEmpty());
-		assertTrue(BazaarStep.next(null, 0.0d, menu("Order options")).isEmpty());
+		assertTrue(BazaarStep.next((BazaarAction) null, 0.0d, menu("Order options")).isEmpty());
+	}
+
+	// --- Worked jobs: the other types feed BazaarStep the same way, off their steps ---
+
+	private static WorkedJob.Step step(WorkedJob.Stage stage, double price) {
+		return new WorkedJob.Step(stage, stage.label(), "TRANSMISSION_TUNER", "Transmission Tuner",
+				price, 256L, "256");
+	}
+
+	@Test
+	void sendsASellOfferToCreateSellOfferNotCreateBuyOrder() {
+		// A worked craft or spread exits with a sell offer. On the product page that is a different
+		// button from the buy order every NPC flip opens.
+		Optional<BazaarStep.Step> step = BazaarStep.next(
+				BazaarAction.of(step(WorkedJob.Stage.SELL_OFFER, 100.0d)), 0.0d, productPage());
+
+		assertTrue(step.isPresent());
+		assertEquals(15, step.get().slot());
+	}
+
+	@Test
+	void aBuyOrderStepOpensTheBuyOrderJustLikeAnNpcPlace() {
+		Optional<BazaarStep.Step> step = BazaarStep.next(
+				BazaarAction.of(step(WorkedJob.Stage.BUY_ORDER, 100.0d)), 0.0d, productPage());
+
+		assertTrue(step.isPresent());
+		assertEquals(11, step.get().slot());
+	}
+
+	@Test
+	void aSellOfferTypesItsPriceRatherThanPressingTheOutbidButton() {
+		// The "+0.1" button outbids the top of the book, which is a buy's move. A sell undercuts the
+		// cheapest ask, so even where the button is present the sell price gets typed on the sign.
+		Optional<BazaarStep.Step> step = BazaarStep.next(
+				BazaarAction.of(step(WorkedJob.Stage.SELL_OFFER, 30_808.0d)), 0.0d,
+				pricePage("30,102.4"));
+
+		assertTrue(step.isPresent());
+		assertEquals(15, step.get().slot());
+		assertTrue(step.get().opensASign());
+		assertEquals("30808.0", step.get().type());
+	}
+
+	@Test
+	void doesNotGuideAnInstantBuyOrATransform() {
+		// Both happen on screens no capture has confirmed - instant buy on its own confirm, a transform
+		// off the bazaar entirely - so neither becomes an action to point a box at.
+		assertNull(BazaarAction.of(step(WorkedJob.Stage.INSTANT_BUY, 0.0d)));
+		assertNull(BazaarAction.of(step(WorkedJob.Stage.TRANSFORM, 0.0d)));
 	}
 }
