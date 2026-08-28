@@ -76,35 +76,35 @@ import java.util.Optional;
  * on a sign and nowhere else.
  */
 public final class BazaarOverlay {
-	private static final int PANEL = 0xE0080A0D;
-	private static final int PANEL_EDGE = 0xFF3A4048;
-	private static final int HEADER_RULE = 0x40FFFFFF;
-	private static final int GROUP_RULE = 0x22FFFFFF;
-	private static final int ROW_STRIPE = 0x14FFFFFF;
-	private static final int TEXT = 0xFFF0F2F5;
-	private static final int TEXT_DIM = 0xFF8B939C;
-	private static final int TEXT_PRICE = 0xFF7FB8FF;
-	private static final int TEXT_UNITS = 0xFFBFD8B0;
-	private static final int TEXT_COPIED = 0xFFFFD700;
+	private static final int PANEL = 0xF01E1E2E;
+	private static final int PANEL_EDGE = 0xFF585B70;
+	private static final int HEADER_RULE = 0x40CDD6F4;
+	private static final int GROUP_RULE = 0x22CDD6F4;
+	private static final int ROW_STRIPE = 0x14CDD6F4;
+	private static final int TEXT = 0xFFCDD6F4;
+	private static final int TEXT_DIM = 0xFF7F849C;
+	private static final int TEXT_PRICE = 0xFF89B4FA;
+	private static final int TEXT_UNITS = 0xFFA6E3A1;
+	private static final int TEXT_COPIED = 0xFFF9E2AF;
 
-	/** The between-rounds line: the colour of a reprice, dimmed, because that is what it is about. */
-	private static final int TEXT_WAITING = 0xFFC98A4B;
-	private static final int ROW_OPEN = 0x50FFD700;
+	/** The between-rounds line: peach, the reprice tone, because that is what it is about. */
+	private static final int TEXT_WAITING = 0xFFFAB387;
+	private static final int ROW_OPEN = 0x50CBA6F7;
 
-	/** A section title: which job the rows under it belong to. Gold, like the panel's own heading. */
-	private static final int TEXT_HEADING = 0xFFFFD24A;
+	/** A section title: which job the rows under it belong to. Sky, like the panel's own heading. */
+	private static final int TEXT_HEADING = 0xFF89DCEB;
 
 	/**
 	 * The group a heading belongs to, which is no group at all - it exists so the rule that
 	 * separates one kind of work from the next also lands above every section title.
 	 */
 	private static final int HEADING_GROUP = -1;
-	private static final int ROW_HOVER = 0x30FFFFFF;
+	private static final int ROW_HOVER = 0x30CDD6F4;
 
 	/** The active type's chip in the strip. */
-	private static final int CHIP_ACTIVE = 0x50FFD700;
-	private static final int CHIP_IDLE = 0x1EFFFFFF;
-	private static final int CHIP_HOVER = 0x33FFFFFF;
+	private static final int CHIP_ACTIVE = 0x5089DCEB;
+	private static final int CHIP_IDLE = 0x1ECDD6F4;
+	private static final int CHIP_HOVER = 0x33CDD6F4;
 
 	/** How many candidates the <i>To start</i> list ranks. The panel scrolls if the type has more. */
 	private static final int TO_START = 5;
@@ -118,9 +118,8 @@ public final class BazaarOverlay {
 	/** Gap under the last chip row, before the heading. */
 	private static final int SELECTOR_BOTTOM_GAP = 3;
 
-	/** The empty answer for a per-item type, in the same tone the flip screen uses. */
-	private static final String EMPTY_TYPE = "No candidates clear the fee stack right now. That is a "
-			+ "normal answer.";
+	/** The empty answer for a per-item type. Short enough to fit one fixed-width line. */
+	private static final String EMPTY_TYPE = "No flips clear fees right now.";
 
 	/** What a click on a panel row does, so the hit test routes it without re-deriving the row's kind. */
 	private enum Action {
@@ -150,10 +149,10 @@ public final class BazaarOverlay {
 	 */
 	private static int colourOf(NpcWorklist.Kind kind) {
 		return switch (kind) {
-			case CLAIM -> 0xFFFFD24A;
-			case CANCEL -> 0xFFFF6B6B;
-			case REPRICE -> 0xFFFFA65C;
-			case PLACE -> 0xFF6FD98A;
+			case CLAIM -> 0xFFF9E2AF;
+			case CANCEL -> 0xFFF38BA8;
+			case REPRICE -> 0xFFFAB387;
+			case PLACE -> 0xFFA6E3A1;
 			case HOLD -> TEXT_DIM;
 		};
 	}
@@ -165,10 +164,10 @@ public final class BazaarOverlay {
 	 */
 	private static int colourOf(WorkedJob.Stage stage) {
 		return switch (stage) {
-			case BUY_ORDER -> 0xFF6FD98A;
-			case INSTANT_BUY -> 0xFF7FB8FF;
-			case TRANSFORM -> 0xFFD59BFF;
-			case SELL_OFFER -> 0xFFFFD24A;
+			case BUY_ORDER -> 0xFFA6E3A1;
+			case INSTANT_BUY -> 0xFF89B4FA;
+			case TRANSFORM -> 0xFFCBA6F7;
+			case SELL_OFFER -> 0xFFF9E2AF;
 		};
 	}
 
@@ -190,11 +189,23 @@ public final class BazaarOverlay {
 	private static final String PRICE_MARK = "@";
 	private static final String UNITS_MARK = "x";
 
-	/** Width the panel would like before it starts shrinking to fit the space beside the menu. */
-	private static final int TARGET_WIDTH = 150;
+	/**
+	 * The panel's fixed width in panel pixels. It never grows with content, so the scale - and the
+	 * apparent font size - stays the same on every type. Content wider than this is truncated rather
+	 * than allowed to push the panel wider and the font smaller.
+	 */
+	private static final int PANEL_WIDTH = 170;
 
 	/** Below this the text stops being worth drawing, so the panel stays away instead. */
 	private static final float MIN_SCALE = 0.34f;
+
+	/**
+	 * Where the panel's top sits, in real screen pixels from the top of the screen.
+	 *
+	 * <p>Fixed rather than tied to the menu's own top, which moves with the menu's row count - a
+	 * six-row search page centres lower than a three-row page, and the panel used to jump with it.
+	 */
+	private static final int PANEL_TOP = 24;
 
 	/** Gap between the panel and the menu, in real screen pixels. */
 	private static final int MENU_GAP = 3;
@@ -531,11 +542,11 @@ public final class BazaarOverlay {
 
 		// The width one row of text needs to be worth drawing at all, which is what a fixed side is
 		// allowed to be overruled on.
-		int minimum = Math.round(board.width() * MIN_SCALE);
+		int minimum = Math.round(PANEL_WIDTH * MIN_SCALE);
 		OverlaySide side = SkyblockFlipperClient.config().overlaySide();
 		boolean onLeft = side.drawOnLeft(roomLeft, roomRight, minimum);
 
-		float scale = fit(onLeft ? roomLeft : roomRight, board);
+		float scale = fit(onLeft ? roomLeft : roomRight);
 
 		if (scale <= 0.0f) {
 			Hit.clear();
@@ -544,26 +555,30 @@ public final class BazaarOverlay {
 
 		draw(graphics, board, font, scale,
 				Math.round((onLeft ? MENU_GAP : menuRight + MENU_GAP) / scale),
-				Math.round(layout.flipper$topPos() / scale), screen.height, mouseX, mouseY);
+				Math.round(PANEL_TOP / scale), screen.height, mouseX, mouseY);
 	}
 
 	/** Against the left edge, for the sign screens that have no menu to sit beside. */
 	private static void drawAtTheEdge(Screen screen, GuiGraphicsExtractor graphics, Board board,
 			Font font, int mouseX, int mouseY) {
-		float scale = fit(screen.width / EDGE_WIDTH_SHARE - MENU_GAP * 2, board);
+		float scale = fit(screen.width / EDGE_WIDTH_SHARE - MENU_GAP * 2);
 
 		if (scale <= 0.0f) {
 			Hit.clear();
 			return;
 		}
 
-		draw(graphics, board, font, scale, Math.round(MENU_GAP / scale), PAD, screen.height,
-				mouseX, mouseY);
+		draw(graphics, board, font, scale, Math.round(MENU_GAP / scale),
+				Math.round(PANEL_TOP / scale), screen.height, mouseX, mouseY);
 	}
 
-	/** The scale that fits the board into {@code room} screen pixels, or 0 if none is worth it. */
-	private static float fit(int room, Board board) {
-		float scale = Math.min(1.0f, (float) room / board.width());
+	/**
+	 * The scale that fits the fixed-width panel into {@code room} screen pixels, or 0 if none is worth
+	 * it. It reads {@link #PANEL_WIDTH}, never the board's content, so the font is the same size on
+	 * every type.
+	 */
+	private static float fit(int room) {
+		float scale = Math.min(1.0f, (float) room / PANEL_WIDTH);
 		return scale < MIN_SCALE ? 0.0f : scale;
 	}
 
@@ -733,7 +748,7 @@ public final class BazaarOverlay {
 			 * so it is drawn in its own green rather than the plain white every row name uses.
 			 */
 			static Row work(String itemId, String name) {
-				return new Row(0xFF6FD98A, HEADING_GROUP, "Work this flip", "", "", "", true,
+				return new Row(0xFFA6E3A1, HEADING_GROUP, "Work this flip", "", "", "", true,
 						Action.WORK, itemId, name);
 			}
 		}
@@ -776,21 +791,10 @@ public final class BazaarOverlay {
 				basketFirstRow = rows.size();
 			}
 
-			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
-			int indent = PAD + ACCENT + ACCENT_GAP;
-
-			for (Row row : rows) {
-				int nameLine = text(font, row.verb() + " " + row.name());
-				int numberLine = text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP
-						+ text(font, row.units()) + text(font, UNITS_MARK);
-
-				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
-			}
-
-			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
-
+			// Fixed, never grown to content: a wider board would scale down to fit the room beside the
+			// menu and shrink the font with it, which is exactly the per-type font jitter this avoids.
+			int width = PANEL_WIDTH;
 			int chipHeight = font.lineHeight + 4;
-			width = Math.max(width, widestChip(font) + PAD * 2);
 
 			List<Chip> chips = layoutChips(type, width, chipHeight, font);
 			int selectorHeight = chips.get(chips.size() - 1).y() + chipHeight + SELECTOR_BOTTOM_GAP;
@@ -821,8 +825,6 @@ public final class BazaarOverlay {
 					}
 				}
 			}
-
-			rows.add(Row.section("To start"));
 
 			for (FlipCandidate candidate : ranked) {
 				// A candidate already being worked is in the Working now list above; showing it here as
@@ -887,16 +889,6 @@ public final class BazaarOverlay {
 			}
 
 			return chips;
-		}
-
-		private static int widestChip(Font font) {
-			int widest = 0;
-
-			for (StrategyKind kind : StrategyKind.bazaarKinds()) {
-				widest = Math.max(widest, text(font, kind.label()) + CHIP_PAD_X * 2);
-			}
-
-			return widest;
 		}
 
 		/** The word that names a job's strategy in a section heading. */
@@ -1014,8 +1006,12 @@ public final class BazaarOverlay {
 				}
 
 				graphics.text(font, Component.literal(row.verb()), rowTextX, cursor, row.colour());
-				graphics.text(font, Component.literal(row.name()),
-						rowTextX + text(font, row.verb() + " "), cursor, TEXT);
+
+				// The panel width is fixed, so a long name is cut to what is left of the line rather than
+				// drawn past the border. The search copies the full name, so the cut is display-only.
+				int nameX = rowTextX + text(font, row.verb() + " ");
+				String name = font.plainSubstrByWidth(row.name(), right - PAD - nameX);
+				graphics.text(font, Component.literal(name), nameX, cursor, TEXT);
 
 				drawNumbers(graphics, font, row, rowTextX, right, cursor + font.lineHeight + LINE_GAP);
 
@@ -1062,11 +1058,18 @@ public final class BazaarOverlay {
 				return;
 			}
 
-			int unitsX = right - PAD - text(font, UNITS_MARK) - text(font, row.units());
+			// The panel width is fixed, so the size is cut to whatever the price leaves it rather than
+			// drawn over the top of it. A wide split ("2 x 71680 + 42118") loses its tail, not the price.
+			int markW = text(font, UNITS_MARK);
+			int priceEnd = row.price().isEmpty()
+					? textX
+					: textX + text(font, PRICE_MARK) + text(font, row.price()) + NUMBER_GAP;
+			String units = font.plainSubstrByWidth(row.units(),
+					Math.max(0, right - PAD - markW - priceEnd));
+			int unitsX = right - PAD - markW - text(font, units);
 
-			graphics.text(font, Component.literal(row.units()), unitsX, y, TEXT_UNITS);
-			graphics.text(font, Component.literal(UNITS_MARK), unitsX + text(font, row.units()), y,
-					TEXT_DIM);
+			graphics.text(font, Component.literal(units), unitsX, y, TEXT_UNITS);
+			graphics.text(font, Component.literal(UNITS_MARK), unitsX + text(font, units), y, TEXT_DIM);
 
 			if (row.price().isEmpty()) {
 				return;
@@ -1077,7 +1080,7 @@ public final class BazaarOverlay {
 					TEXT_PRICE);
 		}
 
-		/** The heading says how far down a scrolled list you are, and nothing when it all fits. */
+		/** The heading is the type's name, plus the scroll range when the list is scrolled past the top. */
 		private String heading(int first, int last) {
 			if (rows.isEmpty()) {
 				// The note under this says what is waiting. On the NPC type an empty list is the
@@ -1086,25 +1089,20 @@ public final class BazaarOverlay {
 			}
 
 			return rows.size() == last - first
-					? label + " (" + rows.size() + ")"
-					: label + " (" + (first + 1) + "-" + last + " of " + rows.size() + ")";
+					? label
+					: label + "  " + (first + 1) + "-" + last + " of " + rows.size();
 		}
 
-		/** What the footer says when nothing has just been copied. */
+		/**
+		 * What the footer says when nothing has just been copied: the resting-order count, or nothing.
+		 *
+		 * <p>No instructions. The count is the one fact the rows do not carry - the difference between
+		 * "waiting on the round" and "you have no orders out" - so it is all the footer says.
+		 */
 		String hint() {
-			if (activeType != StrategyKind.NPC_FLIP) {
-				return "[+] opens a flip; Work commits; a title stops it";
-			}
-
-			if (rows.isEmpty()) {
-				// Nothing to click, so nothing about clicking. The count is still worth saying: it is
-				// the difference between "waiting on the round" and "you have no orders".
-				return holding + (holding == 1 ? " order resting" : " orders resting");
-			}
-
 			return holding > 0
-					? "click to copy - " + holding + " resting fine"
-					: "click a name or a number to copy";
+					? holding + (holding == 1 ? " order resting" : " orders resting")
+					: "";
 		}
 	}
 
@@ -1189,9 +1187,12 @@ public final class BazaarOverlay {
 				return "";
 			}
 
+			// Only the right-click case earns a line: the box already points at the slot, so naming a
+			// plain left-click step ("search", "place") is noise. Right-click is the one where the wrong
+			// button does something else.
 			return step.click() == BazaarStep.Click.RIGHT
 					? "right-click: " + step.label()
-					: step.label();
+					: "";
 		}
 
 		/** The line the panel shows in place of its own note while a sign is open. */
