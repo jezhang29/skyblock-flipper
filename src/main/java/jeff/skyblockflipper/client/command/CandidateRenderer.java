@@ -79,18 +79,6 @@ public final class CandidateRenderer {
 		text.append(field("Net/unit", String.format("%.1f after fees", candidate.unitNetProfit())));
 		text.append(field("Units", String.valueOf(candidate.units())));
 		text.append(field("Total", Chat.coins(Math.round(candidate.totalNetProfit()))));
-		text.append(field("Return", String.format("%.1f%% on capital", candidate.returnOnCapital() * 100.0d)));
-		text.append(field("Confidence", String.format("%.0f%%", candidate.confidence() * 100.0d)));
-
-		if (!candidate.notes().isEmpty()) {
-			// Above the steps, not below the risks: which item this actually is, and which of two
-			// routes was chosen, are things you want to have read before following step one.
-			text.append(Component.literal("\nNotes\n").withStyle(ChatFormatting.AQUA));
-
-			for (String note : candidate.notes()) {
-				text.append(Component.literal("  - " + note + "\n").withStyle(ChatFormatting.GRAY));
-			}
-		}
 
 		text.append(Component.literal("\nSteps\n").withStyle(ChatFormatting.WHITE));
 
