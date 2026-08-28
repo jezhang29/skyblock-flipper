@@ -440,16 +440,7 @@ public final class CandidateFeed {
 		for (Map.Entry<String, StrategyKind> followed : FOLLOWED.entrySet()) {
 			String itemId = followed.getKey();
 			String name = FOLLOWED_NAMES.get(itemId);
-
-			WorkedJob job = switch (followed.getValue()) {
-				case CRAFT -> WorkedJob.ofCraft(itemId, name, CRAFT.job(itemId, context).orElse(null));
-				case COMBINE -> WorkedJob.ofCombine(itemId, name,
-						COMBINE.job(itemId, context).orElse(null));
-				case FUSION -> WorkedJob.ofFusion(itemId, name,
-						FUSION.job(itemId, context).orElse(null));
-				case BAZAAR_SPREAD -> spreadJob(itemId, name, context);
-				default -> null;
-			};
+			WorkedJob job = buildJob(followed.getValue(), itemId, name, context);
 
 			if (job != null) {
 				built.add(job);
@@ -460,6 +451,35 @@ public final class CandidateFeed {
 
 		jobs = List.copyOf(built);
 		return jobs;
+	}
+
+	/**
+	 * One candidate re-planned as a job without committing it, for the bazaar overlay to expand a
+	 * <i>To start</i> row's steps inline.
+	 *
+	 * <p>The same plan {@link #work} would follow, so the steps a player previews are the steps they
+	 * would get - but nothing is added to the worked list and no {@code FlipIntents} intent is
+	 * recorded, because previewing is not working. Null for a kind with no bazaar steps, or a plan that
+	 * no longer clears.
+	 */
+	public static WorkedJob preview(StrategyKind kind, String itemId, String displayName) {
+		if (itemId == null || !FOLLOWABLE.contains(kind)) {
+			return null;
+		}
+
+		return buildJob(kind, itemId, displayName, context());
+	}
+
+	/** One followable id re-priced against the current book as a {@link WorkedJob}, or null. */
+	private static WorkedJob buildJob(StrategyKind kind, String itemId, String name,
+			StrategyContext context) {
+		return switch (kind) {
+			case CRAFT -> WorkedJob.ofCraft(itemId, name, CRAFT.job(itemId, context).orElse(null));
+			case COMBINE -> WorkedJob.ofCombine(itemId, name, COMBINE.job(itemId, context).orElse(null));
+			case FUSION -> WorkedJob.ofFusion(itemId, name, FUSION.job(itemId, context).orElse(null));
+			case BAZAAR_SPREAD -> spreadJob(itemId, name, context);
+			default -> null;
+		};
 	}
 
 	private static WorkedJob spreadJob(String itemId, String name, StrategyContext context) {

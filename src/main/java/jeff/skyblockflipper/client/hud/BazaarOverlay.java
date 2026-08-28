@@ -1,6 +1,7 @@
 package jeff.skyblockflipper.client.hud;
 
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.mixin.ContainerScreenLayout;
@@ -8,10 +9,13 @@ import jeff.skyblockflipper.client.track.MenuReader;
 import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.config.OverlaySide;
 import jeff.skyblockflipper.core.model.Stacking;
+import jeff.skyblockflipper.core.strategy.BazaarAction;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
+import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.strategy.WorkedJob;
+import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.track.BazaarMenu;
 import jeff.skyblockflipper.core.track.BazaarSlots;
 import jeff.skyblockflipper.core.track.CapturedMenu;
@@ -37,40 +41,39 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * The NPC worklist, drawn beside Hypixel's own bazaar menu.
+ * The flip panel drawn beside Hypixel's own bazaar menu, one flip type at a time.
  *
- * <p>{@code /flip npc plan} prints the list into chat, and chat is the wrong place to keep it: by
- * the time you have opened the bazaar, searched the item and reached the price box, the numbers have
- * scrolled away, and you cannot read chat and a menu at the same time. This puts the same list on
- * screen while the menu that needs it is open, so the price and the order size are in front of you
- * at the moment you type them.
+ * <p>A thin type strip along the top names every bazaar flip type - {@link StrategyKind#bazaarKinds()}
+ * by their own labels - and clicking one switches what the body shows. The pick is remembered in
+ * {@code bazaarOverlayType}, so the panel comes back on the type it was left on. A type Codex adds
+ * later needs no edit here: it appears in the strip the moment it is marked {@link StrategyKind#atBazaar()}.
  *
- * <p><b>It shows the whole trip, not only the new orders.</b> {@link NpcWorklist} puts the claims,
- * the cancels and the reprices ahead of the orders to place, so the panel is a list of clicks in the
- * order to make them rather than a shopping list that ignores what is already on the book.
+ * <p><b>NPC is the basket.</b> The whole trip {@link CandidateFeed#worklist()} works out - claims,
+ * cancels, reprices, places, and the between-rounds note - exactly as before. It has no <i>To
+ * start</i> list, because a basket line is not a per-item job to follow.
  *
- * <p><b>No click is sent to the game.</b> Nothing is filled in, nothing is placed, nothing is
- * cancelled. The panel's own clicks copy text to the clipboard and scroll the list, and they are
- * only ever consumed inside the panel's own rectangle - a click on Hypixel's menu reaches Hypixel's
- * menu untouched.
+ * <p><b>Every other type is two lists.</b> <i>Working now</i> is the committed jobs of that type,
+ * expanded to their buy / transform / sell steps with progress badges. <i>To start</i> is the ranked
+ * candidates as one-liners; clicking one expands its steps inline, and from there the flip is worked.
  *
- * <p><b>It refreshes itself.</b> The list comes from {@link CandidateFeed#worklist()}, which is
- * rebuilt when the book moves - every poll, about every twenty seconds - and again whenever the
- * order tracker is fed, so placing an order takes its line off the panel without waiting for a poll.
- * It shares that list with the Basket tab, so the two cannot quote different prices for one line.
+ * <p><b>No click is sent to the game.</b> The panel's clicks copy a step's name, price or size to the
+ * clipboard, switch the active type, expand a candidate, or commit a flip to the worked list - all
+ * mod state, never an inventory packet. A click on Hypixel's menu reaches Hypixel's menu untouched,
+ * because the handlers only swallow input that lands inside the panel's own rectangle.
+ *
+ * <p><b>It refreshes itself.</b> Each list comes from {@link CandidateFeed}, rebuilt when the book
+ * moves - every poll, about every twenty seconds - and again whenever the order tracker is fed, so a
+ * placed order takes its line off the panel without waiting for a poll. The lists are the ones the
+ * flip screen shows, so the two cannot disagree.
  *
  * <p><b>Where it draws.</b> On the side {@code bazaarOverlaySide} names, scaled down to fit what is
- * there. At GUI scale 6 - which is what this mod is used at - a 1080p window is about 330 scaled
- * pixels wide against a menu 176 wide, leaving roughly 77 either side, so shrinking is the normal
- * case rather than the fallback. The menu's real position comes from {@link ContainerScreenLayout}
- * rather than from assuming every Hypixel menu is a centred 176-wide chest.
+ * there. The menu's real position comes from {@link ContainerScreenLayout} rather than from assuming
+ * every Hypixel menu is a centred 176-wide chest.
  *
  * <p><b>It follows the sign.</b> An amount or a price is typed on a sign, which is not a container
- * menu, carries no title worth matching, and is the exact moment the numbers are needed. So for a
+ * menu and carries no title worth matching, and is the exact moment the numbers are needed. So for a
  * few seconds after the bazaar menu it came from, the panel stays on screen against the left edge -
- * <b>on a sign and nowhere else</b>. It used to draw on any screen at all inside that window, which
- * put it over chat, the pause menu and the mod's own settings screen, where its clicks are swallowed
- * and copy an item name instead of pressing the button underneath.
+ * on a sign and nowhere else.
  */
 public final class BazaarOverlay {
 	private static final int PANEL = 0xE0080A0D;
@@ -98,6 +101,45 @@ public final class BazaarOverlay {
 	private static final int HEADING_GROUP = -1;
 	private static final int ROW_HOVER = 0x30FFFFFF;
 
+	/** The active type's chip in the strip. */
+	private static final int CHIP_ACTIVE = 0x50FFD700;
+	private static final int CHIP_IDLE = 0x1EFFFFFF;
+	private static final int CHIP_HOVER = 0x33FFFFFF;
+
+	/** How many candidates the <i>To start</i> list ranks. The panel scrolls if the type has more. */
+	private static final int TO_START = 5;
+
+	/** Padding inside a type chip, either side of its label. */
+	private static final int CHIP_PAD_X = 3;
+
+	/** Gap between two chips, across and down. */
+	private static final int CHIP_GAP = 2;
+
+	/** Gap under the last chip row, before the heading. */
+	private static final int SELECTOR_BOTTOM_GAP = 3;
+
+	/** The empty answer for a per-item type, in the same tone the flip screen uses. */
+	private static final String EMPTY_TYPE = "No candidates clear the fee stack right now. That is a "
+			+ "normal answer.";
+
+	/** What a click on a panel row does, so the hit test routes it without re-deriving the row's kind. */
+	private enum Action {
+		/** Copy the row's name, price or size, depending where on the row the click landed. */
+		COPY,
+
+		/** Expand or collapse a <i>To start</i> candidate's steps. */
+		EXPAND,
+
+		/** Commit an expanded candidate to the worked list. */
+		WORK,
+
+		/** Stop working a committed job, leaving any resting orders alone. */
+		STOP,
+
+		/** A section title or a note: swallow the click and do nothing with it. */
+		NONE
+	}
+
 	/**
 	 * One colour per {@link NpcWorklist.Kind}, which is what makes a twenty-row list scannable.
 	 *
@@ -118,8 +160,8 @@ public final class BazaarOverlay {
 
 	/**
 	 * The same idea for a worked flip: one colour per stage, so the buying, the transformation and
-	 * the sale read as three blocks rather than as one wall. Shared by craft, combine and spread,
-	 * because a player working two of them at once should not have to learn two colour schemes.
+	 * the sale read as three blocks rather than as one wall. Shared by craft, combine, fusion and
+	 * spread, because a player working two of them at once should not have to learn two colour schemes.
 	 */
 	private static int colourOf(WorkedJob.Stage stage) {
 		return switch (stage) {
@@ -160,21 +202,18 @@ public final class BazaarOverlay {
 	/**
 	 * How long the panel keeps following after the bazaar menu closes.
 	 *
-	 * <p>Was eight seconds, which is how long it takes to read a sign and start typing: the number
-	 * vanished from under the player mid-order, and again whenever a keypress put another screen in
-	 * front of the sign for a moment. Ninety seconds covers a whole order typed slowly, and the
-	 * window is refreshed by every screen in the bazaar's own chain - the product page, the amount
-	 * page, the sign - so it only runs down once the player has actually left.
+	 * <p>Ninety seconds covers a whole order typed slowly, and the window is refreshed by every screen
+	 * in the bazaar's own chain - the product page, the amount page, the sign - so it only runs down
+	 * once the player has actually left.
 	 */
 	private static final long FOLLOW_MILLIS = 90_000L;
 
 	/**
 	 * Pixels of text one line of a sign holds, which is {@code SignBlockEntity.getMaxTextLineWidth}.
 	 *
-	 * <p>The sign screen drops any keystroke or paste that would take a line past this, so a long
-	 * item name cannot be pasted into the search at all - measured live on "Transmission Tuner". The
-	 * bazaar searches on a prefix, so the panel offers the longest prefix that fits and the search
-	 * still lands on the item.
+	 * <p>The sign screen drops any keystroke or paste that would take a line past this, so a long item
+	 * name cannot be pasted into the search at all. The bazaar searches on a prefix, so the panel
+	 * offers the longest prefix that fits and the search still lands on the item.
 	 */
 	private static final int SIGN_LINE_WIDTH = 90;
 
@@ -187,10 +226,13 @@ public final class BazaarOverlay {
 	/** When a bazaar menu was last on screen, which is what {@link #FOLLOW_MILLIS} runs from. */
 	private static long leftBazaarAt;
 
+	/** Which <i>To start</i> candidate is expanded, by item id, or empty when none is. */
+	private static String expandedCandidate = "";
+
 	/**
-	 * AFTER_INIT fires again on every window resize and a screen keeps whatever was registered on
-	 * it, so attaching twice would lay the panel out twice a frame. Held weakly, because a strong
-	 * reference here would keep a closed screen alive.
+	 * AFTER_INIT fires again on every window resize and a screen keeps whatever was registered on it,
+	 * so attaching twice would lay the panel out twice a frame. Held weakly, because a strong reference
+	 * here would keep a closed screen alive.
 	 */
 	private static WeakReference<Screen> attached = new WeakReference<>(null);
 
@@ -205,9 +247,7 @@ public final class BazaarOverlay {
 
 			attached = new WeakReference<>(screen);
 			// After the background rather than after the whole screen, so a tooltip draws over the
-			// panel instead of under it. A tooltip is what the player asked for by hovering; the
-			// panel is not, and at GUI scale 6 there is little enough room beside the menu that a
-			// wide tooltip reaches into it often.
+			// panel instead of under it.
 			ScreenEvents.afterBackground(screen).register(
 					(shown, graphics, mouseX, mouseY, tickProgress) -> render(shown, graphics,
 							mouseX, mouseY));
@@ -229,42 +269,39 @@ public final class BazaarOverlay {
 			return;
 		}
 
-		// Every flip the player said they are working, then the basket under them. The panel used to
-		// draw exactly one of the three, so picking a second flip - or picking a bazaar row merely to
-		// read it - took the first one off the screen while its orders were still resting. One list
-		// with a section per job is what the player actually has open.
-		List<WorkedJob> jobs = CandidateFeed.jobs();
-		NpcWorklist.Worklist worklist = CandidateFeed.worklist();
-		String note = note(worklist);
+		StrategyKind type = SkyblockFlipperClient.config().bazaarOverlayType();
+		boolean npc = type == StrategyKind.NPC_FLIP;
 
-		// Drawn for the note alone when there are no rows, which is the between-rounds case: the book
-		// has walked past orders this round is not asking about, and a panel that simply vanishes then
-		// is indistinguishable from a panel that has stopped working.
-		if (jobs.isEmpty() && worklist.pending().isEmpty() && note.isEmpty()) {
-			Hit.clear();
-			return;
-		}
+		// The NPC worklist is fetched either way: it drives the green box on the NPC type, and its
+		// bazaar-flow read is what tells the container branch it is looking at a bazaar menu at all.
+		NpcWorklist.Worklist worklist = CandidateFeed.worklist();
+		List<WorkedJob> jobs = npc ? List.of() : jobsOf(type);
+		List<FlipCandidate> ranked = npc ? List.of() : rankedFor(type);
+		String note = npc
+				? note(worklist)
+				: (jobs.isEmpty() && ranked.isEmpty() ? EMPTY_TYPE : "");
 
 		String title = screen.getTitle().getString();
 		Font font = Minecraft.getInstance().font;
 
-		// Half the bazaar does not name itself. Browsing and the orders are titled unmistakably; a
-		// product page is titled "Item Upgrades ➜ Transmission Tuner" and the amount page "How many
-		// do you want?", so those are recognised by the buttons on them - which is what the panel
-		// failed to do, leaving the two screens an order is actually placed on with nothing on them.
-		// The layout accessor is checked rather than cast outright: a panel that quietly does not
-		// appear beats a ClassCastException on every menu the player opens.
+		// Half the bazaar does not name itself: a product page is titled "Item Upgrades ➜ ..." and the
+		// amount page "How many do you want?", so those are recognised by the buttons on them. The
+		// layout accessor is checked rather than cast outright: a panel that quietly does not appear
+		// beats a ClassCastException on every menu the player opens.
+		List<Guide> guides = guidesFor(type, jobs, ranked, worklist);
+
 		if (screen instanceof ContainerScreenLayout layout
 				&& screen instanceof AbstractContainerScreen<?> container) {
-			boolean flow = Guidance.update(container, worklist);
-
-			// What the box under the cursor is for, in place of the countdown, because the box is the
-			// one thing on screen the player is about to act on. It is how a claim-before-reprice is
-			// said at all: the row above says "reprice", and the click the menu actually wants first
-			// is the claim on the same row.
+			// The box follows the active type: the first of its actions this menu can serve. Guidance
+			// reads the menu once either way, so the container is known to be a bazaar one even when no
+			// action matches.
+			boolean flow = Guidance.update(container, guides);
 			String stepNote = Guidance.stepNote();
-			Board board = board(jobs, worklist, title, stepNote.isEmpty() ? note : stepNote, font);
+			Board board = board(type, jobs, ranked, worklist, title,
+					stepNote.isEmpty() ? note : stepNote, font);
 
+			// The panel shows over a bazaar menu even when the active type has nothing to do, so the
+			// type strip is always reachable to switch away from an empty one.
 			if (flow || BazaarMenu.isBazaar(title) || !board.openProduct().isEmpty()) {
 				leftBazaarAt = System.currentTimeMillis();
 
@@ -285,23 +322,202 @@ public final class BazaarOverlay {
 
 		Guidance.leftTheMenu(onASign);
 
-		// On a sign, the panel says the one thing the screen is asking for rather than the whole
-		// list: the number or the name to type into it.
-		Board board = board(jobs, worklist, title,
+		// On a sign, the panel says the one thing the screen is asking for rather than the whole list:
+		// the number or the name to type into it, for whichever type's step opened it.
+		Board board = board(type, jobs, ranked, worklist, title,
 				Guidance.typing() ? Guidance.typeNote() : note, font);
 
-		// Typing a price or an amount happens on a sign, which is not a container menu and carries
-		// no title worth matching - and it is the moment the numbers are actually needed. So the
-		// panel follows the bazaar menu it was opened from. A sign opened on your island long
-		// afterwards is outside the window and gets nothing, and a screen that is not a sign gets
-		// nothing at any time: chat, the pause menu and the settings screen all have their own
-		// clicks, and this panel eats every click that lands on it.
+		// Typing a price or an amount happens on a sign, which is not a container menu and carries no
+		// title worth matching. So the panel follows the bazaar menu it was opened from for a short
+		// window. A screen that is not a sign gets nothing at any time: chat, the pause menu and the
+		// settings screen all have their own clicks, and this panel eats every click that lands on it.
 		if (onASign && System.currentTimeMillis() - leftBazaarAt <= FOLLOW_MILLIS) {
 			drawAtTheEdge(screen, graphics, board, font, mouseX, mouseY);
 			return;
 		}
 
 		Hit.clear();
+	}
+
+	/**
+	 * The worked jobs of one type, cached so the identity is stable between frames.
+	 *
+	 * <p>{@link CandidateFeed#jobs()} returns a list of every worked flip; filtering it to one type
+	 * produces a fresh list each call, and the board cache compares its inputs by identity - so without
+	 * memoising the filtered list the board would rebuild every frame.
+	 */
+	private static List<WorkedJob> jobsOf(StrategyKind type) {
+		List<WorkedJob> all = CandidateFeed.jobs();
+
+		if (all != filteredSource || type != filteredKind) {
+			filteredSource = all;
+			filteredKind = type;
+			List<WorkedJob> mine = new ArrayList<>();
+
+			for (WorkedJob job : all) {
+				if (job.kind() == type) {
+					mine.add(job);
+				}
+			}
+
+			filteredJobs = List.copyOf(mine);
+		}
+
+		return filteredJobs;
+	}
+
+	private static List<WorkedJob> filteredJobs = List.of();
+	private static List<WorkedJob> filteredSource;
+	private static StrategyKind filteredKind;
+
+	/**
+	 * The <i>To start</i> candidates for one type, ranked at most once per book revision.
+	 *
+	 * <p>Only the active type is ranked, which is what keeps the strip cheap: ranking ~2000 order books
+	 * for every type each frame is the waste {@link CandidateFeed} exists to avoid, so the answer is
+	 * cached against the same revision the rest of the mod ranks on.
+	 */
+	private static List<FlipCandidate> rankedFor(StrategyKind type) {
+		long revision = MarketDataService.data().bazaarRevision();
+
+		if (type != rankedKind || revision != rankedRevision) {
+			rankedKind = type;
+			rankedRevision = revision;
+			ranked = MarketDataService.data().hasBazaar()
+					? CandidateFeed.rank(type, TO_START)
+					: List.of();
+		}
+
+		return ranked;
+	}
+
+	private static List<FlipCandidate> ranked = List.of();
+	private static StrategyKind rankedKind;
+	private static long rankedRevision = -1L;
+
+	/** One action the green box may point at, and what its order rests at where that tells two apart. */
+	private record Guide(BazaarAction action, double restingPrice) {
+	}
+
+	/**
+	 * The active type's bazaar actions, in the order the box should try them, cached against the same
+	 * inputs the board is.
+	 *
+	 * <p>The NPC basket's pending tasks, or - for a per-item type - the committed jobs' steps followed
+	 * by the expanded candidate's. Cached so its identity is stable between frames, which is what lets
+	 * {@link Guidance} keep its own read of the menu throttled.
+	 */
+	private static List<Guide> guidesFor(StrategyKind type, List<WorkedJob> jobs,
+			List<FlipCandidate> ranked, NpcWorklist.Worklist worklist) {
+		if (type != guidesType || jobs != guidesJobs || ranked != guidesRanked
+				|| worklist != guidesWorklist || !expandedCandidate.equals(guidesExpanded)) {
+			guidesType = type;
+			guidesJobs = jobs;
+			guidesRanked = ranked;
+			guidesWorklist = worklist;
+			guidesExpanded = expandedCandidate;
+			guides = buildGuides(type, jobs, ranked, worklist);
+		}
+
+		return guides;
+	}
+
+	private static List<Guide> buildGuides(StrategyKind type, List<WorkedJob> jobs,
+			List<FlipCandidate> ranked, NpcWorklist.Worklist worklist) {
+		List<Guide> list = new ArrayList<>();
+
+		if (type == StrategyKind.NPC_FLIP) {
+			for (NpcWorklist.Task task : worklist.pending()) {
+				BazaarAction action = BazaarAction.of(task);
+
+				if (action != null) {
+					list.add(new Guide(action, worklist.restingPriceFor(task)));
+				}
+			}
+
+			return List.copyOf(list);
+		}
+
+		// Committed jobs first, then the expanded candidate - the same order the panel lists them, so
+		// the box works down the visible list rather than jumping about.
+		for (WorkedJob job : jobs) {
+			addStepGuides(job.steps(), list);
+		}
+
+		if (!expandedCandidate.isEmpty()) {
+			for (FlipCandidate candidate : ranked) {
+				if (candidate.itemId().equals(expandedCandidate)
+						&& !CandidateFeed.working(candidate.itemId())) {
+					WorkedJob preview = CandidateFeed.preview(type, candidate.itemId(),
+							candidate.displayName());
+
+					if (preview != null) {
+						addStepGuides(preview.steps(), list);
+					}
+
+					break;
+				}
+			}
+		}
+
+		return List.copyOf(list);
+	}
+
+	private static void addStepGuides(List<WorkedJob.Step> steps, List<Guide> list) {
+		for (WorkedJob.Step step : steps) {
+			BazaarAction action = BazaarAction.of(step);
+
+			if (action != null) {
+				list.add(new Guide(action, 0.0d));
+			}
+		}
+	}
+
+	private static List<Guide> guides = List.of();
+	private static StrategyKind guidesType;
+	private static List<WorkedJob> guidesJobs;
+	private static List<FlipCandidate> guidesRanked;
+	private static NpcWorklist.Worklist guidesWorklist;
+	private static String guidesExpanded = "";
+
+	/** Switch the panel to another type, remembering the pick. Called from a chip click. */
+	static void switchType(StrategyKind kind) {
+		if (kind == null || kind.name().equals(SkyblockFlipperClient.config().bazaarOverlayType)) {
+			return;
+		}
+
+		SkyblockFlipperClient.config().bazaarOverlayType = kind.name();
+		SkyblockFlipperClient.saveConfig();
+		// A candidate id from the type we are leaving means nothing under the new one.
+		expandedCandidate = "";
+	}
+
+	/** Expand a candidate's steps, or collapse it if it is the one already open. Called from a click. */
+	static void toggleExpand(String itemId) {
+		if (itemId == null || itemId.isEmpty()) {
+			return;
+		}
+
+		expandedCandidate = expandedCandidate.equals(itemId) ? "" : itemId;
+	}
+
+	/**
+	 * Commit an expanded candidate to the worked list, the same path {@code FlipScreen}'s Work button
+	 * takes. The flip moves to <i>Working now</i>, so the expanded <i>To start</i> row collapses.
+	 */
+	static void workCandidate(String itemId, String displayName) {
+		StrategyKind kind = SkyblockFlipperClient.config().bazaarOverlayType();
+
+		// work() records the FlipIntent that keeps the NPC side off this order, and returns false only
+		// for a kind with no bazaar steps - which the candidate list never offers, since NPC has none.
+		if (CandidateFeed.work(kind, itemId, displayName)) {
+			expandedCandidate = "";
+		}
+	}
+
+	/** Stop working a committed job. Any orders already on the book are left alone. */
+	static void stopJob(String itemId) {
+		CandidateFeed.stopWork(itemId);
 	}
 
 	/** Beside Hypixel's menu, on the side the settings name. */
@@ -357,8 +573,8 @@ public final class BazaarOverlay {
 		int panelHeight = Math.round(screenHeight / scale);
 		int shown = board.rowsFitting(panelHeight - 2 * PAD);
 
-		// A board with rows and no room for any of them is not worth a panel. A board with no rows
-		// at all is the between-rounds note, which is the whole reason it is on screen.
+		// A board with rows and no room for any of them is not worth a panel. A board with no rows at
+		// all is a bare type strip and its note, which is still worth showing at the bazaar.
 		if (shown <= 0 && !board.rows().isEmpty()) {
 			Hit.clear();
 			return;
@@ -369,45 +585,53 @@ public final class BazaarOverlay {
 
 		Hit.laidOut(board, x, y, scale, shown, font);
 
-		// The list is on screen, so the player has been told. Without this the panel was the one way
-		// of working the basket that never restarted the reminder, and the chime arrived while they
-		// were placing the orders it was about to ask for - fault 1 in the round ADR.
+		// The list is on screen, so the player has been told. Without this the panel was the one way of
+		// working the basket that never restarted the reminder.
 		if (shown > 0) {
 			NpcCheckInService.acknowledge();
 		}
 
 		graphics.pose().pushMatrix();
 		graphics.pose().scale(scale, scale);
-		board.draw(graphics, font, x, y, shown, Hit.hoveredRow(mouseX, mouseY));
+		board.draw(graphics, font, x, y, shown, Hit.hoveredRow(mouseX, mouseY),
+				Hit.hoveredChip(mouseX, mouseY));
 		graphics.pose().popMatrix();
 	}
 
 	private static Board board;
+	private static StrategyKind boardType;
 	private static List<WorkedJob> boardJobs = List.of();
+	private static List<FlipCandidate> boardRanked = List.of();
 	private static long boardOrders = -1L;
 	private static NpcWorklist.Worklist boardWorklist;
 	private static String boardTitle = "";
 	private static String boardNote = "";
+	private static String boardExpanded = "";
 
 	/**
-	 * The laid-out board for this worklist and this screen, rebuilt only when one of them changes.
+	 * The laid-out board for this type and this screen, rebuilt only when one of its inputs changes.
 	 *
-	 * <p>This runs every frame a bazaar menu is open. Measuring twenty rows of text sixty times a
-	 * second to arrive at the same widths is the same waste {@code CandidateFeed} exists to avoid
-	 * for the ranked list, and the list only changes once a poll.
+	 * <p>This runs every frame a bazaar menu is open. Measuring the rows sixty times a second to arrive
+	 * at the same widths is the same waste {@link CandidateFeed} exists to avoid for the ranked list,
+	 * and the lists only change once a poll.
 	 */
-	private static Board board(List<WorkedJob> jobs, NpcWorklist.Worklist worklist, String title,
-			String note, Font font) {
+	private static Board board(StrategyKind type, List<WorkedJob> jobs, List<FlipCandidate> ranked,
+			NpcWorklist.Worklist worklist, String title, String note, Font font) {
 		long orders = TrackerService.orderRevision();
 
-		if (board == null || jobs != boardJobs || orders != boardOrders || worklist != boardWorklist
-				|| !title.equals(boardTitle) || !note.equals(boardNote)) {
+		if (board == null || type != boardType || jobs != boardJobs || ranked != boardRanked
+				|| orders != boardOrders || worklist != boardWorklist || !title.equals(boardTitle)
+				|| !note.equals(boardNote) || !expandedCandidate.equals(boardExpanded)) {
+			boardType = type;
 			boardJobs = jobs;
+			boardRanked = ranked;
 			boardOrders = orders;
 			boardWorklist = worklist;
 			boardTitle = title;
 			boardNote = note;
-			board = Board.of(jobs, TrackerService.orders(), worklist, title, note, font);
+			boardExpanded = expandedCandidate;
+			board = Board.of(type, jobs, ranked, TrackerService.orders(), worklist, title, note,
+					expandedCandidate, font);
 			Hit.reset(board);
 		}
 
@@ -423,12 +647,8 @@ public final class BazaarOverlay {
 	/**
 	 * The between-rounds line, refreshed on a timer rather than every frame.
 	 *
-	 * <p>It counts down, so it cannot be cached with the board the way the rows are - and it cannot
-	 * be rebuilt sixty times a second either, for the reason on {@link #board}. A second is finer
-	 * than a number quoted in minutes needs.
-	 *
-	 * <p>The wording comes from {@code core} with the rest of the worklist, so the panel, the Basket
-	 * tab and {@code /flip npc reprice} cannot describe the same round differently.
+	 * <p>It counts down, so it cannot be cached with the board the way the rows are - and it cannot be
+	 * rebuilt sixty times a second either. A second is finer than a number quoted in minutes needs.
 	 */
 	private static String note(NpcWorklist.Worklist worklist) {
 		long now = System.currentTimeMillis();
@@ -442,104 +662,122 @@ public final class BazaarOverlay {
 	}
 
 	/**
-	 * One worklist laid out as text, measured before anything is drawn.
+	 * One type's lists laid out as text, measured before anything is drawn.
 	 *
-	 * <p>Separate from the drawing because the panel has to know how wide it wants to be before it
-	 * can work out how far to scale down, and how tall a row is before it can decide how many rows
-	 * the window has room for.
+	 * <p>Separate from the drawing because the panel has to know how wide it wants to be before it can
+	 * work out how far to scale down, and how tall a row is before it can decide how many rows the
+	 * window has room for.
 	 *
-	 * @param openProduct the row the open product page is for, empty on every other screen
-	 * @param note        the between-rounds line under the heading, empty when nothing is waiting
+	 * @param activeType    which type this board is for, which the chip strip highlights and the body
+	 *                      dispatches on
+	 * @param chips         the type strip, one chip per bazaar kind, with panel-relative rectangles
+	 * @param selectorHeight the height the strip occupies above the heading
+	 * @param openProduct   the row the open product page is for, empty on every other screen
+	 * @param note          the note under the heading, empty when there is nothing to say
+	 * @param basketFirstRow the first row the green box counts from, for the NPC type
 	 */
-	private record Board(List<Row> rows, String openProduct, String note, String label,
-			boolean guided, int holding, int width, int rowHeight, int headerHeight,
-			int basketFirstRow) {
-		/**
-		 * One line of work: what to search for, what to type, and how the units divide into orders.
-		 *
-		 * @param price the post price written out in full and never abbreviated - it is typed into a
-		 *              box character by character, and 84999.9 shortened to 85k is a different order.
-		 *              Empty on a claim or a cancel, which are a button rather than a number
-		 */
-		private record Row(int colour, int group, String verb, String name, String price,
-				String units, boolean heading) {
-			Row(int colour, int group, String verb, String name, String price, String units) {
-				this(colour, group, verb, name, price, units, false);
-			}
-
-			/**
-			 * A section title: which job the rows under it belong to, and how much of it is done.
-			 *
-			 * <p>Laid out as an ordinary row rather than as a shorter one, because the panel's whole
-			 * scroll and hit-test arithmetic is one row height - a heading of its own height would
-			 * make every row index a search instead of a division.
-			 */
-			static Row heading(String verb, String name, String progress) {
-				return new Row(TEXT_HEADING, HEADING_GROUP, verb, name, "", progress, true);
-			}
+	private record Board(StrategyKind activeType, List<Chip> chips, int selectorHeight, int chipHeight,
+			List<Row> rows, String openProduct, String note, String label, boolean guided, int holding,
+			int width, int rowHeight, int headerHeight, int basketFirstRow) {
+		Board {
+			chips = List.copyOf(chips);
+			rows = List.copyOf(rows);
 		}
 
 		/**
-		 * Every worked flip, then the basket, as one scrollable list.
+		 * One line of the body: what to search for, what to type, how the units divide into orders, and
+		 * what a click on it does.
 		 *
-		 * <p><b>Jobs first.</b> They are what the player explicitly chose to work and what they have
-		 * coins committed to; the basket is the standing list and sits under them. The basket keeps
-		 * the panel's own heading when there are no jobs, so a session that only ever works the NPC
-		 * side sees exactly the panel it always did.
-		 *
-		 * <p><b>A section heading is an ordinary row.</b> One row height everywhere is what lets the
-		 * scroll offset and the hit test stay a division rather than a search, and the heading's
-		 * second line is not wasted - it carries the done count.
-		 *
-		 * @param orders every order the tracker holds, for the progress badges. Empty when
-		 *               auto-tracking is off, which draws no badges rather than wrong ones
+		 * @param price     the post price written out in full and never abbreviated - it is typed into a
+		 *                  box character by character. Empty on a claim, a cancel or a title
+		 * @param units     the right-hand value: an order size on a step, a done count or a profit on a
+		 *                  heading
+		 * @param heading   drawn as a title - no accent bar, starting at the panel edge
+		 * @param action    what a click does; {@link Action#COPY} copies name/price/size, others switch
+		 *                  or expand
+		 * @param actionId  the item id an {@link Action#EXPAND} row toggles
 		 */
-		static Board of(List<WorkedJob> jobs, List<TrackedOrder> orders,
-				NpcWorklist.Worklist worklist, String title, String note, Font font) {
-			List<Row> rows = new ArrayList<>();
-			List<String> names = new ArrayList<>();
-			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
-			int indent = PAD + ACCENT + ACCENT_GAP;
-
-			for (WorkedJob job : jobs) {
-				rows.add(Row.heading(headingVerb(job.kind()), job.displayName(),
-						progressOf(job, orders)));
-				names.add(job.displayName());
-
-				for (WorkedJob.Step step : job.steps()) {
-					// The badge rides on the verb rather than in a column of its own: the verb is
-					// already the coloured half of the line, and a fourth column at this width costs
-					// more than it says.
-					rows.add(new Row(colourOf(step.stage()), step.stage().ordinal(),
-							job.progressOf(step, orders).badge() + " " + step.label(),
-							step.displayName(),
-							step.stage().priced() ? String.format("%.1f", step.price()) : "",
-							step.orderSplit()));
-					names.add(step.displayName());
-				}
-
-				// Said on the section rather than in the panel's note, which belongs to the basket.
-				if (!job.note().isEmpty()) {
-					rows.add(new Row(TEXT_WAITING, HEADING_GROUP, "", job.note(), "", "", true));
-				}
+		private record Row(int colour, int group, String verb, String name, String price,
+				String units, boolean heading, Action action, String actionId, String actionName) {
+			/** A step or a task: an accent bar, a copyable name and numbers. */
+			static Row line(int colour, int group, String verb, String name, String price,
+					String units) {
+				return new Row(colour, group, verb, name, price, units, false, Action.COPY, "", "");
 			}
 
-			int basketFirstRow = rows.size();
+			/** A plain section title. */
+			static Row section(String title) {
+				return new Row(TEXT_HEADING, HEADING_GROUP, "", title, "", "", true, Action.NONE, "",
+						"");
+			}
 
-			// A heading of its own only when something is above it. On its own it keeps the panel's
-			// heading, which is where the scroll position and the resting count are already said.
-			if (!jobs.isEmpty() && !worklist.pending().isEmpty()) {
-				rows.add(Row.heading("NPC", "basket", ""));
+			/** A worked job's title, with how far along it is; clicking it stops the job. */
+			static Row jobHeading(String verb, String name, String progress, String itemId) {
+				return new Row(TEXT_HEADING, HEADING_GROUP, verb, name, "", progress, true, Action.STOP,
+						itemId, name);
+			}
+
+			/** A job's between-steps note, dim and unclickable. */
+			static Row jobNote(String note) {
+				return new Row(TEXT_WAITING, HEADING_GROUP, "", note, "", "", true, Action.NONE, "", "");
+			}
+
+			/** A <i>To start</i> candidate one-liner: a caret, its name and its total net profit. */
+			static Row candidate(String itemId, String name, String profit, boolean open) {
+				return new Row(TEXT_DIM, HEADING_GROUP, open ? "[-]" : "[+]", name, "", profit, true,
+						Action.EXPAND, itemId, name);
+			}
+
+			/**
+			 * The Work control under an expanded candidate. The label rides on the verb, not the name,
+			 * so it is drawn in its own green rather than the plain white every row name uses.
+			 */
+			static Row work(String itemId, String name) {
+				return new Row(0xFF6FD98A, HEADING_GROUP, "Work this flip", "", "", "", true,
+						Action.WORK, itemId, name);
+			}
+		}
+
+		/** One type chip in the strip, positioned relative to the panel's top-left corner. */
+		private record Chip(StrategyKind kind, int x, int y, int width) {
+		}
+
+		/**
+		 * The type strip, then the body for the active type.
+		 *
+		 * @param orders every order the tracker holds, for the progress badges. Empty when auto-tracking
+		 *               is off, which draws no badges rather than wrong ones
+		 */
+		static Board of(StrategyKind type, List<WorkedJob> jobs, List<FlipCandidate> ranked,
+				List<TrackedOrder> orders, NpcWorklist.Worklist worklist, String title, String note,
+				String expanded, Font font) {
+			List<Row> rows = new ArrayList<>();
+			List<String> names = new ArrayList<>();
+			String label;
+			boolean guided;
+			int basketFirstRow;
+
+			if (type == StrategyKind.NPC_FLIP) {
+				for (NpcWorklist.Task task : worklist.pending()) {
+					rows.add(Row.line(colourOf(task.kind()), task.kind().ordinal(), task.verb(),
+							task.displayName(),
+							task.hasPrice() ? String.format("%.1f", task.price()) : "",
+							task.orderSplit()));
+					names.add(task.displayName());
+				}
+
+				label = "Do these";
+				guided = true;
+				basketFirstRow = 0;
+			} else {
+				perTypeRows(type, jobs, ranked, orders, expanded, rows, names);
+				label = type.label();
+				guided = false;
 				basketFirstRow = rows.size();
 			}
 
-			for (NpcWorklist.Task task : worklist.pending()) {
-				rows.add(new Row(colourOf(task.kind()), task.kind().ordinal(), task.verb(),
-						task.displayName(),
-						task.hasPrice() ? String.format("%.1f", task.price()) : "",
-						task.orderSplit()));
-				names.add(task.displayName());
-			}
+			int width = Math.max(TARGET_WIDTH, PAD * 2 + text(font, note));
+			int indent = PAD + ACCENT + ACCENT_GAP;
 
 			for (Row row : rows) {
 				int nameLine = text(font, row.verb() + " " + row.name());
@@ -549,14 +787,116 @@ public final class BazaarOverlay {
 				width = Math.max(width, indent + PAD + Math.max(nameLine, numberLine));
 			}
 
-			String label = jobs.isEmpty() ? "Do these" : "Work";
-
 			width = Math.max(width, PAD * 2 + text(font, label + " (" + rows.size() + ")"));
 
-			return new Board(rows, BazaarMenu.productPageFor(title, names), note, label, true,
-					worklist.holding(), width, font.lineHeight * 2 + LINE_GAP + 2,
+			int chipHeight = font.lineHeight + 4;
+			width = Math.max(width, widestChip(font) + PAD * 2);
+
+			List<Chip> chips = layoutChips(type, width, chipHeight, font);
+			int selectorHeight = chips.get(chips.size() - 1).y() + chipHeight + SELECTOR_BOTTOM_GAP;
+
+			return new Board(type, chips, selectorHeight, chipHeight, rows,
+					BazaarMenu.productPageFor(title, names), note, label, guided,
+					type == StrategyKind.NPC_FLIP ? worklist.holding() : 0, width,
+					font.lineHeight * 2 + LINE_GAP + 2,
 					font.lineHeight + 5 + (note.isEmpty() ? 0 : font.lineHeight + LINE_GAP),
 					basketFirstRow);
+		}
+
+		/** <i>Working now</i>, then <i>To start</i>, for the craft / combine / fusion / spread types. */
+		private static void perTypeRows(StrategyKind type, List<WorkedJob> jobs,
+				List<FlipCandidate> ranked, List<TrackedOrder> orders, String expanded,
+				List<Row> rows, List<String> names) {
+			if (!jobs.isEmpty()) {
+				rows.add(Row.section("Working now"));
+
+				for (WorkedJob job : jobs) {
+					rows.add(Row.jobHeading(headingVerb(job.kind()), job.displayName(),
+							progressOf(job, orders), job.itemId()));
+					names.add(job.displayName());
+					addSteps(job.steps(), job, orders, rows, names);
+
+					if (!job.note().isEmpty()) {
+						rows.add(Row.jobNote(job.note()));
+					}
+				}
+			}
+
+			rows.add(Row.section("To start"));
+
+			for (FlipCandidate candidate : ranked) {
+				// A candidate already being worked is in the Working now list above; showing it here as
+				// something "to start" would be the same flip listed twice.
+				if (CandidateFeed.working(candidate.itemId())) {
+					continue;
+				}
+
+				boolean open = candidate.itemId().equals(expanded);
+				rows.add(Row.candidate(candidate.itemId(), candidate.displayName(),
+						"+" + Coins.format(candidate.totalNetProfit()), open));
+				names.add(candidate.displayName());
+
+				if (open) {
+					WorkedJob preview = CandidateFeed.preview(type, candidate.itemId(),
+							candidate.displayName());
+
+					if (preview != null) {
+						addSteps(preview.steps(), preview, orders, rows, names);
+					}
+
+					// The commit control, below the steps it would set going. Shown even for a plan that
+					// stopped clearing (a stalled preview has no steps), so the player is never stuck with
+					// an expanded row they cannot act on.
+					rows.add(Row.work(candidate.itemId(), candidate.displayName()));
+				}
+			}
+		}
+
+		/** A job's steps as rows, with the tracker's progress badge on the verb. */
+		private static void addSteps(List<WorkedJob.Step> steps, WorkedJob job,
+				List<TrackedOrder> orders, List<Row> rows, List<String> names) {
+			for (WorkedJob.Step step : steps) {
+				// The badge rides on the verb rather than in a column of its own: the verb is already
+				// the coloured half of the line, and a fourth column at this width costs more than it
+				// says.
+				rows.add(Row.line(colourOf(step.stage()), step.stage().ordinal(),
+						job.progressOf(step, orders).badge() + " " + step.label(), step.displayName(),
+						step.stage().priced() ? String.format("%.1f", step.price()) : "",
+						step.orderSplit()));
+				names.add(step.displayName());
+			}
+		}
+
+		/** The type chips wrapped to as many rows as the panel width needs. */
+		private static List<Chip> layoutChips(StrategyKind active, int width, int chipHeight,
+				Font font) {
+			List<Chip> chips = new ArrayList<>();
+			int x = PAD;
+			int y = 0;
+
+			for (StrategyKind kind : StrategyKind.bazaarKinds()) {
+				int chipWidth = text(font, kind.label()) + CHIP_PAD_X * 2;
+
+				if (x != PAD && x + chipWidth > width - PAD) {
+					x = PAD;
+					y += chipHeight + CHIP_GAP;
+				}
+
+				chips.add(new Chip(kind, x, y, chipWidth));
+				x += chipWidth + CHIP_GAP;
+			}
+
+			return chips;
+		}
+
+		private static int widestChip(Font font) {
+			int widest = 0;
+
+			for (StrategyKind kind : StrategyKind.bazaarKinds()) {
+				widest = Math.max(widest, text(font, kind.label()) + CHIP_PAD_X * 2);
+			}
+
+			return widest;
 		}
 
 		/** The word that names a job's strategy in a section heading. */
@@ -564,6 +904,7 @@ public final class BazaarOverlay {
 			return switch (kind) {
 				case CRAFT -> "Craft";
 				case COMBINE -> "Combine";
+				case FUSION -> "Fusion";
 				case BAZAAR_SPREAD -> "Spread";
 				default -> "Flip";
 			};
@@ -585,24 +926,26 @@ public final class BazaarOverlay {
 		/**
 		 * Rows that fit in {@code available} panel pixels.
 		 *
-		 * <p>Room for the footer is always reserved, even when nothing ends up hidden. The
-		 * alternative is a layout that fits one extra row until the list grows, and then reflows
-		 * everything by a line the moment it does.
+		 * <p>Room for the footer is always reserved, even when nothing ends up hidden. The alternative
+		 * is a layout that fits one extra row until the list grows, and then reflows everything by a line
+		 * the moment it does.
 		 */
 		int rowsFitting(int available) {
-			return Math.clamp((available - headerHeight - rowHeight) / rowHeight, 0, rows.size());
+			return Math.clamp((available - selectorHeight - headerHeight - rowHeight) / rowHeight, 0,
+					rows.size());
 		}
 
 		int height(int shown, Font font) {
-			return PAD * 2 + headerHeight + shown * rowHeight + font.lineHeight;
+			return PAD * 2 + selectorHeight + headerHeight + shown * rowHeight + font.lineHeight;
 		}
 
 		/** Where the numbers line of row {@code i} starts, relative to the panel's top. */
 		int numbersOffset(int i, Font font) {
-			return PAD + headerHeight + i * rowHeight + font.lineHeight + LINE_GAP;
+			return PAD + selectorHeight + headerHeight + i * rowHeight + font.lineHeight + LINE_GAP;
 		}
 
-		void draw(GuiGraphicsExtractor graphics, Font font, int x, int y, int shown, int hovered) {
+		void draw(GuiGraphicsExtractor graphics, Font font, int x, int y, int shown, int hovered,
+				StrategyKind hoveredChip) {
 			int height = height(shown, font);
 			int first = Hit.firstRow();
 			int last = Math.min(rows.size(), first + shown);
@@ -610,8 +953,8 @@ public final class BazaarOverlay {
 			int textX = x + PAD + ACCENT + ACCENT_GAP;
 
 			graphics.fill(x, y, right, y + height, PANEL);
-			// A whole border rather than two edges: the panel sits on top of Hypixel's own menu art,
-			// and an unclosed box reads as part of it.
+			// A whole border rather than two edges: the panel sits on top of Hypixel's own menu art, and
+			// an unclosed box reads as part of it.
 			graphics.fill(x, y, right, y + 1, PANEL_EDGE);
 			graphics.fill(x, y + height - 1, right, y + height, PANEL_EDGE);
 			graphics.fill(x, y, x + 1, y + height, PANEL_EDGE);
@@ -619,11 +962,14 @@ public final class BazaarOverlay {
 
 			int cursor = y + PAD;
 
+			drawSelector(graphics, font, x, cursor, hoveredChip);
+			cursor += selectorHeight;
+
 			graphics.text(font, Component.literal(heading(first, last))
 					.withStyle(ChatFormatting.GOLD), x + PAD, cursor, TEXT);
 
-			// Under the heading and above the rule, so it reads as part of what this list is rather
-			// than as another row to click.
+			// Under the heading and above the rule, so it reads as part of what this list is rather than
+			// as another row to click.
 			if (!note.isEmpty()) {
 				graphics.text(font, Component.literal(note), x + PAD,
 						cursor + font.lineHeight + LINE_GAP, TEXT_WAITING);
@@ -637,16 +983,15 @@ public final class BazaarOverlay {
 				Row row = rows.get(i);
 				int bottom = cursor + rowHeight - 2;
 
-				// Zebra striping under everything else. Two-line rows with no background of their own
-				// ran together into a wall of text, which is what made a twenty-row list unreadable.
+				// Zebra striping under everything else. Two-line rows with no background of their own ran
+				// together into a wall of text.
 				if ((i & 1) == 1) {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_STRIPE);
 				}
 
-				// The row for the product page actually open, and the row the green box in the menu
-				// is serving, so a list of twenty does not have to be read through to find the one
-				// in front of you. Guidance counts within the basket, which no longer starts at the
-				// top of the panel - the worked jobs are above it.
+				// The row for the product page actually open, and - on the NPC type - the row the green
+				// box is serving, so a long list does not have to be read through to find the one in
+				// front of you.
 				if ((guided && i >= basketFirstRow && i - basketFirstRow == Guidance.row())
 						|| (!row.heading() && !openProduct.isEmpty()
 						&& row.name().equalsIgnoreCase(openProduct))) {
@@ -655,14 +1000,13 @@ public final class BazaarOverlay {
 					graphics.fill(x + 1, cursor - 1, right - 1, bottom, ROW_HOVER);
 				}
 
-				// Where one kind of work ends and the next begins. The list is sorted claims, cancels,
-				// reprices, places, so this is a group boundary and not a per-row decoration.
+				// Where one kind of work ends and the next begins.
 				if (i > first && rows.get(i - 1).group() != row.group()) {
 					graphics.fill(x + 1, cursor - 1, right - 1, cursor, GROUP_RULE);
 				}
 
-				// A section title has no accent bar and starts at the panel edge, so it reads as a
-				// title rather than as one more thing to click.
+				// A title has no accent bar and starts at the panel edge, so it reads as a title rather
+				// than as one more thing to click.
 				int rowTextX = row.heading() ? x + PAD : textX;
 
 				if (!row.heading()) {
@@ -673,8 +1017,7 @@ public final class BazaarOverlay {
 				graphics.text(font, Component.literal(row.name()),
 						rowTextX + text(font, row.verb() + " "), cursor, TEXT);
 
-				drawNumbers(graphics, font, row, rowTextX, right,
-						cursor + font.lineHeight + LINE_GAP);
+				drawNumbers(graphics, font, row, rowTextX, right, cursor + font.lineHeight + LINE_GAP);
 
 				cursor += rowHeight;
 			}
@@ -683,17 +1026,33 @@ public final class BazaarOverlay {
 					Hit.copiedRecently() ? TEXT_COPIED : TEXT_DIM);
 		}
 
+		/** The type strip along the top, the active one lit. */
+		private void drawSelector(GuiGraphicsExtractor graphics, Font font, int x, int top,
+				StrategyKind hoveredChip) {
+			for (Chip chip : chips) {
+				int cx = x + chip.x();
+				int cy = top + chip.y();
+				boolean active = chip.kind() == activeType;
+				int background = active ? CHIP_ACTIVE
+						: chip.kind() == hoveredChip ? CHIP_HOVER : CHIP_IDLE;
+
+				graphics.fill(cx, cy, cx + chip.width(), cy + chipHeight, background);
+				graphics.text(font, Component.literal(chip.kind().label()), cx + CHIP_PAD_X,
+						cy + (chipHeight - font.lineHeight) / 2, active ? TEXT : TEXT_DIM);
+			}
+		}
+
 		/**
 		 * The price on the left of its line and the size on the right, each with a one-character mark.
 		 *
-		 * <p>Both numbers used to be pushed against the right edge, where {@code 306.5 26737} read as
-		 * one number twice - and the two are typed into different boxes. The marks are drawn rather
-		 * than made part of the string, because clicking either half copies the string.
+		 * <p>Both numbers used to be pushed against the right edge, where {@code 306.5 26737} read as one
+		 * number twice - and the two are typed into different boxes. The marks are drawn rather than made
+		 * part of the string, because clicking either half copies the string.
 		 */
 		private void drawNumbers(GuiGraphicsExtractor graphics, Font font, Row row, int textX,
 				int right, int y) {
-			// A section title's second line is the done count, which is not a size to type into a
-			// box - so no size mark, and dimmed.
+			// A title's second line is a done count or a profit, which is not a size to type into a box -
+			// so no size mark, and dimmed.
 			if (row.heading()) {
 				if (!row.units().isEmpty()) {
 					graphics.text(font, Component.literal(row.units()),
@@ -721,9 +1080,9 @@ public final class BazaarOverlay {
 		/** The heading says how far down a scrolled list you are, and nothing when it all fits. */
 		private String heading(int first, int last) {
 			if (rows.isEmpty()) {
-				// The note under this says what is waiting and when. "Do these (0)" would be an
-				// instruction to do nothing, which is not what the panel is on screen for.
-				return label.equals("Do these") ? "Nothing to do yet" : label;
+				// The note under this says what is waiting. On the NPC type an empty list is the
+				// between-rounds case; elsewhere it is the empty answer.
+				return activeType == StrategyKind.NPC_FLIP ? "Nothing to do yet" : label;
 			}
 
 			return rows.size() == last - first
@@ -731,17 +1090,15 @@ public final class BazaarOverlay {
 					: label + " (" + (first + 1) + "-" + last + " of " + rows.size() + ")";
 		}
 
-		/**
-		 * What the footer says when nothing has just been copied.
-		 *
-		 * <p>"1 ok" was not a sentence anybody could act on. The holds are the orders that need no
-		 * click, so saying what they are is the difference between a number and an explanation of why
-		 * they are not in the list above.
-		 */
+		/** What the footer says when nothing has just been copied. */
 		String hint() {
+			if (activeType != StrategyKind.NPC_FLIP) {
+				return "[+] opens a flip; Work commits; a title stops it";
+			}
+
 			if (rows.isEmpty()) {
-				// Nothing to click, so nothing about clicking. The count is still worth saying: it
-				// is the difference between "waiting on the round" and "you have no orders".
+				// Nothing to click, so nothing about clicking. The count is still worth saying: it is
+				// the difference between "waiting on the round" and "you have no orders".
 				return holding + (holding == 1 ? " order resting" : " orders resting");
 			}
 
@@ -754,18 +1111,15 @@ public final class BazaarOverlay {
 	/**
 	 * The green box behind the slot the basket needs clicked next.
 	 *
-	 * <p>The panel says what to do and this says where. {@link BazaarStep} works the slot out from
-	 * the menu that is open, and everything it knows was measured off a live bazaar - see
-	 * {@code BazaarSlots}. A screen it cannot read, a row it cannot find, two rows it cannot choose
-	 * between: all of them draw nothing. A box behind the wrong slot would be clicked.
+	 * <p>The panel says what to do and this says where. {@link BazaarStep} works the slot out from the
+	 * menu that is open, and everything it knows was measured off a live bazaar - see {@code
+	 * BazaarSlots}. A screen it cannot read, a row it cannot find, two rows it cannot choose between:
+	 * all of them draw nothing. A box behind the wrong slot would be clicked.
 	 *
-	 * <p><b>Which row it serves.</b> The first pending row this screen can serve, top down, which is
-	 * the order the panel already lists them in. So the box follows the list rather than jumping
-	 * about: on the orders menu it lands on the first claim, and on a search page on the first item
-	 * being placed.
-	 *
-	 * <p><b>It draws before the items.</b> {@code afterBackground} runs after Hypixel's menu art and
-	 * before the stacks in it, so the box is a background and the item stays readable on top.
+	 * <p><b>It follows the active type.</b> {@link #update} is handed that type's actions - the NPC
+	 * basket's tasks, or a worked job's and the expanded candidate's steps - and points at the first one
+	 * the open menu can serve, top down. Off-bazaar steps (a transform) and unmeasured ones (an instant
+	 * buy) carry no action, so nothing is drawn for them.
 	 */
 	private static final class Guidance {
 		/** Green, at the strength of vanilla's own slot hover but coloured. */
@@ -774,8 +1128,8 @@ public final class BazaarOverlay {
 		/**
 		 * A brighter edge around it.
 		 *
-		 * <p>A search page fills its empty slots with green glass, so a green box on its own is one
-		 * green square among forty. The outline is what makes it findable there.
+		 * <p>A search page fills its empty slots with green glass, so a green box on its own is one green
+		 * square among forty. The outline is what makes it findable there.
 		 */
 		private static final int BOX_EDGE = 0xFF7CFC00;
 
@@ -786,16 +1140,13 @@ public final class BazaarOverlay {
 		/**
 		 * How often the open menu is re-read.
 		 *
-		 * <p>Reading fifty-four slots to decide one box is not worth doing sixty times a second, and
-		 * a menu that has just changed is worth pointing at within a frame or two of settling. The
-		 * cache is dropped outright when the screen or the worklist changes, so this is only about
-		 * the menu's contents moving under a screen that stayed open - an order filling, a page
-		 * turning.
+		 * <p>Reading fifty-four slots to decide one box is not worth doing sixty times a second, and a
+		 * menu that has just changed is worth pointing at within a frame or two of settling.
 		 */
 		private static final long REREAD_MILLIS = 250L;
 
 		private static WeakReference<Screen> screen = new WeakReference<>(null);
-		private static NpcWorklist.Worklist worklist;
+		private static List<Guide> served = List.of();
 		private static long readAt;
 
 		private static BazaarStep.Step step;
@@ -807,8 +1158,7 @@ public final class BazaarOverlay {
 		 * What the sign that is about to open wants typed into it, and what that number is.
 		 *
 		 * <p>Kept after the menu closes, because the sign replaces the menu that named it: by the time
-		 * the box is on screen there is nothing left to ask what it is for. Cleared only by a later
-		 * step that opens a different sign, or by the follow window running out.
+		 * the box is on screen there is nothing left to ask what it is for.
 		 */
 		private static String typeValue = "";
 		private static String typeLabel = "";
@@ -831,8 +1181,8 @@ public final class BazaarOverlay {
 		 * What the highlighted slot is for, or empty where nothing is highlighted.
 		 *
 		 * <p>A right click is named and a left one is not. Left is what every other step in the bazaar
-		 * asks for, and the note is drawn in a panel about seventy pixels wide, so the words are spent
-		 * on the one case where the wrong button does something else.
+		 * asks for, and the note is drawn in a panel about seventy pixels wide, so the words are spent on
+		 * the one case where the wrong button does something else.
 		 */
 		static String stepNote() {
 			if (step == null || !SkyblockFlipperClient.config().bazaarHighlightEnabled) {
@@ -850,8 +1200,8 @@ public final class BazaarOverlay {
 		}
 
 		/**
-		 * The menu closed. {@code sign} says whether what replaced it is a sign, which is the only
-		 * screen the typing note - or the panel itself - belongs on once the menu has gone.
+		 * The menu closed. {@code sign} says whether what replaced it is a sign, which is the only screen
+		 * the typing note - or the panel itself - belongs on once the menu has gone.
 		 */
 		static void leftTheMenu(boolean sign) {
 			onASign = sign;
@@ -872,8 +1222,8 @@ public final class BazaarOverlay {
 
 			for (Slot slot : container.getMenu().slots) {
 				// Slot.index is the index within the slot's own container, which is what MenuReader
-				// recorded and so what the step is expressed in. The player's own inventory shares
-				// those numbers and is never what a bazaar step means.
+				// recorded and so what the step is expressed in. The player's own inventory shares those
+				// numbers and is never what a bazaar step means.
 				if (slot.index != step.slot() || slot.container instanceof Inventory) {
 					continue;
 				}
@@ -898,19 +1248,20 @@ public final class BazaarOverlay {
 		/**
 		 * Re-reads the menu and re-picks the row, at most every {@link #REREAD_MILLIS}.
 		 *
-		 * @return whether this menu belongs to the bazaar at all, which is what decides if the panel
-		 *         is drawn over it. Read from the menu's contents, so it holds for the two screens
-		 *         whose titles say nothing about the bazaar
+		 * @param list the active type's actions, in the order to try them; the first this menu can serve
+		 *             is the one the box points at
+		 * @return whether this menu belongs to the bazaar at all, which is what decides if the panel is
+		 *         drawn over it
 		 */
-		static boolean update(AbstractContainerScreen<?> container, NpcWorklist.Worklist list) {
+		static boolean update(AbstractContainerScreen<?> container, List<Guide> list) {
 			long now = System.currentTimeMillis();
 
-			if (screen.get() == container && list == worklist && now - readAt < REREAD_MILLIS) {
+			if (screen.get() == container && list == served && now - readAt < REREAD_MILLIS) {
 				return bazaarFlow;
 			}
 
 			screen = new WeakReference<>(container);
-			worklist = list;
+			served = list;
 			readAt = now;
 			step = null;
 			row = -1;
@@ -919,21 +1270,17 @@ public final class BazaarOverlay {
 			CapturedMenu menu = MenuReader.describe(container, now);
 			bazaarFlow = BazaarSlots.isBazaarFlow(menu);
 
-			List<NpcWorklist.Task> tasks = list.pending();
-
-			for (int i = 0; i < tasks.size(); i++) {
-				NpcWorklist.Task task = tasks.get(i);
+			for (int i = 0; i < list.size(); i++) {
+				Guide guide = list.get(i);
 				Optional<BazaarStep.Step> found =
-						BazaarStep.next(task, list.restingPriceFor(task), menu);
+						BazaarStep.next(guide.action(), guide.restingPrice(), menu);
 
 				if (found.isPresent()) {
 					step = found.get();
 					row = i;
 
-					// Remembered now, while the menu that named it is still open. The sign this
-					// click opens replaces the menu and says nothing about what it wants. A click
-					// that opens no sign clears it, so a screen opened later cannot be handed the
-					// number the step before last wanted.
+					// Remembered now, while the menu that named it is still open. The sign this click
+					// opens replaces the menu and says nothing about what it wants.
 					typeValue = step.opensASign() ? fitting(step.type()) : "";
 					typeLabel = step.label();
 
@@ -951,10 +1298,8 @@ public final class BazaarOverlay {
 		/**
 		 * The longest prefix of {@code value} that a sign will accept.
 		 *
-		 * <p>An item name is often too long to type or paste into the search sign at all, which is
-		 * where "Transmission Tuner" gets stuck at "Transmission Tun". The bazaar searches on a
-		 * prefix, so the shortened form finds the same item, and offering the full name offers
-		 * something the screen will not take.
+		 * <p>An item name is often too long to type or paste into the search sign at all. The bazaar
+		 * searches on a prefix, so the shortened form finds the same item.
 		 */
 		private static String fitting(String value) {
 			return Minecraft.getInstance().font.plainSubstrByWidth(value, SIGN_LINE_WIDTH);
@@ -966,9 +1311,9 @@ public final class BazaarOverlay {
 	 * Where the panel was last drawn, in real screen pixels, and what a click there means.
 	 *
 	 * <p>Static because an immediate-mode panel has no widget to ask. The render pass records the
-	 * rectangle it drew into and the mouse handlers hit-test against it, which is sound as long as
-	 * only one panel is on screen at a time - it is drawn by one screen at a time, and cleared
-	 * whenever a frame decides not to draw it.
+	 * rectangle it drew into and the mouse handlers hit-test against it, which is sound as long as only
+	 * one panel is on screen at a time - it is drawn by one screen at a time, and cleared whenever a
+	 * frame decides not to draw it.
 	 */
 	private static final class Hit {
 		/** Nothing has been drawn: every click and scroll passes straight through. */
@@ -979,6 +1324,10 @@ public final class BazaarOverlay {
 		private static int width;
 		private static int height;
 		private static float scale = 1.0f;
+
+		/** The panel's top-left in panel pixels, for mapping a click onto a chip. */
+		private static int panelX;
+		private static int panelY;
 
 		/** Panel-space offsets, scaled on the way in from the mouse. */
 		private static int rowHeight = 1;
@@ -995,11 +1344,9 @@ public final class BazaarOverlay {
 		/**
 		 * The board the last frame actually drew, which is the only one a click can be about.
 		 *
-		 * <p>Held here rather than read off {@link BazaarOverlay#board}, which is the basket's board
-		 * and stays populated while a craft job is on screen. Reading that one copied the basket's
-		 * name and price for whatever row of the craft list was clicked - the right row index into
-		 * the wrong list, so it produced a plausible name and a plausible price for a different
-		 * item, which is worse than copying nothing.
+		 * <p>Held here rather than read off {@link BazaarOverlay#board}, which stays populated while a
+		 * different type is on screen. Reading that one would take the right row index into the wrong
+		 * list.
 		 */
 		private static Board drawn;
 
@@ -1020,11 +1367,9 @@ public final class BazaarOverlay {
 		/**
 		 * A rebuilt list keeps the scroll position rather than jumping back to the top.
 		 *
-		 * <p>The worklist is rebuilt on every poll whether or not it changed, about three times a
-		 * minute. Resetting here would mean a player who scrolled to row fifteen to read it is
-		 * returned to row one within twenty seconds, which makes the panel unusable for exactly the
-		 * long lists scrolling was added for. {@link #laidOut} clamps it, so a list that got shorter
-		 * cannot leave the window past the end.
+		 * <p>The lists are rebuilt on every poll whether or not they changed. Resetting here would return
+		 * a player who scrolled to row fifteen back to row one within twenty seconds. {@link #laidOut}
+		 * clamps it, so a list that got shorter cannot leave the window past the end.
 		 */
 		static void reset(Board board) {
 			rowCount = board.rows().size();
@@ -1034,39 +1379,61 @@ public final class BazaarOverlay {
 			return firstRow;
 		}
 
-		static void laidOut(Board board, int panelX, int panelY, float panelScale, int shown,
-				Font font) {
+		static void laidOut(Board board, int px, int py, float panelScale, int shown, Font font) {
 			live = true;
 			drawn = board;
 			scale = panelScale;
-			x = Math.round(panelX * panelScale);
-			y = Math.round(panelY * panelScale);
+			panelX = px;
+			panelY = py;
+			x = Math.round(px * panelScale);
+			y = Math.round(py * panelScale);
 			width = Math.round(board.width() * panelScale);
 			height = Math.round(board.height(shown, font) * panelScale);
 
 			rowHeight = board.rowHeight();
-			rowsTop = panelY + PAD + board.headerHeight();
-			numbersTop = panelY + board.numbersOffset(0, font);
+			rowsTop = py + PAD + board.selectorHeight() + board.headerHeight();
+			numbersTop = py + board.numbersOffset(0, font);
 			lineHeight = font.lineHeight;
 			visibleRows = shown;
 			rowCount = board.rows().size();
 
-			// A different list, not a rebuild of the same one: switching between the basket and a
-			// craft job starts at the top rather than at row fifteen of something else. Checked
-			// here rather than where a board is built, because coming back to a basket that never
-			// changed while the craft panel was up rebuilds nothing.
+			// A different list, not a rebuild of the same one: switching type starts at the top rather
+			// than at row fifteen of something else.
 			if (!scrolling.equals(board.label())) {
 				scrolling = board.label();
 				firstRow = 0;
 			}
 
-			// A list that shrank under a scrolled window - orders were placed, or the book moved -
-			// would otherwise leave the panel showing blank space below the last row.
+			// A list that shrank under a scrolled window - orders were placed, or the book moved - would
+			// otherwise leave the panel showing blank space below the last row.
 			firstRow = Math.clamp(firstRow, 0, Math.max(0, rowCount - shown));
 		}
 
 		private static boolean inside(double mouseX, double mouseY) {
 			return live && mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
+		}
+
+		/** The type chip under the cursor, or null. */
+		static StrategyKind hoveredChip(double mouseX, double mouseY) {
+			return chipAt(mouseX, mouseY);
+		}
+
+		private static StrategyKind chipAt(double mouseX, double mouseY) {
+			if (!inside(mouseX, mouseY) || drawn == null) {
+				return null;
+			}
+
+			int mx = (int) (mouseX / scale) - panelX;
+			int my = (int) (mouseY / scale) - (panelY + PAD);
+
+			for (Board.Chip chip : drawn.chips()) {
+				if (mx >= chip.x() && mx < chip.x() + chip.width()
+						&& my >= chip.y() && my < chip.y() + drawn.chipHeight()) {
+					return chip.kind();
+				}
+			}
+
+			return null;
 		}
 
 		/** The row under the cursor, or -1. Takes real screen pixels, like every mouse callback. */
@@ -1075,13 +1442,13 @@ public final class BazaarOverlay {
 				return -1;
 			}
 
-			int panelY = (int) (mouseY / scale);
+			int py = (int) (mouseY / scale);
 
-			if (panelY < rowsTop) {
+			if (py < rowsTop) {
 				return -1;
 			}
 
-			int row = firstRow + (panelY - rowsTop) / rowHeight;
+			int row = firstRow + (py - rowsTop) / rowHeight;
 			return row < firstRow + visibleRows && row < rowCount ? row : -1;
 		}
 
@@ -1093,36 +1460,52 @@ public final class BazaarOverlay {
 				return false;
 			}
 
-			int row = hoveredRow(mouseX, mouseY);
+			StrategyKind chip = chipAt(mouseX, mouseY);
 
-			if (row < 0 || drawn == null) {
-				// Inside the panel but not on a row: the heading or the footer. Swallowed anyway,
-				// because a click that lands on the panel and moves an item in the menu behind it
-				// is the one failure this whole design cannot afford.
+			if (chip != null) {
+				BazaarOverlay.switchType(chip);
 				return true;
 			}
 
-			copy(drawn.rows().get(row), mouseX, mouseY);
+			int row = hoveredRow(mouseX, mouseY);
+
+			if (row < 0 || drawn == null) {
+				// Inside the panel but not on a row or chip: the heading or the footer. Swallowed anyway,
+				// because a click that lands on the panel and moves an item in the menu behind it is the
+				// one failure this whole design cannot afford.
+				return true;
+			}
+
+			Board.Row clicked = drawn.rows().get(row);
+
+			switch (clicked.action()) {
+				case COPY -> copy(clicked, mouseX, mouseY);
+				case EXPAND -> BazaarOverlay.toggleExpand(clicked.actionId());
+				case WORK -> BazaarOverlay.workCandidate(clicked.actionId(), clicked.actionName());
+				case STOP -> BazaarOverlay.stopJob(clicked.actionId());
+				case NONE -> {
+					// A title or a note: swallow and do nothing.
+				}
+			}
+
 			return true;
 		}
 
 		/**
 		 * Which of the three things on a row was clicked.
 		 *
-		 * <p>The name line copies the item name, which is what goes into the bazaar's search sign.
-		 * The numbers line is split at the gap between them: the left half copies the price and the
-		 * right half copies the size, which are the two other things typed on a sign. Clicking a row
-		 * with no price - a claim, a cancel - always copies the name, because there is no number to
-		 * type for either.
+		 * <p>The name line copies the item name, which is what goes into the bazaar's search sign. The
+		 * numbers line is split at the gap between them: the left half copies the price and the right
+		 * half copies the size. Clicking a row with no price - a claim, a cancel - always copies the
+		 * name.
 		 */
 		private static void copy(Board.Row row, double mouseX, double mouseY) {
-			int panelY = (int) (mouseY / scale);
-			int rowTop = numbersTop + (hoveredRowIndex(panelY) * rowHeight);
-			boolean onNumbers = panelY >= rowTop && panelY < rowTop + lineHeight;
+			int py = (int) (mouseY / scale);
+			int rowTop = numbersTop + (hoveredRowIndex(py) * rowHeight);
+			boolean onNumbers = py >= rowTop && py < rowTop + lineHeight;
 
 			if (!onNumbers || row.price().isEmpty()) {
-				// Shortened to what the search sign will take: the full name of a long item cannot
-				// be pasted into it at all, and the bazaar searches on a prefix anyway.
+				// Shortened to what the search sign will take.
 				put(Guidance.fitting(row.name()), "name");
 				return;
 			}
@@ -1132,9 +1515,8 @@ public final class BazaarOverlay {
 					+ Board.text(font, row.units())) * scale);
 
 			if (mouseX >= unitsLeft) {
-				// The units of one order rather than the whole line: it is what goes in the amount
-				// box, and neither the line total nor the split text itself is a number the box
-				// takes - "2 x 256 + 30" pasted whole is not an amount at all.
+				// The units of one order rather than the whole line: it is what goes in the amount box,
+				// and neither the line total nor the split text itself is a number the box takes.
 				long first = Stacking.firstOrder(row.units());
 
 				put(first > 0L ? String.valueOf(first) : row.units(), "size");
@@ -1143,8 +1525,8 @@ public final class BazaarOverlay {
 			}
 		}
 
-		private static int hoveredRowIndex(int panelY) {
-			return Math.max(0, (panelY - rowsTop) / rowHeight);
+		private static int hoveredRowIndex(int py) {
+			return Math.max(0, (py - rowsTop) / rowHeight);
 		}
 
 		private static void put(String value, String what) {
