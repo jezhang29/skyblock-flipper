@@ -1,12 +1,15 @@
 # Attribute-shard fusion flipping (FUSION strategy)
 
-Design spec for a fifth flip strategy, `StrategyKind.FUSION`. **Nothing here is built yet.** This is
-the settled design from a grilling session on 2026-08-27; it is the handoff so the build can start in
-a fresh chat without the design conversation. Read `docs/combine-flipping.md` first — fusion is
-combine's twin and reuses most of its machinery.
+The measured record for a fifth flip strategy, `StrategyKind.FUSION`. **Built 2026-08-28, offline-only
+— nothing has been fused and sold on Hypixel under this strategy yet.** The design was settled in a
+grilling session on 2026-08-27; the build followed the plan below. Read `docs/combine-flipping.md`
+first — fusion is combine's twin and reuses most of its machinery.
 
-Every economic figure below is offline: one live bazaar snapshot of 2026-08-27 plus the recipe graph
-from `Campionnn/SkyShards`. Nothing has been fused and sold on Hypixel under this strategy.
+The economic figures below are offline: live bazaar snapshots (2026-08-27 design, 2026-08-28 shipped
+re-measurement) plus the recipe graph from `Campionnn/SkyShards`, pinned at commit
+`0f14286a8d44d730244e546f7a5c6ac4a4b0d4fb` (see `src/main/resources/data/skyblock-flipper/SKYSHARDS-LICENSE`).
+The code: `FusionImporter`/`FusionTable` (graph), `FusionQuote` (min-cost tree solver + exit gate),
+`FusionFlipStrategy` + `FusionJob`, `FusionContext` + config `fusionFlipsEnabled`/`fusionCrocodileLevel`.
 
 ## The trade
 
@@ -106,6 +109,42 @@ not applied in this quick run (some rows may be thin); fills are unproven; `Fill
 applies. Re-measure against a fresh snapshot before quoting picks. **Note the input:output ratio —
 10 input shards in, 2 out, per click** — hauling matters (see clicks-are-the-cost).
 
+### Re-measured live by the shipped strategy, 2026-08-28
+
+The built `FusionFlipStrategy` run against a fresh book (`LiveApiTest.printLiveFusionPicks`,
+`-PliveApi`), Bazaar Flipper 1, 1h horizon, 5% flow, crocodile 0, ≥15-ask gate applied, min-cost tree
+solver at depth cap 3. This is the **shipped** frame, not the design-day quick run: the gate is on,
+the source is min(bid rest, ask instant) per shard, and the tree may go multi-step. **62 outputs
+clear positive, 43 of them single-step.** Ordered by net per output (as `/flip fusion`'s total-profit
+sort would show), the notable rows:
+
+| output | leaves | clicks | net/click | net/output | ~profit/hr |
+|---|--:|--:|--:|--:|--:|
+| SHARD_QUEEN_SNAKE | 2 | 1 | 2,594,452 | 1,297,226 | 1.30M |
+| SHARD_DAEMON | 1 | 2 | 976,741 | 488,370 | 1.47M |
+| SHARD_ANANKE | 2 | 1 | 900,935 | 450,468 | 357k |
+| SHARD_STALAGMIGHT | 1 | 2 | 192,183 | 336,319 | 216k |
+| SHARD_WILD_HOG | 3 | 12 | 102,260 | 306,779 | 1.23M |
+| SHARD_GHOST_CRAB | 3 | 2 | 150,875 | 264,032 | 264k |
+| SHARD_SUN_FISH | 2 | 1 | 423,220 | 211,610 | 212k |
+
+Three things to read the table with:
+
+- **The picks moved from the design-day list, and that is the market.** Queen Snake still tops it, but
+  the design-day headliners Galaxy Fish, Molthorn, Starborn and Etherdrake dropped out - either under
+  the now-applied ≥15-ask gate or because their output stopped clearing after tax on this book. The
+  design-day run applied no gate; several of its rows were thin.
+- **Single-step rows are the safe first play-test.** 43 of the 62 clear in one fusion click (`leaves`
+  1-2, `clicks` 1-2); the deep rows (`SHARD_WILD_HOG` at 12 clicks, `SHARD_ABYSSAL_MINER` at 20) hold
+  intermediate inventory across sequential fill-waits and are much harder to complete. Queen Snake
+  (Queen Ant + Queen Bee, one click, two out) or Ananke is the row to verify first.
+- **Existence-validation held: the only shard the graph names that the bazaar does not list is
+  `SHARD_RAINBUG`,** exactly as the spec predicted, so no id was silently priced off a missing product.
+
+A live bug the measurement caught: the min-cost memo left its deeper cost cells at 0.0, so an
+unbuyable base shard read as free and a route through it NPE'd on reconstruction. Fixed by seeding
+every depth with the buy cost (infinity when the shard has no product); `FusionQuoteTest` pins it.
+
 ## Settled decisions (the grill)
 
 1. **Build now; fusion is the next strategy verified in play**, ahead of combine — shared exit gate
@@ -164,10 +203,11 @@ applies. Re-measure against a fresh snapshot before quoting picks. **Note the in
 No new tape — the bazaar tape already records `SHARD_*` products, so `FillModel` and pricing get
 history for free.
 
-## Build plan (checkpoints, one real commit each on branch `fusion-flipping`)
+## Build plan (all six steps built 2026-08-28 on branch `fusion-flipping`)
 
-Each step compiles and passes tests before committing (`wip:` subject, squash at the end). `core`
-must not import `net.minecraft`/`net.fabricmc`.
+Every step below shipped; the strategy is offline-only until a fusion is fused and sold in play. The
+one deviation from plan: the min-cost list ranks by profit/hr in the strategy, and the total-profit
+toggle is a `/flip fusion`/tab sort concern flagged with the per-strategy-tab task, not built here.
 
 1. **Importer + table.** `FusionImporter` reads the bundled `fusion-data.json` into `FusionTable`
    (shards + recipes, keyed on bazaar ids). Existence-validate against a bazaar snapshot fixture.

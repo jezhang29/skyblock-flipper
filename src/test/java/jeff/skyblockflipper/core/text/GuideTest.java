@@ -29,7 +29,7 @@ class GuideTest {
 	 */
 	private static final Set<String> COMMANDS = Set.of(
 			"", "bazaar", "npc", "npc plan", "npc reprice", "craft", "craft stop", "combine",
-			"combine stop", "jobs", "jobs stop", "snipe", "guide",
+			"combine stop", "fusion", "fusion stop", "jobs", "jobs stop", "snipe", "guide",
 			"status", "config",
 			"config edit", "take", "close", "abandon", "ledger", "ledger forget", "ledger clear",
 			"ledger clear confirm", "ledger clear unquoted", "ledger clear unquoted confirm", "hud",

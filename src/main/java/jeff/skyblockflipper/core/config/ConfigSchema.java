@@ -111,7 +111,8 @@ public final class ConfigSchema {
 	}
 
 	public static List<Group> groups() {
-		return List.of(MONEY, NPC, CRAFT, COMBINE, SCANNING, DISPLAY, CONNECTION, COLLECTOR, TRACKING);
+		return List.of(MONEY, NPC, CRAFT, COMBINE, FUSION, SCANNING, DISPLAY, CONNECTION, COLLECTOR,
+				TRACKING);
 	}
 
 	/** Every entry, in group order. Useful for lookups and for the test that nothing is missing. */
@@ -249,6 +250,25 @@ public final class ConfigSchema {
 							+ "sell the top tier. The return is per anvil click, not per hour, so read "
 							+ "/flip combine rather than expecting it near the top of the main list.",
 					c -> c.combineFlipsEnabled, (c, v) -> c.combineFlipsEnabled = v)));
+
+	/**
+	 * Fusion's two settings. Like combine it needs no slot budget - a fusion rests only its base buys
+	 * and one sell offer - but it has a perk the mod cannot read: the crocodile level that scales
+	 * reptile-family output.
+	 */
+	private static final Group FUSION = new Group("Fusion flipping", List.of(
+			new Entry.Flag("fusionFlipsEnabled", "Look for shard-fusion profits",
+					"Buy cheap attribute shards, fuse them up to a dearer shard at the Fusion Machine, "
+							+ "and sell the output. The per-click return is large but the haul is heavy, "
+							+ "so read /flip fusion rather than expecting it near the top of the main "
+							+ "list.",
+					c -> c.fusionFlipsEnabled, (c, v) -> c.fusionFlipsEnabled = v),
+			new Entry.IntRange("fusionCrocodileLevel", "Crocodile (Pure Reptile) level",
+					"Your Pure Reptile perk level, 0 to 10. Each level adds 2% to reptile-family "
+							+ "fusion output. Leave it at 0 unless you have the perk: set it too high "
+							+ "and every reptile fusion is quietly over-valued.",
+					0, FlipperConfig.MAX_CROCODILE_LEVEL, 1,
+					c -> c.fusionCrocodileLevel, (c, v) -> c.fusionCrocodileLevel = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Search the auction house",

@@ -41,6 +41,8 @@ import java.util.List;
  *                         pool
  * @param combine          the combine-specific half: whether enchanted-book combining is offered at
  *                         all
+ * @param fusion           the fusion-specific half: whether attribute-shard fusion is offered, and
+ *                         the crocodile perk level that scales reptile-family output
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -56,7 +58,8 @@ public record StrategyContext(
 		double maxCapitalShare,
 		NpcContext npc,
 		CraftContext craft,
-		CombineContext combine
+		CombineContext combine,
+		FusionContext fusion
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
@@ -75,6 +78,17 @@ public record StrategyContext(
 		npc = npc == null ? NpcContext.unlimited() : npc;
 		craft = craft == null ? CraftContext.defaults() : craft;
 		combine = combine == null ? CombineContext.defaults() : combine;
+		fusion = fusion == null ? FusionContext.defaults() : fusion;
+	}
+
+	/** The shape before fusion had settings of its own, for callers that state up to combine. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc, CraftContext craft, CombineContext combine) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, craft, combine,
+				FusionContext.defaults());
 	}
 
 	/** The shape before combining had settings of its own, for callers that state only NPC and craft. */

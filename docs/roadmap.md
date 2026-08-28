@@ -95,27 +95,34 @@ open.
 
 Full record in `docs/worked-flips.md`. **Unverified in play**, like craft and combine.
 
+**A fifth strategy, attribute-shard fusion flipping, is now built** (`StrategyKind.FUSION`, branch
+`fusion-flipping`, 2026-08-28). Buy `SHARD_*` inputs on the bazaar, fuse them at the Fusion Machine
+(multi-step trees, depth cap 3, min-cost recursion over the recipe graph), sell the output on an
+offer — off the NPC cap, combine's twin. Recipe data is the MIT `Campionnn/SkyShards` graph
+(`fusion-data.json`, pinned at commit `0f14286`, 320/321 shards live; only `SHARD_RAINBUG` absent).
+Its own quote (`FusionQuote`, min-cost tree solver + combine's one-sided ≥15-ask exit gate), its own
+`FusionFlipStrategy`/`FusionJob`, `/flip fusion` (+ `stop`), a Fusion tab, and config
+`fusionFlipsEnabled`/`fusionCrocodileLevel`. Re-measured live by the shipped strategy: **62 outputs
+clear, 43 single-step**, top ~1.30M net per output (Queen Snake). Read `docs/fusion-flipping.md`
+before touching it. Every figure is offline; nothing fused and sold in play yet, so it joins the
+play-verification queue below.
+
 ## What is next
 
-**A fifth strategy is designed and specced but not built: attribute-shard fusion flipping**
-(`StrategyKind.FUSION`), decided in a grill on 2026-08-27. Buy `SHARD_*` inputs on the bazaar, fuse
-them at Galatea's machine (multi-step trees, depth cap 3, min-cost recursion), sell the output on an
-offer — off the NPC cap, combine's twin. Recipe data is the MIT `Campionnn/SkyShards` graph
-(`fusion-data.json`, 320/321 shards live on the bazaar). Offline it clears 131 outputs, top ~2.06M/
-click (5-40× combine). It is chosen as the **next strategy verified in play**, ahead of combine. The
-full settled design, data structure, cost formula and build plan are in `docs/fusion-flipping.md` —
-read that before starting; build on branch `fusion-flipping`.
+Two items stand, both the same shape: work finished offline that has never been seen in play.
 
-Two older items also stand, both the same shape: work finished offline that has never been seen in play.
-
-1. **Play a craft flip, and a combine flip.** Nothing in either transformation strategy has been
-   made and sold on Hypixel. What only play can answer for craft: whether a recipe's materials really
-   fill on a resting order inside the horizon, whether the sell offer sheds at the rate `FillModel`
-   predicts, and how much of the ranked list the player cannot craft because of unlocks the mod does
-   not read. For combine: whether a source buy order at the bid fills at the predicted rate, whether
-   a competitor parks under the sell offer the way the killed NPC drift premium was, whether the
-   anvil is really coin-free, and whether the big net-per-combine whale rows (`VICIOUS_5` and the
-   like) that the ≥15-ask gate admits are worth setting and forgetting or are manipulated.
+1. **Play a craft flip, a combine flip, and a fusion flip.** Nothing in the three transformation
+   strategies has been made and sold on Hypixel. What only play can answer for craft: whether a
+   recipe's materials really fill on a resting order inside the horizon, whether the sell offer sheds
+   at the rate `FillModel` predicts, and how much of the ranked list the player cannot craft because
+   of unlocks the mod does not read. For combine: whether a source buy order at the bid fills at the
+   predicted rate, whether a competitor parks under the sell offer the way the killed NPC drift
+   premium was, whether the anvil is really coin-free, and whether the big net-per-combine whale rows
+   (`VICIOUS_5` and the like) that the ≥15-ask gate admits are worth setting and forgetting or are
+   manipulated. For fusion: whether `fuse_amount` and output-quantity from the reference tool match
+   the game, whether a deep tree's intermediate inventory is bearable — **start with a single-step
+   row** (Queen Snake, one click) before trusting depth — and whether the reptile double-output is
+   right before anyone sets `fusionCrocodileLevel`.
 2. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
    signature splits and the Midas ratio quote are all offline-only. This is a long queue of
    unverified-in-game work, and it needs the built jar played on live Hypixel — the user's job, no

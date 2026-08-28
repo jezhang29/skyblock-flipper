@@ -14,8 +14,11 @@ import jeff.skyblockflipper.core.model.dto.AuctionsDto;
 import jeff.skyblockflipper.core.pricing.CombineQuote;
 import jeff.skyblockflipper.core.pricing.CraftQuote;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.pricing.FusionQuote;
+import jeff.skyblockflipper.core.recipe.FusionTable;
 import jeff.skyblockflipper.core.strategy.CombineJob;
 import jeff.skyblockflipper.core.strategy.CombineTable;
+import jeff.skyblockflipper.core.strategy.FusionJob;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -264,6 +267,60 @@ class LiveApiTest {
 
 		System.out.println("--- rejected (no plan clears the gate) ---");
 		rejected.forEach(System.out::println);
+
+		assertFalse(bazaar.isEmpty());
+	}
+
+	/**
+	 * Prints the shipped fusion picks against the live book, so {@code docs/fusion-flipping.md}'s table
+	 * can be re-measured. The twin of {@link #printLiveCombinePicks}: it answers "which output shards
+	 * clear, at what depth, and what do they pay", which only the live book can settle. Read the
+	 * stdout, update the doc. Crocodile level 0 (no reptile bonus), the conservative default.
+	 */
+	@Test
+	void printLiveFusionPicks() throws Exception {
+		BazaarSnapshot bazaar = api.fetchBazaar();
+		ItemCatalog catalog = api.fetchItems();
+		Fees fees = new Fees(1, false);
+		FusionTable table = FusionTable.bundled();
+		CraftQuote.FillHistory history = CraftQuote.FillHistory.none();
+		Duration horizon = Duration.ofHours(1);
+		long maxCapital = 1_000_000_000L;
+
+		System.out.println("=== live fusion picks, Bazaar Flipper 1, 1h horizon, 5% flow, croc 0 ===");
+		System.out.println("missing bazaar products: " + table.missingProducts(bazaar));
+		System.out.printf("%-24s %6s %6s %14s %14s %12s%n",
+				"output", "leaves", "clicks", "net/click", "net/output", "profit/hr");
+
+		FusionQuote.Solver solver = FusionQuote.solver(table, bazaar, 0);
+		List<FusionQuote> picks = new ArrayList<>();
+
+		for (String output : table.outputs()) {
+			FusionQuote.quote(solver, output, fees, history, horizon, maxCapital)
+					.filter(q -> q.netPerOutput() > 0.0d)
+					.ifPresent(picks::add);
+		}
+
+		picks.sort(Comparator.comparingDouble(FusionQuote::netPerOutput).reversed());
+
+		int singleStep = 0;
+
+		for (FusionQuote q : picks) {
+			if (q.fusions().size() == 1) {
+				singleStep++;
+			}
+
+			System.out.printf("%-24s %6d %6d %14s %14s %12s%n",
+					FusionJob.nameOf(q.outputId(), catalog),
+					q.leaves().size(),
+					q.totalFusions(),
+					String.format("%,d", Math.round(q.netPerFusion())),
+					String.format("%,d", Math.round(q.netPerOutput())),
+					String.format("%,d", Math.round(q.profitPerHour())));
+		}
+
+		System.out.printf("%d outputs clear, %d of them single-step. First play-test a single-step "
+				+ "row before trusting a deep tree.%n", picks.size(), singleStep);
 
 		assertFalse(bazaar.isEmpty());
 	}

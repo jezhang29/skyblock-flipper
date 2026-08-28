@@ -150,6 +150,13 @@ public final class FlipCommand {
 						})
 						.then(ClientCommands.literal("stop")
 								.executes(ctx -> stopCombine(ctx.getSource()))))
+				.then(ClientCommands.literal("fusion")
+						.executes(ctx -> {
+							showFusions(ctx.getSource());
+							return 1;
+						})
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopFusion(ctx.getSource()))))
 				.then(ClientCommands.literal("jobs")
 						.executes(ctx -> showJobs(ctx.getSource()))
 						.then(ClientCommands.literal("stop")
@@ -786,6 +793,35 @@ public final class FlipCommand {
 		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
 				? "No combine was being worked."
 				: "Stopped working " + dropped + (dropped == 1 ? " combine." : " combines."))
+				.withStyle(ChatFormatting.GRAY)));
+
+		return 1;
+	}
+
+	/**
+	 * Fusion flips: buy cheap attribute shards, fuse them up, sell the output. Its own list, ranked by
+	 * profit per hour, with net per fusion click in the notes for a click-limited player.
+	 */
+	private static void showFusions(FabricClientCommandSource source) {
+		if (!SkyblockFlipperClient.config().fusionFlipsEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Fusion flips are off - turn them on in /flip config edit.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		reportWorked(source, StrategyKind.FUSION, "/flip fusion stop");
+
+		showTop(source, StrategyKind.FUSION, "Best shards to fuse and sell");
+	}
+
+	/** Stops working every fusion, leaving any other job on the panel. */
+	private static int stopFusion(FabricClientCommandSource source) {
+		int dropped = CandidateFeed.stopWork(StrategyKind.FUSION);
+
+		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
+				? "No fusion was being worked."
+				: "Stopped working " + dropped + (dropped == 1 ? " fusion." : " fusions."))
 				.withStyle(ChatFormatting.GRAY)));
 
 		return 1;

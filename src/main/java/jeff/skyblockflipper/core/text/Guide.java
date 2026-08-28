@@ -53,7 +53,8 @@ public final class Guide {
 							+ "status says how old the prices are. Until they arrive the list is empty"),
 					new Term("3. Ask for a list", "/flip, typed with nothing after it, ranks every kind of "
 							+ "flip together. "
-							+ "/flip bazaar, /flip npc, /flip craft, /flip combine and /flip snipe ask for one kind. "
+							+ "/flip bazaar, /flip npc, /flip craft, /flip combine, /flip fusion and /flip snipe "
+							+ "ask for one kind. "
 							+ "The list is "
 							+ "sorted by profit per hour after fees, so rank 1 is the best thing the "
 							+ "mod can see right now"),
@@ -90,8 +91,8 @@ public final class Guide {
 
 	/** Every command, in one place, because a command you cannot remember does not exist. */
 	private static final Section COMMANDS = new Section("commands", "Commands", List.of(
-			new Term("/flip", "The ranked list. /flip bazaar, /flip npc, /flip craft, /flip combine and "
-					+ "/flip snipe show one kind of flip only"),
+			new Term("/flip", "The ranked list. /flip bazaar, /flip npc, /flip craft, /flip combine, "
+					+ "/flip fusion and /flip snipe show one kind of flip only"),
 			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, your "
 					+ "ledger and this guide. The keybind opens the same thing"),
 			new Term("/flip npc plan", "Everything to do at the bazaar right now: what to collect, "
@@ -174,6 +175,10 @@ public final class Guide {
 			new Term("Combine", "Buy cheap low-tier enchanted books, combine them up to a dearer tier at "
 					+ "the anvil, and sell the top tier. You are paid for the anvil tedium, so the honest "
 					+ "measure is coins per combine, not per hour - the main list ranks it low on purpose"),
+			new Term("Fusion", "Buy cheap attribute shards, fuse them up to a dearer shard at the Fusion "
+					+ "Machine, and sell the output. An input can itself be fused from cheaper shards, so "
+					+ "a flip is a small tree of buys and fusions. The per-click return is large, but ten "
+					+ "shards go in for two out, so read /flip fusion and mind the haul"),
 			new Term("Snipe", "An auction listed below what that exact item has really been selling "
 					+ "for. Worth is learned from completed sales only, never from what other people "
 					+ "are asking"),

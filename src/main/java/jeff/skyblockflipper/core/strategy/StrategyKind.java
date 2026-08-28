@@ -14,6 +14,9 @@ public enum StrategyKind {
 	/** Combining low-tier enchanted books up to a dearer tier at the anvil. */
 	COMBINE("Combine", "transformation"),
 
+	/** Fusing cheap attribute shards up to a dearer shard at the Fusion Machine. */
+	FUSION("Fusion", "transformation"),
+
 	/** Knowing what a specific item configuration is worth when the market does not. */
 	AUCTION_VALUE("Auction", "valuation");
 
