@@ -280,6 +280,26 @@ public final class FlipperConfig {
 	public boolean combineFlipsEnabled = true;
 
 	/**
+	 * Whether attribute-shard fusion flips are offered at all.
+	 *
+	 * <p>On, for the same reason combine is: the strategy refuses rather than guesses. A fusion's
+	 * per-click return dwarfs a combine's, but the input-to-output haul is heavy, so {@code /flip
+	 * fusion} is where it is meant to be read. Off is for the player who does not want the fusing.
+	 */
+	public boolean fusionFlipsEnabled = true;
+
+	/**
+	 * The player's Pure Reptile (crocodile) perk level, 0 to 10.
+	 *
+	 * <p>Each level adds 2% to reptile-family fusion output, so a level-10 crocodile turns a two-shard
+	 * reptile fusion into 2.4 outputs a click. The mod cannot read the perk from the game, so it comes
+	 * in here. It defaults to 0 - no bonus - because a profit-flattering multiplier ships as an
+	 * off-by-default setting, never a baked-in default: set too high, every reptile fusion is quietly
+	 * over-valued. See {@code docs/fusion-flipping.md}.
+	 */
+	public int fusionCrocodileLevel = 0;
+
+	/**
 	 * What the basket ranks candidates on when it has to choose between them.
 	 *
 	 * <p>A greedy allocator should rank on profit per unit of whatever it runs out of, and this trade
@@ -338,6 +358,9 @@ public final class FlipperConfig {
 
 	/** The value of {@link #strategyFilter} that means no filtering at all. */
 	public static final String FILTER_ALL = "ALL";
+
+	/** The highest crocodile (Pure Reptile) perk level the game grants, which caps {@link #fusionCrocodileLevel}. */
+	public static final int MAX_CROCODILE_LEVEL = 10;
 
 	/** Open the flip screen with a keybind. The screen is also reachable however you like via chat. */
 	public boolean guiKeybindEnabled = true;
@@ -511,6 +534,8 @@ public final class FlipperConfig {
 	public FlipperConfig validated() {
 		bankroll = Math.max(0L, bankroll);
 		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, Fees.MAX_BAZAAR_FLIPPER_LEVEL);
+		// The crocodile perk caps at 10; a value above it would over-value every reptile fusion.
+		fusionCrocodileLevel = Math.clamp(fusionCrocodileLevel, 0, MAX_CROCODILE_LEVEL);
 		minProfitPerFlip = Math.max(0L, minProfitPerFlip);
 		// A zero share would size every plan at one unit and rank nothing; above one it is not a
 		// share of anything.

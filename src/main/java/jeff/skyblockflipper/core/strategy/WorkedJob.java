@@ -236,6 +236,23 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 				job.capital(), job.totalNetProfit(), "");
 	}
 
+	/** A fusion plan as a worked job. The twin of {@link #ofCombine}. */
+	public static WorkedJob ofFusion(String outputId, String displayName, FusionJob job) {
+		if (job == null) {
+			return stalled(StrategyKind.FUSION, outputId, displayName);
+		}
+
+		List<Step> steps = new ArrayList<>();
+
+		for (FusionJob.Row row : job.rows()) {
+			steps.add(new Step(stageOf(row.action()), row.action().label(), row.itemId(),
+					row.displayName(), row.price(), row.units(), row.orderSplit()));
+		}
+
+		return new WorkedJob(StrategyKind.FUSION, outputId, job.displayName(), steps, job.capital(),
+				job.totalNetProfit(), "");
+	}
+
 	/**
 	 * A bazaar spread as a worked job: rest the bid, then offer what fills at the ask.
 	 *
@@ -281,6 +298,15 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 			case BUY_ORDER -> Stage.BUY_ORDER;
 			case INSTANT_BUY -> Stage.INSTANT_BUY;
 			case COMBINE -> Stage.TRANSFORM;
+			case SELL_OFFER -> Stage.SELL_OFFER;
+		};
+	}
+
+	private static Stage stageOf(FusionJob.Action action) {
+		return switch (action) {
+			case BUY_ORDER -> Stage.BUY_ORDER;
+			case INSTANT_BUY -> Stage.INSTANT_BUY;
+			case FUSE -> Stage.TRANSFORM;
 			case SELL_OFFER -> Stage.SELL_OFFER;
 		};
 	}

@@ -10,11 +10,13 @@ import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.BazaarCombineStrategy;
 import jeff.skyblockflipper.core.strategy.BazaarSpreadStrategy;
 import jeff.skyblockflipper.core.strategy.CombineContext;
+import jeff.skyblockflipper.core.strategy.FusionContext;
 import jeff.skyblockflipper.core.strategy.CombineJob;
 import jeff.skyblockflipper.core.strategy.CraftContext;
 import jeff.skyblockflipper.core.strategy.CraftFlipStrategy;
 import jeff.skyblockflipper.core.strategy.CraftJob;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.FusionFlipStrategy;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcContext;
 import jeff.skyblockflipper.core.strategy.NpcFlipStrategy;
@@ -69,13 +71,20 @@ public final class CandidateFeed {
 	private static final BazaarSpreadStrategy SPREAD = new BazaarSpreadStrategy();
 
 	/**
+	 * The fusion planner, kept beside the engine for the same reason as {@link #COMBINE}: the overlay
+	 * re-plans one chosen output shard every poll. The graph is parsed once, so a second instance is
+	 * free.
+	 */
+	private static final FusionFlipStrategy FUSION = new FusionFlipStrategy();
+
+	/**
 	 * The strategies whose plans are a list of clicks at the bazaar, which is what a worked job is.
 	 *
 	 * <p>An auction snipe is a search and a bid on a different screen entirely, and an NPC basket
 	 * line is already in the worklist, so neither is followable here.
 	 */
 	private static final Set<StrategyKind> FOLLOWABLE = EnumSet.of(
-			StrategyKind.CRAFT, StrategyKind.COMBINE, StrategyKind.BAZAAR_SPREAD);
+			StrategyKind.CRAFT, StrategyKind.COMBINE, StrategyKind.FUSION, StrategyKind.BAZAAR_SPREAD);
 
 	/** Deep enough to serve any allowed {@code hudLines} without re-ranking when it changes. */
 	private static final int CACHE_DEPTH = 10;
@@ -176,7 +185,8 @@ public final class CandidateFeed {
 						NpcContext.UNLIMITED_ORDERS_PER_ITEM,
 						config.npcRanking()),
 				new CraftContext(config.craftFlipsEnabled, config.craftMaxOrderSlots),
-				new CombineContext(config.combineFlipsEnabled));
+				new CombineContext(config.combineFlipsEnabled),
+				new FusionContext(config.fusionFlipsEnabled, config.fusionCrocodileLevel));
 	}
 
 	/**
@@ -435,6 +445,8 @@ public final class CandidateFeed {
 				case CRAFT -> WorkedJob.ofCraft(itemId, name, CRAFT.job(itemId, context).orElse(null));
 				case COMBINE -> WorkedJob.ofCombine(itemId, name,
 						COMBINE.job(itemId, context).orElse(null));
+				case FUSION -> WorkedJob.ofFusion(itemId, name,
+						FUSION.job(itemId, context).orElse(null));
 				case BAZAAR_SPREAD -> spreadJob(itemId, name, context);
 				default -> null;
 			};

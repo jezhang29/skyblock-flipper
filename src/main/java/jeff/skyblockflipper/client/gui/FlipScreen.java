@@ -95,6 +95,7 @@ public final class FlipScreen extends Screen {
 		JOBS("Jobs", null),
 		CRAFT("Craft", StrategyKind.CRAFT),
 		COMBINE("Combine", StrategyKind.COMBINE),
+		FUSION("Fusion", StrategyKind.FUSION),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
 		LEDGER("Ledger", null),
 		GUIDE("Guide", null);
