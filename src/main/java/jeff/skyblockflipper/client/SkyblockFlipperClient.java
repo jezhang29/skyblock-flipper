@@ -58,6 +58,8 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 		FlipIntentsService.load();
 		FlipCommand.register();
 		CandidateFeed.register();
+		RecoveryFeed.register();
+		RecoveryAlertService.register();
 		FlipHud.register();
 		BazaarOverlay.register();
 		FlipKeybinds.register();

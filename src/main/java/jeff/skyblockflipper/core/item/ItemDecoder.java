@@ -6,12 +6,19 @@ import com.google.gson.JsonParseException;
 
 import jeff.skyblockflipper.core.nbt.NbtCompound;
 import jeff.skyblockflipper.core.nbt.NbtReader;
+import jeff.skyblockflipper.core.recovery.RecoveryAttachment;
+import jeff.skyblockflipper.core.recovery.RecoveryComponentKind;
+import jeff.skyblockflipper.core.recovery.RecoveryMetadata;
+import jeff.skyblockflipper.core.recovery.RecoveryWarning;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turns an {@code item_bytes} blob into the handful of attributes that decide what an item is worth.
@@ -81,12 +88,20 @@ public final class ItemDecoder {
 
 	/** @return empty if the blob is unreadable or carries no Skyblock item */
 	public static Optional<DecodedItem> decode(String itemBytes) {
+		return decodeDetailed(itemBytes).map(DetailedDecodedItem::item);
+	}
+
+	/**
+	 * Parses one blob once and derives both the unchanged valuation item and recovery-only metadata.
+	 * A malformed recovery field is reported on the metadata and does not discard the ordinary item.
+	 */
+	public static Optional<DetailedDecodedItem> decodeDetailed(String itemBytes) {
 		if (itemBytes == null || itemBytes.isBlank()) {
 			return Optional.empty();
 		}
 
 		try {
-			return fromRoot(NbtReader.readItemBytes(itemBytes));
+			return detailedFromRoot(NbtReader.readItemBytes(itemBytes));
 		} catch (IOException e) {
 			// A blob we cannot read is one sale missing from the model, not a reason to stop.
 			return Optional.empty();
@@ -95,6 +110,11 @@ public final class ItemDecoder {
 
 	/** @param root the parsed blob, whose {@code i} list holds the item */
 	public static Optional<DecodedItem> fromRoot(NbtCompound root) {
+		return detailedFromRoot(root).map(DetailedDecodedItem::item);
+	}
+
+	/** Detailed counterpart to {@link #fromRoot(NbtCompound)}, primarily useful to fixture tests. */
+	public static Optional<DetailedDecodedItem> detailedFromRoot(NbtCompound root) {
 		// The list can hold more than one stack in principle; auctions sell exactly one.
 		Object first = root.list("i").stream().findFirst().orElse(null);
 
@@ -115,7 +135,7 @@ public final class ItemDecoder {
 		// Read once: the pet level is in here too, and it is the only place it is stated.
 		String name = stripFormatting(display.string("Name").orElse(skyblockId));
 
-		return Optional.of(new DecodedItem(
+		DecodedItem decoded = new DecodedItem(
 				skyblockId,
 				name,
 				item.intOr("Count", 1),
@@ -133,7 +153,9 @@ public final class ItemDecoder {
 				quality(extra),
 				extra.string("dye_item").orElse(""),
 				extra.flag("ethermerge"),
-				(long) extra.number("winning_bid").orElse(0.0d)));
+				(long) extra.number("winning_bid").orElse(0.0d));
+
+		return Optional.of(new DetailedDecodedItem(decoded, recovery(extra)));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
@@ -215,6 +237,105 @@ public final class ItemDecoder {
 		}
 
 		return out.stream().sorted().toList();
+	}
+
+	private static RecoveryMetadata recovery(NbtCompound extra) {
+		List<RecoveryAttachment> attachments = new ArrayList<>();
+		EnumSet<RecoveryWarning> warnings = EnumSet.noneOf(RecoveryWarning.class);
+
+		if (extra.contains("gems")) {
+			Optional<NbtCompound> gems = extra.compound("gems");
+			if (gems.isPresent()) {
+				recoveryGemstones(gems.get(), attachments, warnings);
+			} else {
+				warnings.add(RecoveryWarning.MALFORMED_METADATA);
+			}
+		}
+
+		drillPart(extra, "drill_part_engine", "engine", RecoveryComponentKind.DRILL_ENGINE,
+				attachments, warnings);
+		drillPart(extra, "drill_part_fuel_tank", "fuel_tank",
+				RecoveryComponentKind.DRILL_FUEL_TANK, attachments, warnings);
+		drillPart(extra, "drill_part_upgrade_module", "upgrade_module", null,
+				attachments, warnings);
+		rodPart(extra, "hook", RecoveryComponentKind.FISHING_HOOK, attachments, warnings);
+		rodPart(extra, "line", RecoveryComponentKind.FISHING_LINE, attachments, warnings);
+		rodPart(extra, "sinker", RecoveryComponentKind.FISHING_SINKER, attachments, warnings);
+
+		Map<String, Integer> legacy = extra.child("attributes").numericEntries();
+		if (!legacy.isEmpty()) {
+			warnings.add(RecoveryWarning.PREVIEW_REQUIRED);
+		}
+		return new RecoveryMetadata(attachments, legacy, warnings);
+	}
+
+	private static void recoveryGemstones(NbtCompound gems, List<RecoveryAttachment> attachments,
+			Set<RecoveryWarning> warnings) {
+		for (Map.Entry<String, Object> entry : gems.entries().entrySet()) {
+			String key = entry.getKey();
+			if (key.equals(GEM_SLOT_INDEX) || key.endsWith("_gem")) {
+				continue;
+			}
+			String slot = key.replaceFirst("_\\d+$", "");
+			String quality = switch (entry.getValue()) {
+				case String text -> text;
+				case NbtCompound compound -> compound.string("quality").orElse("");
+				default -> "";
+			};
+			if (quality.isBlank()) {
+				warnings.add(RecoveryWarning.MALFORMED_METADATA);
+				continue;
+			}
+			String gemType = switch (slot) {
+				case "COMBAT", "DEFENSIVE", "MINING", "OFFENSIVE", "UNIVERSAL" ->
+						gems.string(key + "_gem").orElse("");
+				default -> slot;
+			};
+			if (gemType.isBlank()) {
+				warnings.add(RecoveryWarning.UNKNOWN_MAPPING);
+				continue;
+			}
+			String id = quality.toUpperCase(Locale.ROOT) + "_"
+					+ gemType.toUpperCase(Locale.ROOT) + "_GEM";
+			attachments.add(new RecoveryAttachment(RecoveryComponentKind.GEMSTONE, key, id, 1L));
+		}
+	}
+
+	private static void drillPart(NbtCompound extra, String legacyKey, String modernKey,
+			RecoveryComponentKind fixedKind, List<RecoveryAttachment> attachments,
+			Set<RecoveryWarning> warnings) {
+		String legacy = extra.string(legacyKey).orElse("");
+		String modern = extra.child(modernKey).string("id").orElse("");
+		if (legacy.isBlank() && modern.isBlank()) {
+			if (extra.contains(legacyKey) || extra.contains(modernKey)) {
+				warnings.add(RecoveryWarning.MALFORMED_METADATA);
+			}
+			return;
+		}
+		String legacyId = legacy.toUpperCase(Locale.ROOT);
+		String modernId = modern.toUpperCase(Locale.ROOT);
+		if (!legacyId.isBlank() && !modernId.isBlank() && !legacyId.equals(modernId)) {
+			warnings.add(RecoveryWarning.MALFORMED_METADATA);
+			return;
+		}
+		String id = modernId.isBlank() ? legacyId : modernId;
+		RecoveryComponentKind kind = fixedKind != null ? fixedKind
+				: id.startsWith("GOBLIN_OMELETTE") ? RecoveryComponentKind.GOBLIN_OMELETTE
+				: RecoveryComponentKind.DRILL_UPGRADE_MODULE;
+		attachments.add(new RecoveryAttachment(kind, legacyKey, id, 1L));
+	}
+
+	private static void rodPart(NbtCompound extra, String key, RecoveryComponentKind kind,
+			List<RecoveryAttachment> attachments, Set<RecoveryWarning> warnings) {
+		if (!extra.contains(key)) {
+			return;
+		}
+		String part = extra.child(key).string("part").orElse("");
+		if (part.isBlank()) {
+			warnings.add(RecoveryWarning.MALFORMED_METADATA);
+			return;
+		}
+		attachments.add(new RecoveryAttachment(kind, key, part.toUpperCase(Locale.ROOT), 1L));
 	}
 
 	/**

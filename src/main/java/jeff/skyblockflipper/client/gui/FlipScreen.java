@@ -5,11 +5,14 @@ import jeff.skyblockflipper.client.CandidateFeed;
 import jeff.skyblockflipper.client.FlipIntentsService;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
+import jeff.skyblockflipper.client.RecoveryFeed;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.ledger.LedgerStats;
+import jeff.skyblockflipper.core.recovery.RecoveryComponentQuote;
+import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcPlan;
@@ -97,6 +100,7 @@ public final class FlipScreen extends Screen {
 		COMBINE("Combine", StrategyKind.COMBINE),
 		FUSION("Fusion", StrategyKind.FUSION),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
+		RECOVERY("Recovery", null),
 		LEDGER("Ledger", null),
 		GUIDE("Guide", null);
 
@@ -109,7 +113,8 @@ public final class FlipScreen extends Screen {
 		}
 
 		boolean showsCandidates() {
-			return this != BASKET && this != JOBS && this != LEDGER && this != GUIDE;
+			return this != BASKET && this != JOBS && this != RECOVERY
+					&& this != LEDGER && this != GUIDE;
 		}
 
 		/**
@@ -134,6 +139,7 @@ public final class FlipScreen extends Screen {
 	}
 
 	private final CandidateTable table = new CandidateTable();
+	private final RecoveryTable recoveryTable = new RecoveryTable();
 	private final Scroller detailScroll = new Scroller();
 	private final Scroller sideScroll = new Scroller();
 
@@ -181,6 +187,7 @@ public final class FlipScreen extends Screen {
 
 	/** Whatever the detail panel was last drawn for, so its scroll can reset when that changes. */
 	private FlipCandidate detailShown;
+	private RecoveryOpportunity recoveryDetailShown;
 
 	/** Ledger tab: the selected open position. */
 	private String selectedPosition = "";
@@ -243,6 +250,7 @@ public final class FlipScreen extends Screen {
 		viewHeight = Math.round(height / zoom);
 
 		table.setBounds(MARGIN, contentTop(), listWidth(), contentHeight());
+		recoveryTable.setBounds(MARGIN, contentTop(), listWidth(), contentHeight());
 
 		int buttonY = viewHeight - MARGIN - BUTTON_HEIGHT;
 		int takeWidth = takeButton.preferredWidth(font);
@@ -343,7 +351,7 @@ public final class FlipScreen extends Screen {
 
 	private void refresh(boolean force) {
 		MarketData data = MarketDataService.data();
-		long revision = data.bazaarRevision();
+		long revision = tab == Tab.RECOVERY ? data.recoveryRevision() : data.bazaarRevision();
 
 		if (!force && revision == renderedRevision) {
 			return;
@@ -353,6 +361,8 @@ public final class FlipScreen extends Screen {
 
 		if (tab.showsCandidates()) {
 			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH));
+		} else if (tab == Tab.RECOVERY) {
+			recoveryTable.setRows(RecoveryFeed.current());
 		} else if (tab == Tab.JOBS) {
 			jobs = CandidateFeed.jobs();
 			jobOrders = TrackerService.orders();
@@ -408,6 +418,12 @@ public final class FlipScreen extends Screen {
 				panel(graphics, detailX(), top, detailWidth(), panelHeight);
 				renderJobs(graphics, MARGIN, top, listWidth(), panelHeight);
 				renderJobDetail(graphics, detailX(), top, detailWidth(), panelHeight);
+			}
+			case RECOVERY -> {
+				panel(graphics, MARGIN, top, listWidth(), panelHeight);
+				panel(graphics, detailX(), top, detailWidth(), panelHeight);
+				recoveryTable.render(graphics, font, vx, vy);
+				renderRecoveryDetail(graphics, detailX(), top, detailWidth(), panelHeight);
 			}
 			default -> {
 				panel(graphics, MARGIN, top, listWidth(), panelHeight);
@@ -647,6 +663,90 @@ public final class FlipScreen extends Screen {
 		graphics.textWithWordWrap(font, text, x + labelWidth, y, wrapWidth - labelWidth, TEXT);
 
 		return y + Math.max(font.lineHeight, font.wordWrapHeight(text, wrapWidth - labelWidth)) + 1;
+	}
+
+	/** Complete evidence for one recovery floor. No action control is rendered beside it. */
+	private void renderRecoveryDetail(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		RecoveryOpportunity opportunity = recoveryTable.selection();
+		if (opportunity != recoveryDetailShown) {
+			recoveryDetailShown = opportunity;
+			detailScroll.reset();
+		}
+		int contentWidth = panelWidth - 2 * PANEL_PAD;
+		int startY = y + PANEL_PAD - detailScroll.offset();
+		int cursor = startY;
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+		if (opportunity == null) {
+			Component message = Component.literal(recoveryTable.isEmpty()
+					? "No evidence-backed recovery opportunities are in the latest shared auction sweep."
+					: "Select a row to inspect every retained exit leg.");
+			graphics.textWithWordWrap(font, message, x + PANEL_PAD, cursor, contentWidth, TEXT_DIM);
+			cursor += font.wordWrapHeight(message, contentWidth);
+		} else {
+			graphics.textWithWordWrap(font, Component.literal(opportunity.displayName()),
+					x + PANEL_PAD, cursor, contentWidth, 0xFF55FFFF);
+			cursor += font.wordWrapHeight(Component.literal(opportunity.displayName()), contentWidth) + 3;
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Auction",
+					opportunity.auctionUuid());
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Purchase",
+					Coins.format(opportunity.purchasePrice()));
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Floor",
+					Coins.format(opportunity.conservativeFloor()));
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Profit",
+					Coins.format(opportunity.expectedProfit()) + " ("
+							+ String.format("%.1f%%", opportunity.margin() * 100.0d) + ")");
+			cursor = recoveryLeg(graphics, opportunity.cleanHostQuote(), x + PANEL_PAD, cursor,
+					contentWidth);
+			for (RecoveryComponentQuote component : opportunity.componentQuotes()) {
+				cursor = recoveryLeg(graphics, component, x + PANEL_PAD, cursor, contentWidth);
+			}
+			if (!opportunity.warnings().isEmpty()) {
+				Component warnings = Component.literal("Warnings: " + opportunity.warnings());
+				graphics.textWithWordWrap(font, warnings, x + PANEL_PAD, cursor, contentWidth,
+						TEXT_WARN);
+				cursor += font.wordWrapHeight(warnings, contentWidth) + 3;
+			}
+			Component advisory = Component.literal(
+					"Read-only: verify the live auction yourself. The mod sends no click or purchase.");
+			graphics.textWithWordWrap(font, advisory, x + PANEL_PAD, cursor, contentWidth, TEXT_NOTE);
+			cursor += font.wordWrapHeight(advisory, contentWidth);
+		}
+		graphics.disableScissor();
+		detailScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		detailScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	private int recoveryLeg(GuiGraphicsExtractor graphics, RecoveryComponentQuote quote, int x,
+			int y, int width) {
+		graphics.text(font, Component.literal(quote.displayName())
+				.withStyle(quote.credited() ? ChatFormatting.WHITE : ChatFormatting.YELLOW),
+				x, y, quote.credited() ? TEXT : TEXT_WARN);
+		int cursor = y + font.lineHeight + 1;
+		cursor = field(graphics, x, cursor, width, "Exit",
+				quote.credited() ? quote.exitVenue().name() : "ZERO CREDIT");
+		cursor = field(graphics, x, cursor, width, "Gross",
+				Coins.format(quote.grossQuickSale()));
+		cursor = field(graphics, x, cursor, width, "Buffered",
+				Coins.format(quote.bufferedGross()));
+		cursor = field(graphics, x, cursor, width, "Fee",
+				Coins.format(quote.fee()));
+		cursor = field(graphics, x, cursor, width, "Removal",
+				Coins.format(quote.removalCost()));
+		cursor = field(graphics, x, cursor, width, "Net",
+				Coins.format(quote.netContribution()));
+		if (quote.sampleCount() > 0) {
+			cursor = field(graphics, x, cursor, width, "Evidence",
+					quote.sampleCount() + " sales, "
+							+ String.format("%.1f/day", quote.salesPerDay()));
+		} else if (quote.quotedDepth() > 0L) {
+			cursor = field(graphics, x, cursor, width, "Depth",
+					quote.quotedDepth() + " units on bids");
+		}
+		if (!quote.warnings().isEmpty()) {
+			cursor = field(graphics, x, cursor, width, "Warning", quote.warnings().toString());
+		}
+		return cursor + 4;
 	}
 
 	/** Everything the mod means by the words it uses, from the same source {@code /flip guide} reads. */
@@ -1262,10 +1362,14 @@ public final class FlipScreen extends Screen {
 		boolean hasSelection = tab.showsCandidates() && table.selection() != null;
 
 		if (tab.showsCandidates()) {
+			copyButton.setLabel("Copy name");
 			takeButton.render(graphics, font, mouseX, mouseY, hasSelection);
 			copyButton.render(graphics, font, mouseX, mouseY, hasSelection);
 			workButton.setLabel(workLabel());
 			workButton.render(graphics, font, mouseX, mouseY, workable());
+		} else if (tab == Tab.RECOVERY) {
+			copyButton.setLabel("Copy UUID");
+			copyButton.render(graphics, font, mouseX, mouseY, recoveryTable.selection() != null);
 		} else if (tab == Tab.JOBS) {
 			workButton.setLabel("Stop working");
 			workButton.render(graphics, font, mouseX, mouseY, selectedJob() != null);
@@ -1312,6 +1416,7 @@ public final class FlipScreen extends Screen {
 					case JOBS -> TrackerService.enabled()
 							? "Every flip you are working, with what the tracker has seen done."
 							: "Turn on autoTrackEnabled to see which steps are done.";
+					case RECOVERY -> "Read-only evidence; Copy UUID does not open or buy the auction.";
 					default -> "Click a column to sort, a row to select.";
 				},
 				"Guide tab defines every column.");
@@ -1505,6 +1610,16 @@ public final class FlipScreen extends Screen {
 	}
 
 	private void copySelected() {
+		if (tab == Tab.RECOVERY) {
+			RecoveryOpportunity opportunity = recoveryTable.selection();
+			if (opportunity == null) {
+				notice = "Select a recovery row first.";
+				return;
+			}
+			minecraft.keyboardHandler.setClipboard(opportunity.auctionUuid());
+			notice = "Copied auction UUID " + opportunity.auctionUuid() + "; no command was run.";
+			return;
+		}
 		// The Jobs tab shares this button, and the thing to paste into the bazaar search there is
 		// the name of the flip under the cursor.
 		String name = tab == Tab.JOBS
@@ -1616,6 +1731,10 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
+		if (tab == Tab.RECOVERY && copyButton.clicked(mouseX, mouseY)) {
+			return true;
+		}
+
 		if (tab == Tab.BASKET && (basketCopyButton.clicked(mouseX, mouseY)
 				|| basketPriceButton.clicked(mouseX, mouseY)
 				|| basketUnitsButton.clicked(mouseX, mouseY))) {
@@ -1645,6 +1764,10 @@ public final class FlipScreen extends Screen {
 
 		if (tab == Tab.JOBS) {
 			return jobRowClicked(mouseX, mouseY);
+		}
+
+		if (tab == Tab.RECOVERY) {
+			return recoveryTable.mouseClicked(mouseX, mouseY);
 		}
 
 		// Selecting a row only selects it. It used to also hand the bazaar panel a job to follow -
@@ -1764,6 +1887,11 @@ public final class FlipScreen extends Screen {
 			if ((vx >= detailX() ? detailScroll : sideScroll).scroll(scrollY)) {
 				return true;
 			}
+		} else if (tab == Tab.RECOVERY) {
+			if (vx >= detailX() ? detailScroll.scroll(scrollY)
+					: recoveryTable.mouseScrolled(scrollY)) {
+				return true;
+			}
 		} else if (!tab.showsCandidates()) {
 			if (sideScroll.scroll(scrollY)) {
 				return true;
@@ -1796,6 +1924,17 @@ public final class FlipScreen extends Screen {
 
 			if (event.key() == GLFW.GLFW_KEY_UP) {
 				table.moveSelection(-1);
+				return true;
+			}
+		}
+
+		if (tab == Tab.RECOVERY) {
+			if (event.key() == GLFW.GLFW_KEY_DOWN) {
+				recoveryTable.moveSelection(1);
+				return true;
+			}
+			if (event.key() == GLFW.GLFW_KEY_UP) {
+				recoveryTable.moveSelection(-1);
 				return true;
 			}
 		}

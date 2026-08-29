@@ -12,6 +12,10 @@ import jeff.skyblockflipper.core.valuation.NpcEdgeHistory;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PriceHistory;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
+import jeff.skyblockflipper.core.recovery.RecoveryValuationModels;
+import jeff.skyblockflipper.core.recovery.RecoveryListingScan;
+import jeff.skyblockflipper.core.recovery.RecoveryScanPolicy;
+import jeff.skyblockflipper.core.pricing.Fees;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -307,15 +311,17 @@ public final class MarketPoller implements AutoCloseable {
 	private void rebuildValuations() {
 		ScanSettings config = settings.get();
 		Duration window = Duration.ofDays(config.valuationWindowDays());
-		FairValueModel.Builder builder = FairValueModel.builder(Instant.now(), window);
+		RecoveryValuationModels.Builder builder = RecoveryValuationModels.builder(Instant.now(), window);
 
 		try {
 			int read = tape.forEachRecent(config.valuationWindowDays(), builder::add);
-			FairValueModel model = builder.build();
-			data.setValues(model);
+			RecoveryValuationModels models = builder.build();
+			FairValueModel model = models.ordinary();
+			data.setValues(model, models.recovery());
 
 			log.accept("Valuations rebuilt from " + read + " taped sales: "
-					+ model.pricedConfigurations() + " item configurations priced");
+					+ model.pricedConfigurations() + " item configurations and "
+					+ models.recovery().componentIdentities() + " recovery components priced");
 		} catch (IOException e) {
 			log.accept("Failed reading the sales tape for valuation: " + e);
 		}
@@ -340,7 +346,11 @@ public final class MarketPoller implements AutoCloseable {
 			return;
 		}
 
-		UnderpricedScan scan = new UnderpricedScan(model, config.minDiscount(), config.maxPrice());
+		UnderpricedScan ordinary = new UnderpricedScan(model, config.minDiscount(), config.maxPrice());
+		RecoveryListingScan recovery = new RecoveryListingScan(data.recoveryValues(), data.bazaar(),
+				new Fees(config.bazaarFlipperLevel(), data.mayor().isDerpy()),
+				RecoveryScanPolicy.from(config.recovery()), Instant.now());
+		ActiveAuctionScan scan = new ActiveAuctionScan(ordinary, recovery);
 		OptionalLong updated = api.sweepActiveBins(data.auctionsLastUpdated(), scan);
 
 		if (updated.isEmpty()) {
@@ -348,10 +358,12 @@ public final class MarketPoller implements AutoCloseable {
 			return;
 		}
 
-		data.setAuctionScan(updated.getAsLong(), scan.results(),
-				scan.listingsSeen() + " listings, " + scan.decoded() + " decoded, "
-						+ scan.rejectedOnExactValue() + " rejected on exact match, "
-						+ scan.results().size() + " under fair value");
+		data.setAuctionScan(updated.getAsLong(), scan.ordinaryResults(), scan.recoveryResults(),
+				scan.ordinary().listingsSeen() + " listings, " + scan.decodedBlobs() + " decoded, "
+						+ scan.ordinary().rejectedOnExactValue() + " rejected on exact match, "
+						+ scan.ordinaryResults().size() + " under fair value, "
+						+ scan.recoveryResults().size() + " recovery, "
+						+ scan.failures() + " isolated failures");
 	}
 
 	/**

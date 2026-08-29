@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlipperConfigTest {
@@ -34,6 +35,11 @@ class FlipperConfigTest {
 		assertEquals(250_000_000L, config.bankroll);
 		assertEquals(0.6d, config.minConfidence, 1e-9);
 		assertTrue(config.hudEnabled);
+		assertFalse(config.recoveryAlertsEnabled);
+		assertFalse(config.recoveryChatNotifications);
+		assertFalse(config.recoveryToastNotifications);
+		assertFalse(config.recoveryAlertSound);
+		assertEquals(0.15d, config.recoverySafetyBuffer, 1e-9);
 	}
 
 	@Test

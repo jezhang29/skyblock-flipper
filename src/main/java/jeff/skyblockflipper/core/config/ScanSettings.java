@@ -26,6 +26,16 @@ public record ScanSettings(
 		boolean bazaarTapeEnabled,
 		int bazaarTapeRetentionDays,
 		int trendWindowHours,
-		int bazaarPollSeconds
+		int bazaarPollSeconds,
+		int bazaarFlipperLevel,
+		RecoverySettings recovery
 ) {
+	/** Source compatibility for callers that predate recovery's fee-aware active scan. */
+	public ScanSettings(boolean scanAuctions, int valuationWindowDays, double minDiscount,
+			long maxPrice, boolean bazaarTapeEnabled, int bazaarTapeRetentionDays,
+			int trendWindowHours, int bazaarPollSeconds) {
+		this(scanAuctions, valuationWindowDays, minDiscount, maxPrice, bazaarTapeEnabled,
+				bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds, 0,
+				new FlipperConfig().recoverySettings());
+	}
 }

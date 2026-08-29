@@ -111,8 +111,8 @@ public final class ConfigSchema {
 	}
 
 	public static List<Group> groups() {
-		return List.of(MONEY, NPC, CRAFT, COMBINE, FUSION, SCANNING, DISPLAY, CONNECTION, COLLECTOR,
-				TRACKING);
+		return List.of(MONEY, NPC, CRAFT, COMBINE, FUSION, RECOVERY, SCANNING, DISPLAY,
+				CONNECTION, COLLECTOR, TRACKING);
 	}
 
 	/** Every entry, in group order. Useful for lookups and for the test that nothing is missing. */
@@ -245,6 +245,81 @@ public final class ConfigSchema {
 							+ "leave it at 0 unless you have the perk.",
 					0, FlipperConfig.MAX_CROCODILE_LEVEL, 1,
 					c -> c.fusionCrocodileLevel, (c, v) -> c.fusionCrocodileLevel = v)));
+
+	private static final Group RECOVERY = new Group("Recovery values", List.of(
+			new Entry.Flag("recoveryAlertsEnabled", "Enable recovery alerts",
+					"Allow qualifying recovery finds to notify you; the Recovery tab remains available "
+							+ "when this is off.",
+					c -> c.recoveryAlertsEnabled, (c, v) -> c.recoveryAlertsEnabled = v),
+			new Entry.Flag("recoveryChatNotifications", "Write recovery alerts in chat",
+					"Write qualifying recovery finds into client chat without opening or buying the "
+							+ "auction for you.",
+					c -> c.recoveryChatNotifications, (c, v) -> c.recoveryChatNotifications = v),
+			new Entry.Flag("recoveryToastNotifications", "Show recovery alert toasts",
+					"Show qualifying recovery finds in a corner toast that cannot click or buy the "
+							+ "auction for you.",
+					c -> c.recoveryToastNotifications, (c, v) -> c.recoveryToastNotifications = v),
+			new Entry.Flag("recoveryAlertSound", "Play a recovery alert sound",
+					"Play one UI note for a qualifying recovery find, under the same stale and repeat "
+							+ "checks as the visual notices.",
+					c -> c.recoveryAlertSound, (c, v) -> c.recoveryAlertSound = v),
+			new Entry.LongRange("recoveryMinProfit", "Minimum recovery profit",
+					"Require this much conservative profit after buffer, fees and removal costs before "
+							+ "showing or alerting a recovery find.",
+					0L, 10_000_000_000L, 100_000L,
+					c -> c.recoveryMinProfit, (c, v) -> c.recoveryMinProfit = v),
+			new Entry.Ratio("recoveryMinMargin", "Minimum recovery margin",
+					"Require this share of the purchase price as conservative profit before showing or "
+							+ "alerting a recovery find.",
+					0.0d, 5.0d, 0.05d,
+					c -> c.recoveryMinMargin, (c, v) -> c.recoveryMinMargin = v),
+			new Entry.Ratio("recoverySafetyBuffer", "Recovery safety buffer",
+					"Haircut every uncertain resale value by this share before fees, while fixed "
+							+ "removal costs stay undiscounted.",
+					0.10d, 0.15d, 0.01d,
+					c -> c.recoverySafetyBuffer, (c, v) -> c.recoverySafetyBuffer = v),
+			new Entry.IntRange("recoveryMinAhSamples", "Minimum recovery sale samples",
+					"Require this many realized clean-host or standalone-component sales before an "
+							+ "auction exit receives value.",
+					6, 100, 1,
+					c -> c.recoveryMinAhSamples, (c, v) -> c.recoveryMinAhSamples = v),
+			new Entry.Ratio("recoveryMinAhSalesPerDay", "Minimum recovery sales per day",
+					"Require an auction exit to sell this many times per day in the realized-sales "
+							+ "window before it receives value.",
+					0.1d, 1_000.0d, 0.1d,
+					c -> c.recoveryMinAhSalesPerDay, (c, v) -> c.recoveryMinAhSalesPerDay = v),
+			new Entry.Ratio("recoveryMaxAhSellHours", "Maximum recovery resale hours",
+					"Reject auction exits expected to take longer than this to resell from their "
+							+ "observed realized-sale rate.",
+					1.0d, 168.0d, 1.0d,
+					c -> c.recoveryMaxAhSellHours, (c, v) -> c.recoveryMaxAhSellHours = v),
+			new Entry.Ratio("recoveryMinBazaarSellsPerHour", "Minimum recovery Bazaar flow",
+					"Require this many hourly instant sells into Bazaar bids before that visible depth "
+							+ "can support a recovery exit.",
+					0.1d, 1_000_000.0d, 1.0d,
+					c -> c.recoveryMinBazaarSellsPerHour,
+					(c, v) -> c.recoveryMinBazaarSellsPerHour = v),
+			new Entry.IntRange("recoveryMaxAgeSeconds", "Maximum recovery alert age",
+					"Suppress a notification when its shared auction snapshot is older than this, so "
+							+ "a delayed client tick cannot replay an old listing.",
+					30, 600, 30,
+					c -> c.recoveryMaxAgeSeconds, (c, v) -> c.recoveryMaxAgeSeconds = v),
+			new Entry.Flag("recoveryGemstoneAlerts", "Alert on gemstone recovery",
+					"Allow alerts whose removable evidence includes a gemstone with verified current "
+							+ "depth and removal cost.",
+					c -> c.recoveryGemstoneAlerts, (c, v) -> c.recoveryGemstoneAlerts = v),
+			new Entry.Flag("recoveryDrillAlerts", "Alert on drill-part recovery",
+					"Allow drill-part recovery alerts only when every required mapping, sale and removal "
+							+ "cost has evidence.",
+					c -> c.recoveryDrillAlerts, (c, v) -> c.recoveryDrillAlerts = v),
+			new Entry.Flag("recoveryRodAlerts", "Alert on fishing-part recovery",
+					"Allow fishing-part recovery alerts only when every required mapping, sale and "
+							+ "removal cost has evidence.",
+					c -> c.recoveryRodAlerts, (c, v) -> c.recoveryRodAlerts = v),
+			new Entry.Flag("recoveryLegacyAlerts", "Alert on legacy recovery",
+					"Allow legacy salvage alerts only for outputs proven by an exact captured preview; "
+							+ "unverified previews still receive zero value.",
+					c -> c.recoveryLegacyAlerts, (c, v) -> c.recoveryLegacyAlerts = v)));
 
 	private static final Group SCANNING = new Group("Scanning", List.of(
 			new Entry.Flag("scanAuctions", "Search the auction house",

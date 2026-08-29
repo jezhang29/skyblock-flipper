@@ -15,8 +15,20 @@ Deep records live elsewhere and are linked from here:
 - `docs/worked-flips.md` — the one model behind a flip the player has actually started: the shared
   job shape, the progress badges, and the three views that render it.
 - `docs/headless-collector.md`, `docs/trade-capture.md` — the collector and the capture protocol.
+- `docs/recovery-value-alerts.md` — the shipped read-only recovery floor, alert safety gates,
+  and the exact legacy/removal evidence still deferred.
 
 ## Current state (2026-08-20)
+
+**Read-only recovery values are implemented offline** on `recovery-value-alerts` (2026-08-28).
+The special Recovery tab and `/flip recovery` explain clean-host plus removable-component floors
+from realized ended BIN sales and actual Bazaar bid depth. The active-AH network sweep is shared
+with ordinary snipes, recovery has its own atomic revision/feed/UUID selection, and opt-in alerts
+default entirely off with stale/current-snapshot checks and bounded UUID/fingerprint dedupe.
+Gemstones can receive credit under the versioned removal schedule. Drill and fishing parts remain
+zero-credit until current removal-menu costs are captured; legacy salvage remains `PREVIEW REQUIRED`
+and zero-credit until an exact manual preview fixture exists. All JDK 25 tests, `build`, and
+`collectorJar` pass; no recovery flow has been verified in play yet.
 
 The whole NPC basket strategy is merged to `main` (2026-08-17) — the basket, the reprice rounds, the
 check-in reminder, the Basket tab and the bazaar slot highlighting. The squash
