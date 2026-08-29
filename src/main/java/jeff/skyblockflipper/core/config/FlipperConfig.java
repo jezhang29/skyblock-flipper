@@ -68,6 +68,48 @@ public final class FlipperConfig {
 	 */
 	public boolean scanAuctions = true;
 
+	/** Master switch for unsolicited recovery alerts. Analysis and the Recovery tab remain read-only. */
+	public boolean recoveryAlertsEnabled = false;
+
+	/** Write qualifying recovery alerts to client chat. Off by default. */
+	public boolean recoveryChatNotifications = false;
+
+	/** Show qualifying recovery alerts as in-game system toasts. Off by default. */
+	public boolean recoveryToastNotifications = false;
+
+	/** Play one UI note with a qualifying recovery alert. Off by default. */
+	public boolean recoveryAlertSound = false;
+
+	/** Minimum conservative recovery profit for a row or alert. */
+	public long recoveryMinProfit = 500_000L;
+
+	/** Minimum conservative recovery margin after the safety buffer. */
+	public double recoveryMinMargin = 0.15d;
+
+	/** Haircut applied to uncertain recovery resale values before fees. */
+	public double recoverySafetyBuffer = 0.15d;
+
+	/** Minimum realized standalone/clean-host AH samples. */
+	public int recoveryMinAhSamples = 6;
+
+	/** Minimum realized AH sale rate per day. */
+	public double recoveryMinAhSalesPerDay = 1.0d;
+
+	/** Maximum estimated hours to resell an AH leg. */
+	public double recoveryMaxAhSellHours = 48.0d;
+
+	/** Minimum weekly-flow-derived hourly dumps into Bazaar bids. */
+	public double recoveryMinBazaarSellsPerHour = 1.0d;
+
+	/** Maximum age of a shared auction snapshot before an alert is suppressed. */
+	public int recoveryMaxAgeSeconds = 120;
+
+	/** Recovery alert family gates. Analysis remains visible even when an alert family is off. */
+	public boolean recoveryGemstoneAlerts = true;
+	public boolean recoveryDrillAlerts = true;
+	public boolean recoveryRodAlerts = true;
+	public boolean recoveryLegacyAlerts = false;
+
 	/**
 	 * How far under fair value a listing has to be listed before it is worth looking at (0-1).
 	 * Also the prune that keeps a sweep affordable: almost every listing fails it before its
@@ -561,7 +603,18 @@ public final class FlipperConfig {
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
 		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll,
-				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds);
+				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds,
+				bazaarFlipperLevel, recoverySettings());
+	}
+
+	public RecoverySettings recoverySettings() {
+		return new RecoverySettings(recoveryAlertsEnabled, recoveryChatNotifications,
+				recoveryToastNotifications, recoveryAlertSound, recoveryMinProfit,
+				recoveryMinMargin, recoverySafetyBuffer, recoveryMinAhSamples,
+				recoveryMinAhSalesPerDay, recoveryMaxAhSellHours,
+				recoveryMinBazaarSellsPerHour, recoveryMaxAgeSeconds,
+				recoveryGemstoneAlerts, recoveryDrillAlerts, recoveryRodAlerts,
+				recoveryLegacyAlerts);
 	}
 
 	/** Clamps hand-edited values into ranges the rest of the mod can rely on. */
@@ -575,6 +628,15 @@ public final class FlipperConfig {
 		// share of anything.
 		maxCapitalShare = Math.clamp(maxCapitalShare, 0.01d, 1.0d);
 		minConfidence = Math.clamp(minConfidence, 0.0d, 1.0d);
+		recoveryMinProfit = Math.max(0L, recoveryMinProfit);
+		recoveryMinMargin = Math.clamp(recoveryMinMargin, 0.0d, 5.0d);
+		recoverySafetyBuffer = Math.clamp(recoverySafetyBuffer, 0.10d, 0.15d);
+		recoveryMinAhSamples = Math.clamp(recoveryMinAhSamples, 6, 100);
+		recoveryMinAhSalesPerDay = Math.clamp(recoveryMinAhSalesPerDay, 0.1d, 1_000.0d);
+		recoveryMaxAhSellHours = Math.clamp(recoveryMaxAhSellHours, 1.0d, 168.0d);
+		recoveryMinBazaarSellsPerHour = Math.clamp(
+				recoveryMinBazaarSellsPerHour, 0.1d, 1_000_000.0d);
+		recoveryMaxAgeSeconds = Math.clamp(recoveryMaxAgeSeconds, 30, 600);
 		// Zero would make every NPC plan empty rather than uncapped, which is not what someone
 		// clearing the field means; the upper bound is loose because the real value is unverified.
 		npcDailyCapCoins = Math.clamp(npcDailyCapCoins, 1_000_000L, 100_000_000_000L);

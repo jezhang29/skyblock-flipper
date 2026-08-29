@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Finds live listings priced below what their configuration actually sells for.
@@ -49,6 +50,16 @@ public final class UnderpricedScan implements ListingSink {
 
 	@Override
 	public void offer(ActiveListing listing) {
+		offerDecoded(listing, () -> ItemDecoder.decode(listing.itemBytes()));
+	}
+
+	/**
+	 * Runs the unchanged ordinary scan while allowing a composed sweep to share one decoded blob.
+	 * The supplier stays lazy, so the existing coarse rejection still avoids parsing almost every
+	 * listing.
+	 */
+	public void offerDecoded(ActiveListing listing,
+			Supplier<Optional<DecodedItem>> decodedItem) {
 		listingsSeen++;
 
 		if (listing.price() > maxPrice || found.size() >= MAX_RESULTS) {
@@ -62,7 +73,7 @@ public final class UnderpricedScan implements ListingSink {
 			return;
 		}
 
-		Optional<DecodedItem> item = ItemDecoder.decode(listing.itemBytes());
+		Optional<DecodedItem> item = decodedItem.get();
 
 		if (item.isEmpty()) {
 			return;

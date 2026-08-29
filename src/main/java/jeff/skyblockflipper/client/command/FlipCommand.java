@@ -16,6 +16,8 @@ import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.NpcProbeService;
+import jeff.skyblockflipper.client.RecoveryFeed;
+import jeff.skyblockflipper.client.RecoveryAlertService;
 import jeff.skyblockflipper.client.TapeSyncService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
@@ -31,6 +33,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcProbe;
@@ -172,6 +175,12 @@ public final class FlipCommand {
 							showSnipes(ctx.getSource());
 							return 1;
 						}))
+				.then(ClientCommands.literal("recovery")
+						.executes(ctx -> showRecovery(ctx.getSource(), null))
+						.then(ClientCommands.argument("uuid", StringArgumentType.word())
+								.suggests(FlipCommand::suggestRecoveryUuids)
+								.executes(ctx -> showRecovery(ctx.getSource(),
+										StringArgumentType.getString(ctx, "uuid")))))
 				.then(ClientCommands.literal("guide")
 						.executes(ctx -> {
 							showGuide(ctx.getSource(), null);
@@ -269,6 +278,8 @@ public final class FlipCommand {
 								MarketDataService.restart();
 								// A new bankroll changes the ranking without the book moving.
 								CandidateFeed.invalidate();
+								RecoveryFeed.invalidate();
+								RecoveryAlertService.invalidate();
 								ctx.getSource().sendFeedback(Chat.prefixed(
 										Component.literal("Config reloaded.").withStyle(ChatFormatting.GREEN)));
 								return 1;
@@ -878,6 +889,49 @@ public final class FlipCommand {
 		}
 
 		showTop(source, StrategyKind.AUCTION_VALUE, "Listings below fair value");
+	}
+
+	private static int showRecovery(FabricClientCommandSource source, String uuid) {
+		FlipperConfig config = SkyblockFlipperClient.config();
+		MarketData data = MarketDataService.data();
+		if (!config.scanAuctions) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Auction scanning is off - recovery uses that same sweep and makes no extra requests.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 1;
+		}
+		if (!data.hasScannedAuctions()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"First shared auction sweep has not finished yet.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 1;
+		}
+		List<RecoveryOpportunity> opportunities = RecoveryFeed.current();
+		if (uuid == null) {
+			RecoveryRenderer.renderList(source, opportunities);
+			return 1;
+		}
+		Optional<RecoveryOpportunity> selected = opportunities.stream()
+				.filter(value -> value.auctionUuid().equalsIgnoreCase(uuid)).findFirst();
+		if (selected.isEmpty()) {
+			source.sendError(Component.literal(
+					"That auction UUID is not in the current recovery snapshot.")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+		RecoveryRenderer.renderDetail(source, selected.orElseThrow());
+		return 1;
+	}
+
+	private static CompletableFuture<Suggestions> suggestRecoveryUuids(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+		for (RecoveryOpportunity opportunity : RecoveryFeed.current()) {
+			if (opportunity.auctionUuid().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(opportunity.auctionUuid());
+			}
+		}
+		return builder.buildFuture();
 	}
 
 	/** Records the flip on the line the player is looking at, at the numbers they saw. */

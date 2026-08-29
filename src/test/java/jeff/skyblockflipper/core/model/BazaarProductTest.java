@@ -23,6 +23,11 @@ class BazaarProductTest {
 				new BazaarProduct.MovingWeek(1L, 1L));
 	}
 
+	private static BazaarProduct withBids(OrderLevel... levels) {
+		return new BazaarProduct("X", List.of(new OrderLevel(999.0d, 100L, 1)),
+				List.of(levels), new BazaarProduct.MovingWeek(1L, 1L));
+	}
+
 	@Test
 	void quotesTheTopLevelForAnOrderThatFitsInIt() {
 		BazaarProduct product = withAsks(new OrderLevel(10.0d, 100L, 5));
@@ -71,5 +76,24 @@ class BazaarProductTest {
 				new OrderLevel(20.0d, 5L, 5));
 
 		assertEquals(product.instantBuyPrice().orElseThrow(), product.costToBuy(1L).orElseThrow(), 1e-9);
+	}
+
+	@Test
+	void instantSellWalksBidsRatherThanAsks() {
+		BazaarProduct product = withBids(
+				new OrderLevel(20.0d, 2L, 1),
+				new OrderLevel(10.0d, 3L, 1));
+
+		assertEquals(70.0d, product.proceedsFromInstantSell(5L).orElseThrow(), 1e-9);
+		assertEquals(20.0d, product.proceedsFromInstantSell(1L).orElseThrow(), 1e-9);
+	}
+
+	@Test
+	void instantSellRefusesPartialDepthAndInvalidQuantities() {
+		BazaarProduct product = withBids(new OrderLevel(20.0d, 2L, 1));
+
+		assertTrue(product.proceedsFromInstantSell(3L).isEmpty());
+		assertTrue(product.proceedsFromInstantSell(0L).isEmpty());
+		assertTrue(withBids().proceedsFromInstantSell(1L).isEmpty());
 	}
 }

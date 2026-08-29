@@ -164,6 +164,33 @@ public record BazaarProduct(
 	}
 
 	/**
+	 * Gross coins received by instantly selling {@code units}, walking the visible bid book.
+	 *
+	 * <p>This deliberately consumes {@link #buyOrders()}: Hypixel calls this API side
+	 * {@code sell_summary}, but it is the side an instant seller receives. Empty means the returned
+	 * depth cannot cover the whole quantity; a partial fill is never silently quoted as complete.
+	 */
+	public OptionalDouble proceedsFromInstantSell(long units) {
+		if (units <= 0L) {
+			return OptionalDouble.empty();
+		}
+
+		long remaining = units;
+		double received = 0.0d;
+		for (OrderLevel level : buyOrders) {
+			long sold = Math.min(remaining, level.amount());
+			received += sold * level.pricePerUnit();
+			remaining -= sold;
+			if (remaining == 0L) {
+				return Double.isFinite(received)
+						? OptionalDouble.of(received)
+						: OptionalDouble.empty();
+			}
+		}
+		return OptionalDouble.empty();
+	}
+
+	/**
 	 * A lower bound on the largest single order resting anywhere on this book.
 	 *
 	 * <p>A price level reports units and the number of orders holding them, so the largest order at
