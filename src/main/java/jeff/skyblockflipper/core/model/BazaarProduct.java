@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.model;
 
 import java.util.List;
@@ -122,6 +139,99 @@ public record BazaarProduct(
 	 */
 	public double instantSellsPerHour() {
 		return movingWeek.instantSold() / HOURS_PER_WEEK;
+	}
+
+	/**
+	 * Average cost per unit of instantly buying {@code units}, walking down the ask book.
+	 *
+	 * <p>Top of book is what one unit costs. Buying a hundred of a thin item means eating several
+	 * price levels, and quoting the first level as the price of all of them understates the bill -
+	 * always in the flattering direction, because the levels below are dearer. That is the same
+	 * silent-wrong-number shape as {@link #instantBuyPrice()} against {@code quick_status.buyPrice},
+	 * one level deeper.
+	 *
+	 * <p><b>Empty rather than a partial fill when the visible book cannot cover {@code units}.</b> A
+	 * caller asking what a hundred units cost is not helped by the price of the sixty that happen to
+	 * be resting; that answer is both cheaper per unit and for a different quantity than the one
+	 * asked about.
+	 *
+	 * <p>Only the returned depth is walked. Hypixel truncates each side, so this is a bound on what
+	 * is visible now rather than on what would fill over time - see {@link #instantBuysPerHour()}
+	 * for the flow question, which is the one that decides how much can be bought an hour.
+	 */
+	public OptionalDouble costToBuy(long units) {
+		if (units <= 0L) {
+			return OptionalDouble.empty();
+		}
+
+		long remaining = units;
+		double paid = 0.0d;
+
+		for (OrderLevel level : sellOffers) {
+			long taken = Math.min(remaining, level.amount());
+			paid += taken * level.pricePerUnit();
+			remaining -= taken;
+
+			if (remaining <= 0L) {
+				return OptionalDouble.of(paid / units);
+			}
+		}
+
+		return OptionalDouble.empty();
+	}
+
+	/**
+	 * Gross coins received by instantly selling {@code units}, walking the visible bid book.
+	 *
+	 * <p>This deliberately consumes {@link #buyOrders()}: Hypixel calls this API side
+	 * {@code sell_summary}, but it is the side an instant seller receives. Empty means the returned
+	 * depth cannot cover the whole quantity; a partial fill is never silently quoted as complete.
+	 */
+	public OptionalDouble proceedsFromInstantSell(long units) {
+		if (units <= 0L) {
+			return OptionalDouble.empty();
+		}
+
+		long remaining = units;
+		double received = 0.0d;
+		for (OrderLevel level : buyOrders) {
+			long sold = Math.min(remaining, level.amount());
+			received += sold * level.pricePerUnit();
+			remaining -= sold;
+			if (remaining == 0L) {
+				return Double.isFinite(received)
+						? OptionalDouble.of(received)
+						: OptionalDouble.empty();
+			}
+		}
+		return OptionalDouble.empty();
+	}
+
+	/**
+	 * A lower bound on the largest single order resting anywhere on this book.
+	 *
+	 * <p>A price level reports units and the number of orders holding them, so the largest order at
+	 * that level is at least the mean, and integer division rounds that down. Taking the biggest
+	 * such figure across both sides therefore proves an order of at least this size exists, and can
+	 * only ever understate one.
+	 *
+	 * <p>Only interesting because of what it proves about the item rather than about the book - see
+	 * {@link Stacking}, which is the one thing that reads it.
+	 */
+	public long largestRestingOrder() {
+		return Math.max(largestRestingOrder(sellOffers), largestRestingOrder(buyOrders));
+	}
+
+	private static long largestRestingOrder(List<OrderLevel> side) {
+		long largest = 0L;
+
+		for (OrderLevel level : side) {
+			if (level.orders() > 0) {
+				largest = Math.max(largest, level.amount() / level.orders());
+			}
+		}
+
+		return largest;
 	}
 
 	/**

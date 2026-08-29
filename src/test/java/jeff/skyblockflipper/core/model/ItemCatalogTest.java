@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.model;
 
 import org.junit.jupiter.api.Test;
@@ -49,5 +66,82 @@ class ItemCatalogTest {
 	void anUnknownIdStillGetsAName() {
 		assertEquals("MYSTERY_ITEM", MELONS.displayName("MYSTERY_ITEM"));
 		assertTrue(MELONS.shadowedBy("MYSTERY_ITEM").isEmpty());
+	}
+
+	/**
+	 * The catalog that made this necessary: a player reading the bazaar sees "Nether Wart
+	 * Distillate" and no amount of care turns that into {@code NETHER_STALK_DISTILLATE}.
+	 */
+	private static final ItemCatalog WARTS = new ItemCatalog(Map.of(
+			"NETHER_STALK_DISTILLATE",
+			new ItemCatalog.Entry("NETHER_STALK_DISTILLATE", "Nether Wart Distillate", null),
+			"BLAZE_ROD_DISTILLATE",
+			new ItemCatalog.Entry("BLAZE_ROD_DISTILLATE", "Blaze Rod Distillate", null),
+			"REVENANT_CATALYST",
+			new ItemCatalog.Entry("REVENANT_CATALYST", "Revenant Catalyst", null)));
+
+	@Test
+	void findsAnItemByTheNameInTheGameRatherThanTheIdBehindIt() {
+		assertEquals("NETHER_STALK_DISTILLATE",
+				WARTS.find("nether wart distillate").only().orElseThrow());
+	}
+
+	@Test
+	void findsAnItemByItsIdWhateverTheCase() {
+		assertEquals("REVENANT_CATALYST", WARTS.find("revenant_catalyst").only().orElseThrow());
+		assertEquals("REVENANT_CATALYST", WARTS.find("Revenant Catalyst").only().orElseThrow());
+	}
+
+	@Test
+	void findsAnItemFromPartOfItsName() {
+		assertEquals("NETHER_STALK_DISTILLATE", WARTS.find("nether wart").only().orElseThrow());
+	}
+
+	@Test
+	void wordsMayBeTypedInAnyOrder() {
+		assertEquals("NETHER_STALK_DISTILLATE", WARTS.find("distillate wart").only().orElseThrow());
+	}
+
+	@Test
+	void refusesToChooseBetweenTwoItemsAndOffersBoth() {
+		ItemCatalog.Lookup found = WARTS.find("distillate");
+
+		assertTrue(found.only().isEmpty());
+		assertEquals(List.of("BLAZE_ROD_DISTILLATE", "NETHER_STALK_DISTILLATE"), found.candidates());
+	}
+
+	@Test
+	void anExactNameWinsOverTheItemThatMerelyExtendsIt() {
+		// The melon problem, asked the other way round: "Enchanted Melon" is one item's whole name
+		// and another's prefix, and the whole name is the answer rather than a tie.
+		assertEquals("ENCHANTED_MELON_BLOCK", MELONS.find("Enchanted Melon").only().orElseThrow());
+	}
+
+	@Test
+	void aQueryThatOnlyMatchesLooselyResolvesToNothing() {
+		assertTrue(MELONS.find("melon").only().isEmpty());
+		assertEquals(2, MELONS.find("melon").candidates().size());
+	}
+
+	@Test
+	void aRestrictedSearchSeesOnlyWhatTheCallerOffered() {
+		assertEquals("BLAZE_ROD_DISTILLATE",
+				WARTS.find("distillate", List.of("BLAZE_ROD_DISTILLATE")).only().orElseThrow());
+	}
+
+	@Test
+	void searchesIdsThatTheItemResourceHasNeverHeardOf() {
+		// The bazaar names products before the catalog is fetched, and a probe still has to work.
+		ItemCatalog.Lookup found = ItemCatalog.empty()
+				.find("catalyst", List.of("REVENANT_CATALYST", "ENCHANTED_DIAMOND"));
+
+		assertEquals("REVENANT_CATALYST", found.only().orElseThrow());
+	}
+
+	@Test
+	void nothingTypedFindsNothing() {
+		assertTrue(WARTS.find("  ").isEmpty());
+		assertTrue(WARTS.find(null).isEmpty());
+		assertTrue(WARTS.find("wobbegong").isEmpty());
 	}
 }

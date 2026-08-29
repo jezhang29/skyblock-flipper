@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.hud;
 
 import jeff.skyblockflipper.SkyblockFlipper;
@@ -7,6 +24,7 @@ import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.config.HudAnchor;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
@@ -108,23 +126,45 @@ public final class FlipHud implements HudElement {
 					: List.of();
 		}
 
+		StrategyKind filter = config.filteredKind();
+
 		List<Component> lines = new ArrayList<>();
-		lines.add(Component.literal("Flips").withStyle(ChatFormatting.GOLD));
+		lines.add(heading(filter));
 
 		int rank = 1;
 
 		for (FlipCandidate candidate : candidates.subList(0, Math.min(config.hudLines, candidates.size()))) {
-			lines.add(summary(rank++, candidate));
+			lines.add(summary(rank++, candidate, filter));
 		}
 
 		return lines;
 	}
 
-	private static MutableComponent summary(int rank, FlipCandidate candidate) {
-		return Component.literal(rank + ". ").withStyle(ChatFormatting.DARK_GRAY)
-				.append(Component.literal(shorten(candidate.displayName())).withStyle(ChatFormatting.AQUA))
-				.append(Component.literal(" " + Coins.format(candidate.profitPerHour()) + "/hr")
-						.withStyle(ChatFormatting.GREEN));
+	/**
+	 * Which market the rows below are from, so it can be read without opening the screen.
+	 *
+	 * <p>A bazaar spread and an NPC flip are different jobs - one is worked at the bazaar menu, the
+	 * other hauled to a shop through {@code /trades} - and the rows do not otherwise say which they
+	 * are. The filter is named when one is set, since then every row shares it; an unfiltered list
+	 * says so and each row carries its own tag.
+	 */
+	private static MutableComponent heading(StrategyKind filter) {
+		return Component.literal("Flips").withStyle(ChatFormatting.GOLD)
+				.append(Component.literal(filter == null ? " - all" : " - " + filter.label())
+						.withStyle(ChatFormatting.YELLOW));
+	}
+
+	private static MutableComponent summary(int rank, FlipCandidate candidate, StrategyKind filter) {
+		MutableComponent line = Component.literal(rank + ". ").withStyle(ChatFormatting.DARK_GRAY)
+				.append(Component.literal(shorten(candidate.displayName())).withStyle(ChatFormatting.AQUA));
+
+		if (filter == null) {
+			line.append(Component.literal(" " + candidate.kind().label())
+					.withStyle(ChatFormatting.YELLOW));
+		}
+
+		return line.append(Component.literal(" " + Coins.format(candidate.profitPerHour()) + "/hr")
+				.withStyle(ChatFormatting.GREEN));
 	}
 
 	private static String shorten(String name) {

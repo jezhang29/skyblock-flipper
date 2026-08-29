@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
@@ -30,7 +47,7 @@ class AuctionValueStrategyTest {
 
 	private static DecodedItem item() {
 		return new DecodedItem("MIDAS_SWORD", "Midas Sword", 1, Rarity.LEGENDARY, "", 0, false, 0,
-				Map.of(), List.of(), Map.of(), null);
+				Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L);
 	}
 
 	private static PricedListing priced(long price, double median, int samples, double salesPerHour,
@@ -54,7 +71,7 @@ class AuctionValueStrategyTest {
 	/** Arack's real ladder against a spider-essence book asking 1510: 15+25+35 = 113250 coins. */
 	private static StrategyContext starContext(long price, long median) {
 		DecodedItem starred = new DecodedItem("ARACK", "Arack", 1, Rarity.EPIC, "", 3, false, 0,
-				Map.of(), List.of(), Map.of(), null);
+				Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L);
 
 		PricedListing listing = new PricedListing(
 				new ActiveListing("uuid", "Arack ✪✪✪", Rarity.EPIC, price, ""),

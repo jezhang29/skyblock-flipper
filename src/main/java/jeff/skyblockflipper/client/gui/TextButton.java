@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.gui;
 
 import net.minecraft.client.gui.Font;
@@ -20,7 +37,7 @@ final class TextButton {
 	private static final int LABEL = 0xFFFFFFFF;
 	private static final int LABEL_DISABLED = 0xFF777777;
 
-	private final Component label;
+	private Component label;
 	private final Runnable action;
 
 	private int x;
@@ -31,6 +48,15 @@ final class TextButton {
 	TextButton(String label, Runnable action) {
 		this.label = Component.literal(label);
 		this.action = action;
+	}
+
+	/**
+	 * Re-labels the button in place, for the one whose label is the state it is in - Work against
+	 * Stop working. Its bounds do not follow, so the wider of the two labels is what to size it at:
+	 * a button that resizes as the selection changes moves out from under the cursor.
+	 */
+	void setLabel(String text) {
+		label = Component.literal(text);
 	}
 
 	void setBounds(int x, int y, int width, int height) {

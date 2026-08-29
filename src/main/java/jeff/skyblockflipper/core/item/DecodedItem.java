@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.item;
 
 import java.util.Collections;
@@ -17,7 +34,15 @@ import java.util.TreeMap;
  * @param reforge      reforge id, or "" for none
  * @param stars        dungeon/master stars, from either the modern or the legacy attribute
  * @param attributes   Kuudra/Crimson attribute rolls as name to level, empty for most items
+ * @param runes        applied runes as name to tier, empty for most items
  * @param pet          pet detail, or null when this is not a pet
+ * @param potion       potion detail, or null when this is not a potion
+ * @param quality      dungeon drop quality, or null when this item carries no such roll
+ * @param dye          the named dye applied to this leather item, or "" for none
+ * @param ethermerged  whether an Etherwarp Conduit has been merged into this item
+ * @param winningBid   coins paid for this item at the Dark Auction, or 0 for the items that are not
+ *                     sold there. Deliberately absent from {@link #signature()} - see
+ *                     {@link #hasWinningBid()}
  */
 public record DecodedItem(
 		String skyblockId,
@@ -31,7 +56,13 @@ public record DecodedItem(
 		Map<String, Integer> enchantments,
 		List<String> gemstones,
 		Map<String, Integer> attributes,
-		PetInfo pet
+		Map<String, Integer> runes,
+		PetInfo pet,
+		PotionInfo potion,
+		DungeonQuality quality,
+		String dye,
+		boolean ethermerged,
+		long winningBid
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -39,6 +70,8 @@ public record DecodedItem(
 		enchantments = Collections.unmodifiableMap(new TreeMap<>(enchantments));
 		gemstones = List.copyOf(gemstones);
 		attributes = Collections.unmodifiableMap(new TreeMap<>(attributes));
+		runes = Collections.unmodifiableMap(new TreeMap<>(runes));
+		dye = dye == null ? "" : dye;
 	}
 
 	public boolean isPet() {
@@ -47,6 +80,45 @@ public record DecodedItem(
 
 	public Optional<PetInfo> petInfo() {
 		return Optional.ofNullable(pet);
+	}
+
+	public boolean isPotion() {
+		return potion != null;
+	}
+
+	public Optional<PotionInfo> potionInfo() {
+		return Optional.ofNullable(potion);
+	}
+
+	/** Whether this item carries a dungeon quality roll that says anything about its price. */
+	public boolean hasQuality() {
+		return quality != null && !quality.signatureTerm().isEmpty();
+	}
+
+	public Optional<DungeonQuality> dungeonQuality() {
+		return Optional.ofNullable(quality);
+	}
+
+	/**
+	 * Whether this item was bought at the Dark Auction, and so carries the bid that set its stats.
+	 *
+	 * <p>The bid is the one price term that must <b>not</b> go in {@link #signature()}. It is a
+	 * continuous number - 103 distinct values across 439 taped {@code MIDAS_STAFF} sales - so keying
+	 * it makes a cell per sale, which is the drill parts' failure mode with an order of magnitude
+	 * more values. Banded into powers of two it still costs coverage and still leaves the sales it
+	 * does price out by more than the ratio quote does.
+	 *
+	 * <p>What it is good for instead is scaling: within one signature the sale price is close to a
+	 * fixed multiple of the bid, so a pooled ratio prices every bid off every other bid's sales
+	 * without splitting anything. See {@code FairValueModel.valueOf} and {@code MidasBidBacktestTest}.
+	 */
+	public boolean hasWinningBid() {
+		return winningBid > 0L;
+	}
+
+	/** Whether a named dye was applied to this item. */
+	public boolean isDyed() {
+		return !dye.isEmpty();
 	}
 
 	/**
@@ -103,6 +175,66 @@ public record DecodedItem(
 			StringJoiner rolls = new StringJoiner(",");
 			attributes.forEach((name, level) -> rolls.add(name + ":" + level));
 			key.add("attrs=" + rolls);
+		}
+
+		// Every rune shares the id RUNE, the way every pet shares PET. Without this term the tape's
+		// 3,589 rune sales collapse onto five keys - one per rarity - pooling a 2,000 coin GEM rune
+		// with a 140,000,000 coin one. The tier belongs here for the same reason a pet's level does:
+		// on the recorded tape MUSIC=1 has a median of 5,000,000 against 59,500,000 for MUSIC=3.
+		if (!runes.isEmpty()) {
+			StringJoiner applied = new StringJoiner(",");
+			runes.forEach((name, tier) -> applied.add(name + ":" + tier));
+			key.add("runes=" + applied);
+		}
+
+		// And POTION is the third id an entire market hides behind, after PET and RUNE. Unread, the
+		// tape's 2,758 potion sales collapse onto one key per rarity with a median of 918,000 coins -
+		// which is Stinky Cheese's price, because Stinky Cheese and Harvest Harbinger are 70% of the
+		// count. Every cheap potion under that median then reads as a large discount on itself.
+		if (isPotion()) {
+			key.add("potion=" + potion.signatureTerm());
+		}
+
+		// Not a shared id like the three above - a dungeon drop keeps its own id - but the same kind
+		// of pooling. SKELETON_MASTER_CHESTPLATE's tier 7 and tier 10 sales sat on one key across a
+		// 56x gap, so half of them read as enormous discounts on the other half. See DungeonQuality
+		// for why the stat boost is a flag here and the tier is a number.
+		if (hasQuality()) {
+			key.add("quality=" + quality.signatureTerm());
+		}
+
+		// One bit, and the only entry from the unread-attribute list in four to survive being
+		// measured at this key rather than at the item id. An Etherwarp Conduit merged into an
+		// ASPECT_OF_THE_VOID is permanent and the market pays about 4x for it - 396 plain sales at
+		// 5,900,000 sit in the same signature as 288 merged ones at 24,900,000 - so unread it both
+		// blinds the model to every merged sale and quotes a plain sword at several times what
+		// plain swords fetch.
+		//
+		// Re-measured against the model that ships rather than a hand-built copy of it, and it is
+		// worse unread than the copy said: on a 24h holdout of the ids that ever merge, sales quoted
+		// at 2x or more of what they fetched go from 175 to 20 and p90 |log err| from 1.440 to
+		// 0.230, for 7 valuations in 1,053. The copy kept every sample where the Builder keeps the
+		// most recent 200, which is what hid the harm: on a key pooling two populations the ring
+		// fills with whichever sold lately, so the pooled median swings to the dearer one and every
+		// cheap sale reads as a snipe. Keying the merge is what stops the pooling.
+		//
+		// tuned_transmission, the Transmission Tuner level that rides along on merged items, is
+		// deliberately not here: it is worth 1.06x on top of the merge, and splitting merged sales
+		// again strands 6 of them below the sample floor for a difference the market barely prices.
+		// See EthermergeBacktestTest.
+		if (ethermerged) {
+			key.add("ethermerge");
+		}
+
+		// Last, so a test can strip it back off to compare a dyed sale against a plain one. Worth
+		// little on its own - 67 of 587 dyed keys hold an undyed sale and they run 0.9x to 2.1x,
+		// because a dyed item is also a starred and enchanted one - and kept for the reason the
+		// maxed quality flag is kept: it costs no coverage, since every dyed sale on the tape
+		// carries something else that already keeps it out of the coarse index, and the 833x gap
+		// it closes at the item id is a correlation nothing enforces. The raw `color` triple is
+		// deliberately absent; see ItemDecoder and DyeSignatureBacktestTest.
+		if (isDyed()) {
+			key.add("dye=" + dye);
 		}
 
 		return key.toString();

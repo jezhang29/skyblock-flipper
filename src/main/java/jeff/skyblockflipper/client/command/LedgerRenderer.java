@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.command;
 
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
@@ -35,20 +52,60 @@ final class LedgerRenderer {
 		for (LedgerEntry entry : open) {
 			source.sendFeedback(Component.literal("  " + entry.id() + " ").withStyle(ChatFormatting.YELLOW)
 					.append(Component.literal(entry.displayName()).withStyle(ChatFormatting.AQUA))
-					.append(Component.literal(" x" + entry.units() + " @ "
-							+ String.format("%.1f", entry.unitBuyPrice())).withStyle(ChatFormatting.GRAY))
-					.append(Component.literal("  quoted " + Coins.format(entry.quotedUnitNet() * entry.units()))
-							.withStyle(ChatFormatting.DARK_GRAY)));
+					.append(Component.literal(" " + progress(entry)).withStyle(soldColour(entry)))
+					.append(Component.literal(" @ " + String.format("%.1f", entry.unitBuyPrice()))
+							.withStyle(ChatFormatting.GRAY))
+					.append(Component.literal("  " + money(entry)).withStyle(ChatFormatting.DARK_GRAY)));
 		}
 
 		source.sendFeedback(Component.literal("Close one with /flip close <id> <units sold> <sell price>")
 				.withStyle(ChatFormatting.DARK_GRAY));
 	}
 
+	/**
+	 * How much of a position has come back, which is the fact the old line left out entirely.
+	 *
+	 * <p>It printed the planned unit count and the quoted buy price and nothing else, so a position
+	 * that had bought and sold 596 of its 899 units looked identical to one that had done nothing.
+	 * That was read in live play as the tracker not working, when the tracker had in fact recorded
+	 * every fill.
+	 */
+	private static String progress(LedgerEntry entry) {
+		if (entry.unitsSold() == 0L) {
+			return "x" + entry.units();
+		}
+
+		return entry.unitsSold() + "/" + entry.units() + " sold";
+	}
+
+	/** Realized against quoted once anything has sold, and the plain quote before that. */
+	private static String money(LedgerEntry entry) {
+		if (!entry.isQuoted()) {
+			return entry.unitsSold() == 0L
+					? "tracked, no quote"
+					: "made " + Coins.format(entry.realizedTotal()) + ", no quote";
+		}
+
+		if (entry.unitsSold() == 0L) {
+			return "quoted " + Coins.format(entry.quotedUnitNet() * entry.units());
+		}
+
+		return "made " + Coins.format(entry.realizedTotal())
+				+ " of " + Coins.format(entry.quotedOnFilled()) + " quoted so far";
+	}
+
+	private static ChatFormatting soldColour(LedgerEntry entry) {
+		if (entry.unitsSold() == 0L) {
+			return ChatFormatting.GRAY;
+		}
+
+		return entry.unitsSold() >= entry.units() ? ChatFormatting.GREEN : ChatFormatting.WHITE;
+	}
+
 	static void renderStats(FabricClientCommandSource source, LedgerStats stats) {
 		if (stats.closed() == 0 && stats.abandoned() == 0) {
-			source.sendFeedback(Component.literal("  nothing closed yet - take a flip, then close it to "
-					+ "start measuring").withStyle(ChatFormatting.DARK_GRAY));
+			source.sendFeedback(Component.literal("  nothing closed yet - open positions above show "
+					+ "what has filled so far").withStyle(ChatFormatting.DARK_GRAY));
 			return;
 		}
 

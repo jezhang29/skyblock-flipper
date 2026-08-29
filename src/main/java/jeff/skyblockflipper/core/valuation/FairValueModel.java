@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
@@ -34,19 +51,23 @@ import java.util.Optional;
 public final class FairValueModel {
 	private final Map<String, ValueEstimate> exact;
 	private final Map<String, ValueEstimate> coarse;
+	private final Map<String, ValueEstimate> perBid;
 	private final int salesConsidered;
 	private final Duration window;
+	private final Keying keying;
 
 	private FairValueModel(Map<String, ValueEstimate> exact, Map<String, ValueEstimate> coarse,
-			int salesConsidered, Duration window) {
+			Map<String, ValueEstimate> perBid, int salesConsidered, Duration window, Keying keying) {
 		this.exact = Map.copyOf(exact);
 		this.coarse = Map.copyOf(coarse);
+		this.perBid = Map.copyOf(perBid);
 		this.salesConsidered = salesConsidered;
 		this.window = window;
+		this.keying = keying;
 	}
 
 	public static FairValueModel empty() {
-		return new FairValueModel(Map.of(), Map.of(), 0, Duration.ZERO);
+		return new FairValueModel(Map.of(), Map.of(), Map.of(), 0, Duration.ZERO, Keying.PRODUCTION);
 	}
 
 	/**
@@ -61,7 +82,18 @@ public final class FairValueModel {
 	}
 
 	public static Builder builder(Instant now, Duration window) {
-		return new Builder(now, window);
+		return new Builder(now, window, Keying.PRODUCTION);
+	}
+
+	/**
+	 * Trains under a keying other than the one that ships.
+	 *
+	 * <p>Only a backtest has any business calling this. The model it returns must be read back
+	 * through {@link #valueOf(DecodedItem)}, which uses the same keying it was built with - pricing a
+	 * holdout under one keying against an index built under another measures nothing.
+	 */
+	public static Builder builder(Instant now, Duration window, Keying keying) {
+		return new Builder(now, window, keying);
 	}
 
 	/**
@@ -81,14 +113,17 @@ public final class FairValueModel {
 
 		private final Map<String, List<Double>> bySignature = new HashMap<>();
 		private final Map<String, List<Double>> byCoarseKey = new HashMap<>();
+		private final Map<String, List<Double>> bidRatios = new HashMap<>();
 		private final long cutoff;
 		private final Duration window;
+		private final Keying keying;
 
 		private int considered;
 
-		private Builder(Instant now, Duration window) {
+		private Builder(Instant now, Duration window, Keying keying) {
 			this.cutoff = now.minus(window).toEpochMilli();
 			this.window = window;
+			this.keying = keying;
 		}
 
 		public void add(EndedAuction sale) {
@@ -104,12 +139,34 @@ public final class FairValueModel {
 
 			DecodedItem item = decoded.get();
 			// Stacked sales are priced for the stack; everything downstream works per unit.
-			double unitPrice = (double) sale.price() / Math.max(1, item.count());
+			add(item, (double) sale.price() / Math.max(1, item.count()), sale.timestamp());
+		}
+
+		/**
+		 * Accounts for a sale already decoded and already reduced to a unit price.
+		 *
+		 * <p>Split out for the one caller that has to decode a sale before it knows whether to train
+		 * on it - a backtest filtering to the item ids that carry the attribute under measurement.
+		 * Feeding it the raw sale instead would decode every blob twice, and a decode is the
+		 * expensive part of a tape replay.
+		 */
+		public void add(DecodedItem item, double unitPrice, long timestamp) {
+			if (item == null || timestamp < cutoff) {
+				return;
+			}
 
 			// Every rung, not just the signature. A sale is evidence about the exact configuration
 			// that sold and about every wider description of it, and the wider ones are what stop
 			// a thinly-traded configuration having no valuation at all.
-			item.valuationKeys().forEach(key -> record(bySignature, key, unitPrice));
+			keying.keys(item).forEach(key -> record(bySignature, key, unitPrice));
+
+			// What this sale says about the item per coin bid for it, which is a statement about
+			// every other bid on the same configuration.
+			if (item.hasWinningBid()) {
+				keying.bidRatioKey(item)
+						.ifPresent(key -> record(bidRatios, key, unitPrice / item.winningBid()));
+			}
+
 			record(byCoarseKey, ActiveListing.coarseKey(item.displayName(), item.rarity()), unitPrice);
 			considered++;
 		}
@@ -123,8 +180,10 @@ public final class FairValueModel {
 			return new FairValueModel(
 					estimates(bySignature, windowHours, ValueEstimate.Basis.EXACT),
 					estimates(byCoarseKey, windowHours, ValueEstimate.Basis.COARSE),
+					estimates(bidRatios, windowHours, ValueEstimate.Basis.EXACT),
 					considered,
-					window);
+					window,
+					keying);
 		}
 
 		private static void record(Map<String, List<Double>> index, String key, double price) {
@@ -147,13 +206,31 @@ public final class FairValueModel {
 	 * where it always did. A pet tries its own level first, then its level band, then any level -
 	 * each rung a real widening, each labelled as such so the confidence it earns is discounted.
 	 *
+	 * <p>Before any of that, the one item whose price is a number written on it rather than a pool
+	 * of sales: a Midas weapon, whose stats scale with the coins burned at the Dark Auction. Its
+	 * signature says nothing about the bid, so the pooled median quotes a 3,000,000 coin staff and a
+	 * 100,000,000 coin one the same. The ratio index answers the question the pool cannot -
+	 * <b>what does this configuration fetch per coin bid</b> - and multiplying that by this item's own
+	 * bid costs no coverage at all, because it is the same sales under the same key. On a 24h holdout
+	 * of the item ids that carry a bid it took sales valued at 2x or more of what they fetched from
+	 * 142 in 512 to 11, and the median absolute log error from 0.588 to 0.242, at identical coverage.
+	 *
 	 * <p>Then one exception, unchanged: an item carrying no attributes at all has nothing the
 	 * coarse key could have missed, so name and rarity describe it completely. Without that rule
 	 * the coarse index would happily price a five-star recombobulated helmet off sales of the bare
-	 * one and call the difference profit.
+	 * one and call the difference profit. That test, and the clause-by-clause evidence behind it,
+	 * lives in {@link Keying#PRODUCTION}.
 	 */
 	public Optional<ValueEstimate> valueOf(DecodedItem item) {
-		List<String> keys = item.valuationKeys();
+		if (item.hasWinningBid()) {
+			ValueEstimate perCoin = keying.bidRatioKey(item).map(perBid::get).orElse(null);
+
+			if (perCoin != null && perCoin.isUsable()) {
+				return Optional.of(perCoin.scaledBy(item.winningBid()));
+			}
+		}
+
+		List<String> keys = keying.keys(item);
 
 		for (int rung = 0; rung < keys.size(); rung++) {
 			ValueEstimate match = exact.get(keys.get(rung));
@@ -166,7 +243,7 @@ public final class FairValueModel {
 			}
 		}
 
-		if (!isBare(item)) {
+		if (!keying.isBare(item)) {
 			return Optional.empty();
 		}
 
@@ -194,24 +271,6 @@ public final class FairValueModel {
 
 	public Duration window() {
 		return window;
-	}
-
-	/**
-	 * Nothing was added to this item, so there is nothing a name-and-rarity match could miss.
-	 *
-	 * <p>Attribute rolls count even though nobody added them by hand. An attributed item otherwise
-	 * carries no attributes at all, so without this line it reads as bare and gets priced off the
-	 * coarse pool - which for {@code CRIMSON_BOOTS} mixes 1.9M bare sales with 16M rolled ones and
-	 * calls the gap a snipe.
-	 */
-	private static boolean isBare(DecodedItem item) {
-		return !item.isPet()
-				&& item.stars() == 0
-				&& !item.recombobulated()
-				&& item.hotPotatoBooks() == 0
-				&& item.enchantments().isEmpty()
-				&& item.gemstones().isEmpty()
-				&& item.attributes().isEmpty();
 	}
 
 	private static Map<String, ValueEstimate> estimates(Map<String, List<Double>> prices,

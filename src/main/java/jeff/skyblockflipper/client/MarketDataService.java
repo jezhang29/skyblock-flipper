@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client;
 
 import jeff.skyblockflipper.SkyblockFlipper;
@@ -24,6 +41,7 @@ public final class MarketDataService {
 	private static MarketPoller poller;
 	private static SalesTape tape;
 	private static BazaarTape bazaarTape;
+	private static TapeSyncService sync;
 
 	private MarketDataService() {
 	}
@@ -42,6 +60,11 @@ public final class MarketDataService {
 
 	public static BazaarTape bazaarTape() {
 		return bazaarTape;
+	}
+
+	/** Null until polling has started, since the sync has nothing to merge into before then. */
+	public static TapeSyncService sync() {
+		return sync;
 	}
 
 	public static Path tapeDirectory() {
@@ -81,11 +104,21 @@ public final class MarketDataService {
 				() -> SkyblockFlipperClient.config().scanSettings(), SkyblockFlipper.LOGGER::info);
 		poller.start();
 
+		// Started after the poller and never waited on: the first sync can be hundreds of
+		// megabytes, and the mod is useful from the local tape while it runs.
+		sync = new TapeSyncService(tape, bazaarTape, poller);
+		sync.start();
+
 		SkyblockFlipper.LOGGER.info("Market poller started; sales tape at {}, bazaar tape at {}",
 				tapeDirectory(), bazaarTapeDirectory());
 	}
 
 	public static synchronized void stop() {
+		if (sync != null) {
+			sync.close();
+			sync = null;
+		}
+
 		if (poller != null) {
 			poller.close();
 			poller = null;

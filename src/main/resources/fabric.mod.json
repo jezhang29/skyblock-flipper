@@ -3,7 +3,7 @@
 	"id": "skyblock-flipper",
 	"version": "${version}",
 	"name": "Skyblock Flipper",
-	"description": "Finds and ranks profitable auction, bazaar and crafting flips on Hypixel Skyblock. Advisory only: it shows you numbers, it never clicks for you.",
+	"description": "Finds and ranks profitable auction, bazaar and crafting flips on Hypixel Skyblock.",
 	"authors": [
 		"jeff"
 	],

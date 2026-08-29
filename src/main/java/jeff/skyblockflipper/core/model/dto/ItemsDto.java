@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.model.dto;
 
 import com.google.gson.annotations.SerializedName;
@@ -36,6 +53,18 @@ public final class ItemsDto {
 		 */
 		@SerializedName("npc_sell_price")
 		public Double npcSellPrice;
+
+		/**
+		 * Present and true for some items that do not stack. Absent for everything else, so a plain
+		 * boolean reading false is the correct default here.
+		 *
+		 * <p><b>Absent is not evidence that an item stacks.</b> Measured 2026-08-11: 515 of 5,646
+		 * items carry the flag, and none of the 107 reforge stones does, nor does
+		 * {@code JUNGLE_HEART} - all of which the bazaar caps at 256 units an order. Where the flag
+		 * is set it has never been contradicted by the book, so it is worth keeping, but the answer
+		 * comes from {@link jeff.skyblockflipper.core.model.Stacking} rather than from here.
+		 */
+		public boolean unstackable;
 
 		/**
 		 * Cost of each star level, cheapest first. Absent for the ~90% of items that cannot be
@@ -120,12 +149,49 @@ public final class ItemsDto {
 		if (items != null) {
 			for (ItemDto item : items) {
 				if (item != null && item.id != null) {
-					entries.put(item.id, new ItemCatalog.Entry(
-							item.id, item.name, item.npcSellPrice, item.toUpgradeCosts()));
+					entries.put(item.id, new ItemCatalog.Entry(item.id, item.name,
+							item.npcSellPrice, item.unstackable, item.toUpgradeCosts()));
+					addEssenceEntries(item, entries);
 				}
 			}
 		}
 
 		return new ItemCatalog(entries);
+	}
+
+	/**
+	 * Essences are bazaar products but carry no row of their own in this endpoint, so a consumer
+	 * that only ever meets them as an upgrade ingredient - like an NPC flip on {@code ESSENCE_CRIMSON}
+	 * - would show the raw id and paste it into the bazaar search, which finds nothing. Their type
+	 * appears here on the ingredient, so synthesise the entry the endpoint omits: {@code CRIMSON}
+	 * becomes {@code Crimson Essence}, the name the bazaar itself uses.
+	 */
+	private static void addEssenceEntries(ItemDto item, Map<String, ItemCatalog.Entry> entries) {
+		if (item.upgradeCosts == null) {
+			return;
+		}
+
+		for (List<CostDto> level : item.upgradeCosts) {
+			if (level == null) {
+				continue;
+			}
+
+			for (CostDto cost : level) {
+				if (cost == null || !"ESSENCE".equals(cost.type)
+						|| cost.essenceType == null || cost.essenceType.isBlank()) {
+					continue;
+				}
+
+				String id = "ESSENCE_" + cost.essenceType;
+				entries.computeIfAbsent(id, k -> new ItemCatalog.Entry(
+						id, essenceName(cost.essenceType), null));
+			}
+		}
+	}
+
+	/** {@code CRIMSON} to {@code Crimson Essence}. Essence types are single words, so this suffices. */
+	private static String essenceName(String type) {
+		String lower = type.toLowerCase(java.util.Locale.ROOT);
+		return Character.toUpperCase(lower.charAt(0)) + lower.substring(1) + " Essence";
 	}
 }

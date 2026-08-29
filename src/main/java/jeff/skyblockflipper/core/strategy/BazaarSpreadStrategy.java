@@ -1,6 +1,24 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.pricing.FillModel;
 import jeff.skyblockflipper.core.pricing.FillModel.FillEstimate;
 import jeff.skyblockflipper.core.text.Coins;
@@ -126,6 +144,23 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 		return candidates;
 	}
 
+	/**
+	 * This one product re-quoted against the live book, on the same gates the ranking uses.
+	 *
+	 * <p>The twin of {@code CraftFlipStrategy.job} and {@code BazaarCombineStrategy.job}, and it
+	 * exists for the same reason: a spread the player is working has to be re-priced every poll
+	 * while they type it, and an item that has dropped out of the top of the ranking is still the
+	 * item they have coins resting on. Empty means the flip stopped clearing its own gates, which
+	 * the panel says out loud rather than going on showing the last numbers that worked.
+	 */
+	public java.util.Optional<FlipCandidate> job(String productId, StrategyContext context) {
+		if (productId == null) {
+			return java.util.Optional.empty();
+		}
+
+		return context.bazaar().product(productId).flatMap(product -> evaluate(product, context));
+	}
+
 	private java.util.Optional<FlipCandidate> evaluate(BazaarProduct product, StrategyContext context) {
 		if (product.sellOffers().isEmpty() || product.buyOrders().isEmpty()) {
 			return java.util.Optional.empty();
@@ -192,7 +227,9 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 		}
 
 		double horizonHours = hoursOf(context.fillHorizon());
-		long affordableUnits = (long) (context.bankroll() / buyPrice);
+		// The per-flip cap, not the whole bankroll: profit per hour rises with size, so without a
+		// ceiling the ranking's own logic puts everything into one item.
+		long affordableUnits = (long) (context.maxCapitalPerFlip() / buyPrice);
 
 		if (affordableUnits <= 0L) {
 			return java.util.Optional.empty();
@@ -222,9 +259,12 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 				capital,
 				profitPerHour,
 				confidence(weeklyVolume, product, trend),
-				steps(name, buyPrice, sellPrice, units),
+				steps(name, buyPrice, sellPrice, units,
+						Stacking.unitsPerOrder(context.catalog().get(product.productId()).orElse(null),
+								product)),
 				risks(product, trend, fill, units, context),
-				notes(fill, units)));
+				notes(fill, units),
+				fill));
 	}
 
 	private static double hoursOf(Duration horizon) {
@@ -287,13 +327,33 @@ public final class BazaarSpreadStrategy implements FlipStrategy {
 		return Math.clamp(base - driftPenalty - volatilityPenalty, 0.05d, 1.0d);
 	}
 
-	private static List<String> steps(String name, double buyPrice, double sellPrice, long units) {
+	/**
+	 * The clicks, with the quantity written the way the order box will take it.
+	 *
+	 * <p>A bazaar order holds at most 71,680 units of an item that stacks and <b>256</b> of one that
+	 * does not, and a plan sized to an hour of flow can want more than that: {@code ESSENCE_CRIMSON}
+	 * wanted 111,507 on the book of 2026-08-20, which is two orders. A bare total reads as one
+	 * order, and that is how a line of 500 Jungle Hearts came to be typed into a box that takes 256
+	 * - the failure {@link Stacking#orderSplit} exists to stop. Both legs carry it, because both are
+	 * a number typed into an amount box.
+	 */
+	private static List<String> steps(String name, double buyPrice, double sellPrice, long units,
+			long unitsPerOrder) {
+		String amount = amount(units, unitsPerOrder);
+
 		return List.of(
 				"Bazaar -> search " + name + " -> Create Buy Order",
-				String.format("Set price %.1f and quantity %d", buyPrice, units),
+				String.format("Set price %.1f and quantity %s", buyPrice, amount),
 				"Wait for the order to fill; do not chase the price if it moves away",
-				String.format("Once filled, Create Sell Offer at %.1f", sellPrice),
+				String.format("Once filled, Create Sell Offer at %.1f for %s", sellPrice, amount),
 				"Cancel and reprice if the book moves against you rather than holding stock");
+	}
+
+	/** {@code 111507 (2 x 71680)}, or a bare total where one order covers it. */
+	private static String amount(long units, long unitsPerOrder) {
+		String split = Stacking.orderSplit(units, unitsPerOrder);
+
+		return split.equals(String.valueOf(units)) ? split : units + " (" + split + ")";
 	}
 
 	/**

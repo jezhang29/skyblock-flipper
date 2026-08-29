@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.model;
 
 import com.google.gson.Gson;
@@ -13,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,6 +62,18 @@ class ItemsDtoTest {
 
 		assertEquals("Enchanted Melon", melon.name());
 		assertEquals(51_200.0d, melon.npcPrice().orElseThrow(), 1e-9);
+	}
+
+	@Test
+	void readsTheStackingFlagWhereTheResourceSetsIt() {
+		// Absent for almost everything, including items that really do not stack, which is why
+		// Stacking asks the order book instead. See StackingTest.
+		assertFalse(catalog.get("ENCHANTED_MELON_BLOCK").orElseThrow().unstackable());
+
+		ItemCatalog.Entry tuner = catalog.get("TRANSMISSION_TUNER").orElseThrow();
+
+		assertTrue(tuner.unstackable());
+		assertEquals(45_000.0d, tuner.npcPrice().orElseThrow(), 1e-9);
 	}
 
 	@Test

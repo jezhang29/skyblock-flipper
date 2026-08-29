@@ -1,15 +1,32 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.gui;
 
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.text.Coins;
-import jeff.skyblockflipper.core.valuation.PriceTrend;
-import jeff.skyblockflipper.core.valuation.TrendSnapshot;
+import jeff.skyblockflipper.core.text.Waits;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -37,7 +54,7 @@ import java.util.Set;
  * is two numbers drawn on top of each other with no indication which is which.
  *
  * <p><b>The name is paid first, and columns that no longer fit are dropped.</b> Leftovers turned out
- * to be nothing: five columns and a sparkline left the name about 45 pixels, which cut most bazaar
+ * to be nothing: five columns left the name about 45 pixels, which cut most bazaar
  * items to "Enchante..." - and since 187 of 5549 Skyblock names are a strict prefix of another, a
  * truncated name is not a weak identifier but a wrong one. So the name reserves room for
  * {@link #NAME_YARDSTICK} first and the numeric columns fill what is left, rightmost dropping out
@@ -57,8 +74,6 @@ final class CandidateTable {
 	private static final int TEXT_DIM = 0xFFAAAAAA;
 	private static final int TEXT_NAME = 0xFF55FFFF;
 	private static final int TEXT_PROFIT = 0xFF55FF55;
-
-	private static final int SPARK_WIDTH = 14;
 
 	/** Gap between one column's text and the next column's, and either edge of the panel. */
 	private static final int GAP = 6;
@@ -87,8 +102,16 @@ final class CandidateTable {
 		NAME("Item", Comparator.comparing(FlipCandidate::displayName)),
 		PROFIT("Profit/hr", Comparator.comparingDouble(FlipCandidate::profitPerHour)),
 		CAPITAL("Capital", Comparator.comparingLong(FlipCandidate::capitalRequired)),
-		RETURN("ROC", Comparator.comparingDouble(FlipCandidate::returnOnCapital)),
-		CONFIDENCE("Conf", Comparator.comparingDouble(FlipCandidate::confidence));
+
+		/**
+		 * How long the plan takes to turn over, and the column the screen was missing.
+		 *
+		 * <p>A plan quoting 6.78M an hour that needs eleven hours to fill and one that clears in
+		 * twenty minutes ranked identically and looked identical. Sorted with the unknowns last,
+		 * because "no estimate" is not "fast".
+		 */
+		FILL("Fill", Comparator.comparingDouble(
+				c -> c.timeToTurnOver().map(Duration::toSeconds).orElse(Long.MAX_VALUE)));
 
 		private final String label;
 		private final Comparator<FlipCandidate> ascending;
@@ -104,7 +127,6 @@ final class CandidateTable {
 	}
 
 	private List<FlipCandidate> candidates = List.of();
-	private TrendSnapshot trends = TrendSnapshot.empty();
 
 	private Column sortColumn = Column.PROFIT;
 	private boolean descending = true;
@@ -141,11 +163,10 @@ final class CandidateTable {
 	 * a screen that is open, and re-ranking would otherwise silently slide the selection onto a
 	 * different flip than the one being read.
 	 */
-	void setCandidates(List<FlipCandidate> candidates, TrendSnapshot trends) {
+	void setCandidates(List<FlipCandidate> candidates) {
 		FlipCandidate previous = selection();
 
 		this.candidates = new ArrayList<>(candidates);
-		this.trends = trends;
 		this.layoutStale = true;
 		applySort();
 
@@ -228,11 +249,9 @@ final class CandidateTable {
 
 		rightAligned(graphics, font, Column.PROFIT, candidate, textY, TEXT_PROFIT);
 		rightAligned(graphics, font, Column.CAPITAL, candidate, textY, TEXT);
-		rightAligned(graphics, font, Column.RETURN, candidate, textY, TEXT_DIM);
-		rightAligned(graphics, font, Column.CONFIDENCE, candidate, textY, TEXT_DIM);
+		rightAligned(graphics, font, Column.FILL, candidate, textY,
+				candidate.fillMeasured() ? TEXT : TEXT_DIM);
 
-		PriceTrend trend = trends.trendFor(candidate.itemId()).orElse(null);
-		Sparkline.draw(graphics, trend, x + width - SPARK_WIDTH - 4, rowY + 3, SPARK_WIDTH);
 	}
 
 	private void rightAligned(GuiGraphicsExtractor graphics, Font font, Column column,
@@ -401,7 +420,7 @@ final class CandidateTable {
 		shown.add(Column.NAME);
 
 		int nameLeft = x + RANK_WIDTH;
-		int right = x + width - SPARK_WIDTH - GAP;
+		int right = x + width - GAP;
 
 		// Half the panel at most: on a narrow window a name that insisted on its full yardstick would
 		// push even the profit column out, and a ranking with no ranking figure is not worth reading.
@@ -413,7 +432,9 @@ final class CandidateTable {
 		// Chosen before they are placed, and in the order they matter rather than the order they
 		// happen to fit. Stopping at the first column that misses keeps the visible set a prefix of
 		// this list: "the two most useful columns" is explainable, "all but Capital" is a puzzle.
-		for (Column column : List.of(Column.PROFIT, Column.CAPITAL, Column.RETURN, Column.CONFIDENCE)) {
+		// Fill sits second: whether an order clears at all decides more than how hard the coins
+		// work while it does not.
+		for (Column column : List.of(Column.PROFIT, Column.FILL, Column.CAPITAL)) {
 			int widest = width(font, column);
 
 			// Profit is what the list is ranked by, so it is placed whether it fits or not.
@@ -426,7 +447,7 @@ final class CandidateTable {
 		}
 
 		// Right to left, because it is the right-hand edge each column is aligned to.
-		for (Column column : List.of(Column.CONFIDENCE, Column.RETURN, Column.CAPITAL, Column.PROFIT)) {
+		for (Column column : List.of(Column.CAPITAL, Column.FILL, Column.PROFIT)) {
 			if (shown.contains(column)) {
 				rightEdge.put(column, right);
 				right -= width(font, column) + GAP;
@@ -495,8 +516,11 @@ final class CandidateTable {
 			case NAME -> candidate.displayName();
 			case PROFIT -> Coins.format(candidate.profitPerHour());
 			case CAPITAL -> Coins.format(candidate.capitalRequired());
-			case RETURN -> String.format("%.0f%%", candidate.returnOnCapital() * 100.0d);
-			case CONFIDENCE -> String.format("%.2f", candidate.confidence());
+			// A tilde marks an estimate from an assumed share of flow rather than from recorded
+			// displacement, so a guess never reads as a measurement.
+			case FILL -> candidate.timeToTurnOver()
+					.map(d -> (candidate.fillMeasured() ? "" : "~") + Waits.format(d))
+					.orElse("-");
 		};
 	}
 

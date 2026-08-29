@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.ledger;
 
 import com.google.gson.Gson;
@@ -6,6 +23,8 @@ import com.google.gson.JsonSyntaxException;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.track.Settlement;
+import jeff.skyblockflipper.core.track.TradeEvent;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Predicate;
 
 /**
  * A record of flips actually taken, and the only feedback loop the mod has.
@@ -25,8 +45,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>Without this, every number the mod prints is a claim about the future that is never checked
  * against anything. With it, {@link #stats(StrategyKind)} answers the one question that decides
  * whether any of the rest is worth trusting: of the profit the strategies quoted, how much showed
- * up? Entries are opened by hand and closed by hand, because the mod is advisory and cannot see
- * your purse.
+ * up? Entries arrive two ways: typed in with {@code /flip take} and {@code /flip close}, or booked
+ * by {@link #record} from trades the tracker watched happen. Both end in the same file, and
+ * {@link LedgerEntry#origin()} says which, because a trade nobody quoted cannot answer the capture
+ * question and would poison it if counted.
  *
  * <p>Unlike {@link jeff.skyblockflipper.core.tape.SalesTape}, this file is rewritten rather than
  * appended: entries are mutated when they close, there are tens of them rather than millions, and
@@ -102,6 +124,76 @@ public final class Ledger {
 		return Optional.of(updated);
 	}
 
+	/**
+	 * Books a trade the tracker watched happen, opening or advancing a position as needed.
+	 *
+	 * <p>A buy claims the oldest hand-opened position on that item that has sold nothing yet, and
+	 * replaces its quoted buy price with what was actually paid - that position stops being a plan
+	 * and becomes the trade itself, which is what {@link LedgerEntry.Origin#AUTO_QUOTED} means. A
+	 * buy with no such position opens an {@link LedgerEntry.Origin#AUTO_UNQUOTED} one instead,
+	 * because a trade the mod never suggested still says something about how much of a position
+	 * comes back.
+	 *
+	 * <p>A sale fills the oldest open position on that item. A sale with no position behind it is
+	 * ignored and returns empty: it is stock bought before tracking started or somewhere else
+	 * entirely, and booking it against nothing would report its whole price as profit.
+	 *
+	 * <p>{@code trackUnquoted} decides whether a buy the mod never suggested opens a position at
+	 * all. Off, this books only trades against plans you took, and everything else - the materials
+	 * you buy to play the game with - passes through unrecorded. On, those trades are recorded as
+	 * {@link LedgerEntry.Origin#AUTO_UNQUOTED} and count toward the fill rate only. Measured on a
+	 * real ledger on 2026-08-09: 58 of 60 entries were unquoted and 55 of those were still open,
+	 * because ordinary bazaar buying opens a position that no later sale ever closes.
+	 *
+	 * <p>Fees are re-derived from the displayed price through {@code fees} rather than taken from
+	 * the settlement's measured net coins, even though the measured figure is right there and is
+	 * exact. The capture rate compares realized against quoted, the quote was computed on this fee
+	 * model, and two different fee bases would put the model's own error into a number that is
+	 * supposed to measure the strategy.
+	 *
+	 * @return the entry this settled against, or empty if it settled against nothing
+	 */
+	public Optional<LedgerEntry> record(Settlement settlement, Fees fees, boolean trackUnquoted)
+			throws IOException {
+		return record(settlement, fees, trackUnquoted, null);
+	}
+
+	/**
+	 * The same, told what the mod has recently advised, so a plan it gave can be recognised.
+	 *
+	 * <p>{@code quotes} is what makes automatic tracking work for a strategy with no Take button.
+	 * Without it a buy is quoted only when the player opened the position by hand first, which the
+	 * NPC basket offers no way to do.
+	 */
+	public Optional<LedgerEntry> record(Settlement settlement, Fees fees, boolean trackUnquoted,
+			PlannedQuotes quotes) throws IOException {
+		if (settlement.side() == TradeEvent.Side.BUY) {
+			return recordBuy(settlement, trackUnquoted, quotes);
+		}
+
+		Optional<LedgerEntry> position = entries.values().stream()
+				.filter(LedgerEntry::isOpen)
+				.filter(entry -> isSameItem(entry, settlement))
+				.filter(entry -> entry.unitsSold() < entry.units())
+				.findFirst();
+
+		if (position.isEmpty()) {
+			return Optional.empty();
+		}
+
+		// The position's own strategy, not the venue's. The quote was computed on that strategy's
+		// fee basis and the capture rate compares the two, so reading the basis off where the sale
+		// happened would put the mismatch into the number that is supposed to measure the strategy.
+		double net = netProceedsPerUnit(position.get().kind(), settlement.unitPrice(), fees)
+				- position.get().unitBuyPrice();
+		LedgerEntry filled = position.get()
+				.filled(settlement.at(), settlement.units(), settlement.unitPrice(), net);
+
+		entries.put(filled.id(), filled);
+		save();
+		return Optional.of(filled);
+	}
+
 	/** Marks a position as never having worked out. Counts against the fill rate, not the capture rate. */
 	public Optional<LedgerEntry> abandon(String id) throws IOException {
 		LedgerEntry entry = entries.get(id);
@@ -114,6 +206,52 @@ public final class Ledger {
 		entries.put(id, updated);
 		save();
 		return Optional.of(updated);
+	}
+
+	/**
+	 * Deletes one entry outright, as though it had never been recorded.
+	 *
+	 * <p>Different from {@link #abandon}: abandoning says a plan did not work out and keeps its
+	 * units in the fill rate, while forgetting says the entry should never have been in the ledger.
+	 * That is what automatic tracking produces when you buy materials to play the game with rather
+	 * than to flip, and leaving those in makes the fill rate a measure of your shopping.
+	 *
+	 * @return the entry that was removed, or empty if no entry had that id
+	 */
+	public Optional<LedgerEntry> forget(String id) throws IOException {
+		LedgerEntry removed = entries.remove(id);
+
+		if (removed == null) {
+			return Optional.empty();
+		}
+
+		save();
+		return Optional.of(removed);
+	}
+
+	/**
+	 * Deletes every entry the filter accepts, in one write.
+	 *
+	 * @return how many entries were removed
+	 */
+	public int forgetAll(Predicate<LedgerEntry> filter) throws IOException {
+		List<String> doomed = entries.values().stream()
+				.filter(filter)
+				.map(LedgerEntry::id)
+				.toList();
+
+		if (doomed.isEmpty()) {
+			return 0;
+		}
+
+		doomed.forEach(entries::remove);
+		save();
+		return doomed.size();
+	}
+
+	/** How many entries the filter accepts, for a command that wants to say so before deleting. */
+	public long count(Predicate<LedgerEntry> filter) {
+		return entries.values().stream().filter(filter).count();
 	}
 
 	public List<LedgerEntry> all() {
@@ -133,10 +271,55 @@ public final class Ledger {
 		return openEntries().stream().mapToLong(LedgerEntry::capital).sum();
 	}
 
+	/**
+	 * Gross coins NPCs have paid out since {@code from}, which is what the daily NPC cap counts.
+	 *
+	 * <p>Gross, not profit: the cap is spent by what the NPC hands over, so it is
+	 * {@code unitsSold * unitSellPrice} and the purchase price never enters it.
+	 *
+	 * <p>An open position counts too, at the price it was quoted to sell at. Stock bought under an
+	 * NPC plan is stock bought to hand to the NPC, and the cap is spent when it is handed over
+	 * rather than when the plan was made, so counting from the buy runs the counter early rather
+	 * than late - which is the safe direction for a cap you do not want to hit mid-stack. An
+	 * abandoned position bought nothing beyond what it sold, and counts only that.
+	 *
+	 * <p>The open branch was originally load-bearing for a different and wrong reason: NPC sales
+	 * were believed to be unobservable, so no NPC position could ever close and settled units alone
+	 * would have read zero. {@code You sold <item> x<n> for <n> Coins!} is that observation and
+	 * {@link jeff.skyblockflipper.core.track.TradeEvent.Kind#NPC_SOLD} now books it, so a position
+	 * moves from the quoted branch to the settled one as it sells. The two are not summed - a
+	 * position is open or it is closed - so the counter does not double-count a same-day round trip.
+	 *
+	 * <p>Reads zero for a player who flips outside the mod, which overstates what is left. That is
+	 * the known cost of deriving this instead of asking the game, which exposes no such counter.
+	 */
+	public long npcCoinsReceivedSince(long from) {
+		double coins = 0.0d;
+
+		for (LedgerEntry entry : entries.values()) {
+			if (entry.kind() != StrategyKind.NPC_FLIP) {
+				continue;
+			}
+
+			if (entry.isOpen()) {
+				// The NPC price the plan was quoted at: net profit per unit is that price less what
+				// the unit cost, and the NPC counter is untaxed, so the two add back to it.
+				if (entry.openedAt() >= from) {
+					coins += entry.units() * (entry.unitBuyPrice() + entry.quotedUnitNet());
+				}
+			} else if (entry.closedAt() >= from) {
+				coins += entry.unitsSold() * entry.unitSellPrice();
+			}
+		}
+
+		return Math.round(coins);
+	}
+
 	/** @param kind null for every strategy together */
 	public LedgerStats stats(StrategyKind kind) {
 		int closed = 0;
 		int abandoned = 0;
+		int unquoted = 0;
 		long unitsPlanned = 0L;
 		long unitsFilled = 0L;
 		double quoted = 0.0d;
@@ -149,6 +332,8 @@ public final class Ledger {
 
 			// Abandoned positions carry no realized price, but their unsold units are real
 			// evidence about how much of a plan is reachable, so they count toward the fill rate.
+			// So do tracked trades the mod never quoted: nothing promised anything about them,
+			// but how much of a position comes back out is still measured the same way.
 			unitsPlanned += entry.units();
 			unitsFilled += entry.unitsSold();
 
@@ -157,12 +342,19 @@ public final class Ledger {
 				continue;
 			}
 
+			// A trade with no quote has a quoted profit of zero, and putting that in the
+			// denominator turns a perfectly ordinary trade into an infinite shortfall.
+			if (!entry.isQuoted()) {
+				unquoted++;
+				continue;
+			}
+
 			closed++;
 			quoted += entry.quotedOnFilled();
 			realized += entry.realizedTotal();
 		}
 
-		return new LedgerStats(closed, abandoned, unitsPlanned, unitsFilled, quoted, realized);
+		return new LedgerStats(closed, abandoned, unquoted, unitsPlanned, unitsFilled, quoted, realized);
 	}
 
 	public Path file() {
@@ -178,9 +370,76 @@ public final class Ledger {
 			// NPCs pay their fixed price flat; there is no tax on the counter.
 			case NPC_FLIP -> unitSellPrice;
 			case AUCTION_VALUE -> fees.binNetProceeds(Math.round(unitSellPrice));
-			// Craft outputs are assumed to be sold on the bazaar until craft flips exist and can
-			// say where they actually go.
-			case BAZAAR_SPREAD, CRAFT -> fees.bazaarSaleProceeds(unitSellPrice);
+			// Craft, combine and fusion outputs all leave on a bazaar sell offer, so they carry the
+			// bazaar sales tax exactly as a spread does.
+			case BAZAAR_SPREAD, CRAFT, COMBINE, FUSION -> fees.bazaarSaleProceeds(unitSellPrice);
+		};
+	}
+
+	private Optional<LedgerEntry> recordBuy(Settlement settlement, boolean trackUnquoted,
+			PlannedQuotes quotes) throws IOException {
+		LedgerEntry taken = entries.values().stream()
+				.filter(entry -> entry.isOpen() && entry.isUntouched())
+				.filter(entry -> entry.origin() == LedgerEntry.Origin.MANUAL)
+				.filter(entry -> isSameItem(entry, settlement))
+				.findFirst()
+				.orElse(null);
+
+		if (taken != null) {
+			return Optional.of(save(taken.confirmedBuy(settlement.units(), settlement.unitPrice())));
+		}
+
+		// Nothing was taken by hand, so ask what the mod last advised on this item. A basket line is
+		// a quote in every sense that matters here: the mod named the item, the price and the size,
+		// and the player bought it.
+		Quote quote = quotes == null
+				? null
+				: quotes.quoteFor(settlement.itemId(), settlement.displayName(), settlement.at())
+						.orElse(null);
+
+		if (quote != null) {
+			LedgerEntry opened = LedgerEntry
+					.open(nextId(), quote, settlement.at(), LedgerEntry.Origin.AUTO_QUOTED)
+					.confirmedBuy(settlement.units(), settlement.unitPrice());
+
+			return Optional.of(save(opened));
+		}
+
+		if (!trackUnquoted) {
+			return Optional.empty();
+		}
+
+		return Optional.of(save(LedgerEntry.bought(nextId(), settlement.itemId(),
+				settlement.displayName(), kindOf(settlement.venue()), settlement.at(),
+				settlement.units(), settlement.unitPrice())));
+	}
+
+	private LedgerEntry save(LedgerEntry entry) throws IOException {
+		entries.put(entry.id(), entry);
+		save();
+		return entry;
+	}
+
+	/**
+	 * Whether a settlement is about the position's item.
+	 *
+	 * <p>Ids when there are ids, and names only when there are not. An item the tracker never saw
+	 * in a menu carries no id, and treating that empty string as a match would settle every such
+	 * trade against the first position in the file.
+	 */
+	private static boolean isSameItem(LedgerEntry entry, Settlement settlement) {
+		if (!settlement.itemId().isEmpty() && !entry.itemId().isEmpty()) {
+			return entry.itemId().equals(settlement.itemId());
+		}
+
+		return entry.displayName().equals(settlement.displayName());
+	}
+
+	private static StrategyKind kindOf(Settlement.Venue venue) {
+		return switch (venue) {
+			case AUCTION -> StrategyKind.AUCTION_VALUE;
+			case NPC -> StrategyKind.NPC_FLIP;
+			case BAZAAR_ORDER, BAZAAR_INSTANT -> StrategyKind.BAZAAR_SPREAD;
 		};
 	}
 

@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.pricing;
 
 import org.junit.jupiter.api.Test;
@@ -15,15 +32,30 @@ class FeesTest {
 
 	@Test
 	void bazaarTaxNeverFallsBelowOnePercent() {
-		// The perk keeps paying out past level 2 in raw arithmetic, but the game floors it.
-		// Without the floor, every high-level bazaar margin would be overstated.
-		assertEquals(0.01d, new Fees(6, false).bazaarTaxRate(), 1e-9);
+		// Maxing the perk lands exactly on the floor, so the floor is not what stops it going
+		// lower - the two-level clamp is. Both have to hold for a margin to be quoted correctly.
+		assertEquals(0.01d, new Fees(Fees.MAX_BAZAAR_FLIPPER_LEVEL, false).bazaarTaxRate(), 1e-9);
 	}
 
 	@Test
 	void perkLevelIsClampedToTheRealRange() {
 		assertEquals(0.01d, new Fees(99, false).bazaarTaxRate(), 1e-9);
 		assertEquals(0.0125d, new Fees(-5, false).bazaarTaxRate(), 1e-9);
+	}
+
+	@Test
+	void orderSlotsStartAt14AndGain7PerPerkLevel() {
+		assertEquals(14, new Fees(0, false).bazaarOrderSlots());
+		assertEquals(21, new Fees(1, false).bazaarOrderSlots());
+		assertEquals(28, new Fees(2, false).bazaarOrderSlots());
+	}
+
+	@Test
+	void orderSlotsCannotExceedTheGameMaximum() {
+		// The reason the perk level had to stop at 2. Unlike the tax, this has no floor to hide
+		// an out-of-range level behind: a level of 6 would read 56 slots against a real 28.
+		assertEquals(28, new Fees(99, false).bazaarOrderSlots());
+		assertEquals(14, new Fees(-5, false).bazaarOrderSlots());
 	}
 
 	@Test

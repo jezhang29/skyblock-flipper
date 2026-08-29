@@ -1,7 +1,27 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.model;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -20,17 +40,27 @@ public final class ItemCatalog {
 	/**
 	 * @param id            Skyblock item id, e.g. {@code ENCHANTED_DIAMOND}
 	 * @param npcSellPrice  fixed price an NPC pays, or null if no NPC buys it
+	 * @param unstackable   true for items the resource says occupy one inventory slot each. Never
+	 *                      read directly: the flag is missing from whole classes of item that do
+	 *                      not stack, so {@link Stacking} decides this from the order book and only
+	 *                      consults the flag as a second route to the same answer
 	 * @param upgradeCosts  what each star level costs, cheapest first; empty for the great majority
 	 *                      of items, which cannot be starred at all
 	 */
-	public record Entry(String id, String name, Double npcSellPrice, List<UpgradeCost> upgradeCosts) {
+	public record Entry(String id, String name, Double npcSellPrice, boolean unstackable,
+			List<UpgradeCost> upgradeCosts) {
 		public Entry {
 			upgradeCosts = List.copyOf(upgradeCosts);
 		}
 
 		/** For the items and tests that have no star costs to state. */
 		public Entry(String id, String name, Double npcSellPrice) {
-			this(id, name, npcSellPrice, List.of());
+			this(id, name, npcSellPrice, false, List.of());
+		}
+
+		/** The shape before stacking was carried, kept so star-cost callers need not restate it. */
+		public Entry(String id, String name, Double npcSellPrice, List<UpgradeCost> upgradeCosts) {
+			this(id, name, npcSellPrice, false, upgradeCosts);
 		}
 
 		/** Fractional for cheap items, so this stays a double all the way through the math. */
@@ -76,6 +106,135 @@ public final class ItemCatalog {
 
 	public boolean isEmpty() {
 		return items.isEmpty();
+	}
+
+	/**
+	 * What a typed item turned into: the one item it can only mean, or everything it could mean.
+	 *
+	 * @param resolved   the single item the query names, or null when it named none or several
+	 * @param candidates every item the query matched, best first, so a caller with nothing resolved
+	 *                   has something to offer instead of an error
+	 */
+	public record Lookup(String resolved, List<String> candidates) {
+		public Lookup {
+			candidates = List.copyOf(candidates);
+		}
+
+		public static Lookup none() {
+			return new Lookup(null, List.of());
+		}
+
+		/** The item to act on, present only when the query was unambiguous. */
+		public Optional<String> only() {
+			return Optional.ofNullable(resolved);
+		}
+
+		public boolean isEmpty() {
+			return candidates.isEmpty();
+		}
+	}
+
+	/**
+	 * The item a player meant by what they typed, by id or by the name they read in game.
+	 *
+	 * <p>Ids cannot be guessed from names and the mod must stop pretending they can. Nether Wart is
+	 * {@code NETHER_STALK}, so Nether Wart Distillate is {@code NETHER_STALK_DISTILLATE}; the same
+	 * legacy Minecraft vocabulary that makes {@code DOUBLE_PLANT} a sunflower runs through the whole
+	 * catalog. A player reading the bazaar sees only the name, so the name has to be a way in.
+	 *
+	 * <p>Matching runs in tiers - id, whole name, name prefix, all words present, id substring - and
+	 * a query resolves only when the best tier it reaches holds exactly one item. That is what keeps
+	 * the Enchanted Melon problem from being decided by ranking: "enchanted melon" is the whole name
+	 * of one item and the prefix of another, so it resolves to the exact one, while a query matching
+	 * both loosely resolves to neither and is handed back as a choice. See {@link #shadowedBy}.
+	 *
+	 * @param query      an id, a display name, or part of either. Spaces and case do not matter
+	 * @param restrictTo the ids worth offering at all, usually the bazaar's products; empty means
+	 *                   the whole catalog. Ids outside the catalog still match on their own text,
+	 *                   so this works before the item resource has ever been fetched
+	 */
+	public Lookup find(String query, Collection<String> restrictTo) {
+		if (query == null || query.isBlank()) {
+			return Lookup.none();
+		}
+
+		String trimmed = query.trim();
+		String asId = trimmed.toUpperCase(Locale.ROOT).replace(' ', '_');
+		String lower = trimmed.toLowerCase(Locale.ROOT);
+		String[] words = lower.split("\\s+");
+		Collection<String> pool = pool(restrictTo);
+
+		// An exact id beats everything, but only when what was typed could be one. A query with a
+		// space in it was read off the screen, and "Enchanted Melon" is the whole name of the 51k
+		// item as surely as it is the id of the 341 one - so spaces mean the name wins.
+		if (words.length == 1 && pool.contains(asId)) {
+			return new Lookup(asId, List.of(asId));
+		}
+
+		List<List<String>> tiers = List.of(
+				new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+
+		for (String id : pool) {
+			String name = displayName(id).toLowerCase(Locale.ROOT);
+
+			if (name.equals(lower)) {
+				tiers.get(0).add(id);
+			} else if (name.startsWith(lower)) {
+				tiers.get(1).add(id);
+			} else if (containsEveryWord(name, words)) {
+				tiers.get(2).add(id);
+			} else if (id.contains(asId)) {
+				tiers.get(3).add(id);
+			}
+		}
+
+		String resolved = null;
+		List<String> candidates = new ArrayList<>();
+
+		for (List<String> tier : tiers) {
+			tier.sort(Comparator.comparing(this::displayName).thenComparing(Comparator.naturalOrder()));
+
+			// The first tier that matched anything is the only one allowed to decide. A lower tier
+			// exists to be offered, never to break a tie the better tier already failed to break.
+			if (resolved == null && candidates.isEmpty() && tier.size() == 1) {
+				resolved = tier.getFirst();
+			}
+
+			candidates.addAll(tier);
+		}
+
+		return new Lookup(resolved, candidates);
+	}
+
+	/** {@link #find(String, Collection)} across the whole catalog. */
+	public Lookup find(String query) {
+		return find(query, List.of());
+	}
+
+	/**
+	 * Everything worth matching against: the restriction when there is one, plus the catalog.
+	 *
+	 * <p>The union rather than the intersection, because the two disagree in both directions - the
+	 * bazaar sells products the item resource has never heard of, and the resource lists thousands
+	 * of items no bazaar trades. A restricted search stays restricted; an unrestricted one sees
+	 * everything known.
+	 */
+	private Collection<String> pool(Collection<String> restrictTo) {
+		if (restrictTo == null || restrictTo.isEmpty()) {
+			return items.keySet();
+		}
+
+		return new LinkedHashSet<>(restrictTo);
+	}
+
+	private static boolean containsEveryWord(String name, String[] words) {
+		for (String word : words) {
+			if (!word.isEmpty() && !name.contains(word)) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**

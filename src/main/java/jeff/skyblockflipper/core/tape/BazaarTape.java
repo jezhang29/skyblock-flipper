@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.tape;
 
 import com.google.gson.Gson;
@@ -8,6 +25,7 @@ import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSample;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +45,7 @@ import java.util.Map;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -48,7 +67,9 @@ import java.util.stream.Stream;
  * seconds; taping all of that would be roughly fifteen times the disk for indicators that cannot
  * resolve it. The caller picks the interval by how often it calls {@link #record}.
  *
- * <p>Not thread-safe by itself; the poller owns it and writes from a single thread.
+ * <p>Reads are not synchronized - the poller owns them and streams from a single thread. Every
+ * write is, on a lock held per directory rather than per object, for the reasons {@link TapeLock}
+ * gives.
  */
 public final class BazaarTape {
 	private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -71,11 +92,14 @@ public final class BazaarTape {
 	 */
 	private long lastRecordedUpdate = Long.MIN_VALUE;
 
+	private final Object writeLock;
+
 	private long totalRecorded;
 
 	public BazaarTape(Path directory, int retentionDays) {
 		this.directory = directory;
 		this.retentionDays = Math.max(1, retentionDays);
+		this.writeLock = TapeLock.forDirectory(directory);
 	}
 
 	/**
@@ -93,6 +117,12 @@ public final class BazaarTape {
 	 * @return what was written, oldest first; empty when the book has not moved
 	 */
 	public List<BazaarSample> record(BazaarSnapshot snapshot) throws IOException {
+		synchronized (writeLock) {
+			return recordLocked(snapshot);
+		}
+	}
+
+	private List<BazaarSample> recordLocked(BazaarSnapshot snapshot) throws IOException {
 		if (snapshot == null || snapshot.isEmpty()) {
 			return List.of();
 		}
@@ -141,6 +171,43 @@ public final class BazaarTape {
 	}
 
 	/**
+	 * Folds lines from another copy of this tape into ours, skipping samples we already hold.
+	 *
+	 * <p>Keyed on the snapshot instant plus the product, which is one row of one sample - the same
+	 * grain {@link #record} writes at. Keying on the instant alone would drop a whole book to one
+	 * product, and both machines sample the same Hypixel snapshots, so a day taped on both sides
+	 * would otherwise merge to double.
+	 *
+	 * <p>Synchronized with {@code record} and the rollup for the same reason the sales tape's merge
+	 * is: three threads append to one file.
+	 *
+	 * @param fileName one of our own file names - a {@code yyyy-MM-dd.jsonl} day or the rollup
+	 * @return how many lines were new
+	 */
+	public int merge(String fileName, List<String> lines) throws IOException {
+		if (!isTapeFile(fileName)) {
+			throw new IllegalArgumentException("not a bazaar tape file: " + fileName);
+		}
+
+		Function<String, String> key = DAILY_FILE.equals(fileName)
+				? line -> JsonLines.pair(line, "p", "d")
+				: line -> JsonLines.pair(line, "t", "p");
+
+		synchronized (writeLock) {
+			return TapeMerge.merge(directory.resolve(fileName), lines, key);
+		}
+	}
+
+	/** True for names this tape writes, and false for everything else, path separators included. */
+	public static boolean isTapeFile(String fileName) {
+		if (fileName == null || fileName.contains("/") || fileName.contains("\\")) {
+			return false;
+		}
+
+		return DAILY_FILE.equals(fileName) || dayNamed(fileName) != null;
+	}
+
+	/**
 	 * Streams the last {@code days} days of samples through {@code consumer}, oldest day first.
 	 *
 	 * <p>Streamed for the same reason the sales tape is: a fortnight of this is millions of
@@ -158,10 +225,7 @@ public final class BazaarTape {
 
 		try (Stream<Path> files = Files.list(directory)) {
 			for (Path file : files.filter(p -> onOrAfter(p, cutoff)).sorted().toList()) {
-				for (BazaarSample sample : readFile(file)) {
-					consumer.accept(sample);
-					read++;
-				}
+				read += forEachInFile(file, consumer);
 			}
 		}
 
@@ -246,9 +310,19 @@ public final class BazaarTape {
 	 * <p>The index is rewritten rather than appended to, since it is the one file here that is not
 	 * append-only in spirit: it is small enough that rewriting it is cheaper than any alternative.
 	 *
+	 * <p>Takes the write lock for both halves. Rewriting the index truncates it, so a merge landing
+	 * in the middle of that would be written and then thrown away; deleting a day file mid-merge
+	 * loses the same way.
+	 *
 	 * @return how many raw day files were removed
 	 */
 	public int prune() throws IOException {
+		synchronized (writeLock) {
+			return pruneLocked();
+		}
+	}
+
+	private int pruneLocked() throws IOException {
 		if (!Files.isDirectory(directory)) {
 			return 0;
 		}
@@ -295,19 +369,23 @@ public final class BazaarTape {
 			return;
 		}
 
-		try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
-				StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
-			for (Map.Entry<String, List<Double>> entry : midsByProduct.entrySet()) {
-				double[] mids = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
+		// Locked around the write only. The read above is the slow half and touches nothing anyone
+		// else writes.
+		synchronized (writeLock) {
+			try (BufferedWriter writer = Files.newBufferedWriter(directory.resolve(DAILY_FILE),
+					StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+				for (Map.Entry<String, List<Double>> entry : midsByProduct.entrySet()) {
+					double[] mids = entry.getValue().stream().mapToDouble(Double::doubleValue).sorted().toArray();
 
-				writer.write(gson.toJson(new BazaarDailyStat(
-						entry.getKey(),
-						DAY.format(day),
-						mids[mids.length / 2],
-						mids[0],
-						mids[mids.length - 1],
-						mids.length)));
-				writer.newLine();
+					writer.write(gson.toJson(new BazaarDailyStat(
+							entry.getKey(),
+							DAY.format(day),
+							mids[mids.length / 2],
+							mids[0],
+							mids[mids.length - 1],
+							mids.length)));
+					writer.newLine();
+				}
 			}
 		}
 	}
@@ -342,9 +420,25 @@ public final class BazaarTape {
 
 	private List<BazaarSample> readFile(Path file) throws IOException {
 		List<BazaarSample> out = new ArrayList<>();
+		forEachInFile(file, out::add);
+		return out;
+	}
 
-		try (Stream<String> lines = Files.lines(file, StandardCharsets.UTF_8)) {
-			for (String line : lines.toList()) {
+	/**
+	 * Parses one day file a line at a time, handing each sample straight to {@code consumer}.
+	 *
+	 * <p>Nothing here holds the file: a day is about 40MB and the callers all want a running
+	 * statistic, not the samples themselves.
+	 *
+	 * @return how many samples were read
+	 */
+	private int forEachInFile(Path file, Consumer<BazaarSample> consumer) throws IOException {
+		int read = 0;
+
+		try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			String line;
+
+			while ((line = reader.readLine()) != null) {
 				if (line.isBlank()) {
 					continue;
 				}
@@ -353,7 +447,8 @@ public final class BazaarTape {
 					BazaarSample sample = gson.fromJson(line, BazaarSample.class);
 
 					if (sample != null && sample.productId() != null) {
-						out.add(sample);
+						consumer.accept(sample);
+						read++;
 					}
 				} catch (JsonSyntaxException ignored) {
 					// A truncated final line from an interrupted write costs exactly one sample.
@@ -361,7 +456,7 @@ public final class BazaarTape {
 			}
 		}
 
-		return out;
+		return read;
 	}
 
 	/** True for our own day files dated on or after {@code cutoff}; anything else is skipped. */
@@ -372,8 +467,10 @@ public final class BazaarTape {
 
 	/** The day a raw tape file covers, or null if it is not one of ours. */
 	private static LocalDate dayOf(Path file) {
-		String name = file.getFileName().toString();
+		return dayNamed(file.getFileName().toString());
+	}
 
+	private static LocalDate dayNamed(String name) {
 		if (!name.endsWith(SUFFIX)) {
 			return null;
 		}

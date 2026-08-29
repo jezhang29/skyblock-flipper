@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.ledger;
 
 import java.util.OptionalDouble;
@@ -10,12 +27,18 @@ import java.util.OptionalDouble;
  * runs below quoted margin as a rule, not as an accident. {@link #captureRate()} is that gap,
  * measured on your own fills.
  *
+ * @param closed         positions closed with a quote to hold them against, which is the sample
+ *                       the capture rate is computed on
+ * @param unquoted       positions the tracker recorded that no strategy ever quoted. They count
+ *                       toward the fill rate and are kept out of the capture rate, since a quote
+ *                       of zero in the denominator would read as a total shortfall
  * @param quotedOnFilled what the plans promised, counted only on units that actually transacted
  * @param realized       what those same units actually paid
  */
 public record LedgerStats(
 		int closed,
 		int abandoned,
+		int unquoted,
 		long unitsPlanned,
 		long unitsFilled,
 		double quotedOnFilled,
@@ -28,7 +51,7 @@ public record LedgerStats(
 	public static final int MIN_MEANINGFUL_SAMPLES = 5;
 
 	public static LedgerStats empty() {
-		return new LedgerStats(0, 0, 0L, 0L, 0.0d, 0.0d);
+		return new LedgerStats(0, 0, 0, 0L, 0L, 0.0d, 0.0d);
 	}
 
 	/**

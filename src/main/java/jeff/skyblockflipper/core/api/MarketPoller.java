@@ -1,13 +1,38 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.api;
 
 import jeff.skyblockflipper.core.config.ScanSettings;
 import jeff.skyblockflipper.core.model.BazaarSample;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.ItemCatalog;
+import jeff.skyblockflipper.core.model.SaleDailyStat;
 import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
+import jeff.skyblockflipper.core.valuation.NpcEdgeHistory;
+import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PriceHistory;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
+import jeff.skyblockflipper.core.recovery.RecoveryValuationModels;
+import jeff.skyblockflipper.core.recovery.RecoveryListingScan;
+import jeff.skyblockflipper.core.recovery.RecoveryScanPolicy;
+import jeff.skyblockflipper.core.pricing.Fees;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -70,6 +95,17 @@ public final class MarketPoller implements AutoCloseable {
 	 */
 	private static final Duration BAZAAR_TAPE_INTERVAL = Duration.ofMinutes(5);
 
+	/**
+	 * How far back the NPC edge measurement looks, and how often it is redone.
+	 *
+	 * <p>Three days is what every parameter in {@code docs/npc-flipping.md} was measured over, and
+	 * comfortably more than the seventeen hours {@code NpcEdge.MIN_SAMPLES} needs. Redoing it means
+	 * re-reading and parsing that whole window - a couple of million taped lines - so it runs on the
+	 * maintenance thread and no more often than a three-day statistic can meaningfully change.
+	 */
+	private static final Duration NPC_EDGE_WINDOW = Duration.ofDays(3);
+	private static final Duration NPC_EDGE_INTERVAL = Duration.ofHours(2);
+
 	private final HypixelApi api;
 	private final MarketData data;
 	private final SalesTape tape;
@@ -84,6 +120,18 @@ public final class MarketPoller implements AutoCloseable {
 	private final PriceHistory history;
 
 	private ScheduledExecutorService executor;
+
+	/**
+	 * Tape maintenance, on a thread of its own.
+	 *
+	 * <p>Rolling a completed sales day into its index means decoding a few hundred thousand item
+	 * blobs, which takes long enough that sharing a thread with {@link #pollSales} would be a data
+	 * loss: the ended-auctions window is 60 seconds wide and nothing recovers one that was missed
+	 * while the thread was busy summarising yesterday. Nothing here writes what the poller writes -
+	 * maintenance reads completed day files and owns the rollup index, the poller appends to
+	 * today's.
+	 */
+	private ScheduledExecutorService maintenance;
 
 	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape, BazaarTape bazaarTape,
 			Supplier<ScanSettings> settings, Consumer<String> log) {
@@ -112,6 +160,12 @@ public final class MarketPoller implements AutoCloseable {
 			return thread;
 		});
 
+		maintenance = Executors.newSingleThreadScheduledExecutor(runnable -> {
+			Thread thread = new Thread(runnable, "skyblock-flipper-tape-maintenance");
+			thread.setDaemon(true);
+			return thread;
+		});
+
 		// Read once, like the trend window above: a schedule cannot change under a running executor,
 		// so a new cadence takes effect where a new window does - on the restart /flip reload does.
 		schedule(this::pollBazaar, Duration.ZERO,
@@ -119,7 +173,21 @@ public final class MarketPoller implements AutoCloseable {
 		schedule(this::pollSales, Duration.ofSeconds(2), SALES_INTERVAL);
 		schedule(this::pollMayor, Duration.ofSeconds(4), MAYOR_INTERVAL);
 		schedule(this::pollItems, Duration.ofSeconds(6), ITEMS_INTERVAL);
-		schedule(this::pruneTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
+		// The sales rollup is the one piece of tape work heavy enough to need its own thread; the
+		// bazaar's stays with the poller, which is the only thread allowed to touch the price ring.
+		scheduleMaintenance(this::maintainSalesTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
+		schedule(this::maintainBazaarTape, Duration.ofMinutes(2), PRUNE_INTERVAL);
+		// Also on the maintenance thread, and for the same reason: this re-reads three days of the
+		// bazaar tape, which is far too long to hold up a 45-second sales poll. It touches neither
+		// the price ring nor anything the poller writes - the tape is read-only from here.
+		//
+		// As early as the catalog allows, because until this has published a snapshot every NpcEdge
+		// is absent and NpcFlipStrategy prices the chase at zero - which is a premium of zero, on a
+		// plan the player is about to place. The item fetch is what supplies the NPC prices, and
+		// rebuildNpcEdges already returns without publishing while the catalog is empty, so the
+		// guard is what orders these two and not the delay. Measured live on 2026-08-15: a plan run
+		// 2m19s after launch posted at the plain outbid with the premium set to 1.0.
+		scheduleMaintenance(this::rebuildNpcEdges, Duration.ofSeconds(20), NPC_EDGE_INTERVAL);
 
 		// Replays yesterday's tape into the ring before the first live sample, so trends are
 		// available immediately on a client that has run before rather than three hours in.
@@ -141,6 +209,11 @@ public final class MarketPoller implements AutoCloseable {
 		if (executor != null) {
 			executor.shutdownNow();
 			executor = null;
+		}
+
+		if (maintenance != null) {
+			maintenance.shutdownNow();
+			maintenance = null;
 		}
 	}
 
@@ -195,7 +268,26 @@ public final class MarketPoller implements AutoCloseable {
 	}
 
 	/**
-	 * Replays the recent tape into the price ring, once, at startup.
+	 * Re-reads the tape into the price ring and re-prices against it.
+	 *
+	 * <p>For the one thing that changes the tape underneath a running poller: a sync that just
+	 * merged the hours this client was closed for. Without it those hours sit on disk unread until
+	 * the next launch, which is most of what a sync was for.
+	 *
+	 * <p>Queued on the poll thread rather than run on the caller's, because the ring belongs to
+	 * that thread and the valuation model is rebuilt from the same place.
+	 */
+	public synchronized void rewarm() {
+		if (executor == null) {
+			return;
+		}
+
+		scheduleOnce(this::warmPriceHistory, Duration.ZERO);
+		scheduleOnce(this::rebuildValuations, Duration.ZERO);
+	}
+
+	/**
+	 * Replays the recent tape into the price ring.
 	 *
 	 * <p>Only the window's worth is read back. The tape holds far more so that longer-horizon
 	 * questions stay answerable later, but the ring would evict anything older on the way in, so
@@ -210,6 +302,9 @@ public final class MarketPoller implements AutoCloseable {
 
 		try {
 			int days = (int) Math.max(1L, Math.ceilDiv(config.trendWindowHours(), 24));
+			// Cleared first so this is safe to run more than once: the ring cannot tell a replayed
+			// sample from a second real one, and a doubled series reads as half the volatility.
+			history.clear();
 			int read = bazaarTape.forEachRecent(days, history::append);
 			history.setDailyStats(bazaarTape.readDailyIndex());
 			data.setTrends(history.snapshot());
@@ -233,15 +328,17 @@ public final class MarketPoller implements AutoCloseable {
 	private void rebuildValuations() {
 		ScanSettings config = settings.get();
 		Duration window = Duration.ofDays(config.valuationWindowDays());
-		FairValueModel.Builder builder = FairValueModel.builder(Instant.now(), window);
+		RecoveryValuationModels.Builder builder = RecoveryValuationModels.builder(Instant.now(), window);
 
 		try {
 			int read = tape.forEachRecent(config.valuationWindowDays(), builder::add);
-			FairValueModel model = builder.build();
-			data.setValues(model);
+			RecoveryValuationModels models = builder.build();
+			FairValueModel model = models.ordinary();
+			data.setValues(model, models.recovery());
 
 			log.accept("Valuations rebuilt from " + read + " taped sales: "
-					+ model.pricedConfigurations() + " item configurations priced");
+					+ model.pricedConfigurations() + " item configurations and "
+					+ models.recovery().componentIdentities() + " recovery components priced");
 		} catch (IOException e) {
 			log.accept("Failed reading the sales tape for valuation: " + e);
 		}
@@ -266,7 +363,11 @@ public final class MarketPoller implements AutoCloseable {
 			return;
 		}
 
-		UnderpricedScan scan = new UnderpricedScan(model, config.minDiscount(), config.maxPrice());
+		UnderpricedScan ordinary = new UnderpricedScan(model, config.minDiscount(), config.maxPrice());
+		RecoveryListingScan recovery = new RecoveryListingScan(data.recoveryValues(), data.bazaar(),
+				new Fees(config.bazaarFlipperLevel(), data.mayor().isDerpy()),
+				RecoveryScanPolicy.from(config.recovery()), Instant.now());
+		ActiveAuctionScan scan = new ActiveAuctionScan(ordinary, recovery);
 		OptionalLong updated = api.sweepActiveBins(data.auctionsLastUpdated(), scan);
 
 		if (updated.isEmpty()) {
@@ -274,23 +375,70 @@ public final class MarketPoller implements AutoCloseable {
 			return;
 		}
 
-		data.setAuctionScan(updated.getAsLong(), scan.results(),
-				scan.listingsSeen() + " listings, " + scan.decoded() + " decoded, "
-						+ scan.rejectedOnExactValue() + " rejected on exact match, "
-						+ scan.results().size() + " under fair value");
+		data.setAuctionScan(updated.getAsLong(), scan.ordinaryResults(), scan.recoveryResults(),
+				scan.ordinary().listingsSeen() + " listings, " + scan.decodedBlobs() + " decoded, "
+						+ scan.ordinary().rejectedOnExactValue() + " rejected on exact match, "
+						+ scan.ordinaryResults().size() + " under fair value, "
+						+ scan.recoveryResults().size() + " recovery, "
+						+ scan.failures() + " isolated failures");
 	}
 
-	private void pruneTape() {
-		try {
-			int removed = tape.prune();
-
-			if (removed > 0) {
-				log.accept("Pruned " + removed + " expired sales tape file(s)");
-			}
-		} catch (IOException e) {
-			log.accept("Failed pruning sales tape: " + e);
+	/**
+	 * Re-measures how durably each product's bid sits under its NPC price.
+	 *
+	 * <p>Skipped until the item catalog has arrived: the NPC price is the thing being measured
+	 * against, and a pass with no catalog would publish an empty snapshot over a good one. Skipped
+	 * with the tape off too, since there would be nothing to read.
+	 */
+	private void rebuildNpcEdges() {
+		if (!settings.get().bazaarTapeEnabled()) {
+			return;
 		}
 
+		ItemCatalog catalog = data.catalog();
+
+		if (catalog.isEmpty()) {
+			return;
+		}
+
+		NpcEdgeHistory edges = new NpcEdgeHistory(catalog, Instant.now(), NPC_EDGE_WINDOW);
+
+		try {
+			int days = (int) Math.max(1L, NPC_EDGE_WINDOW.toDays());
+			int read = bazaarTape.forEachRecent(days, edges::append);
+			NpcEdgeSnapshot snapshot = edges.snapshot();
+			data.setNpcEdges(snapshot);
+
+			log.accept("NPC edges measured from " + read + " taped samples: "
+					+ snapshot.productsWithMeasuredEdge() + " of " + snapshot.size()
+					+ " NPC-priced products have enough history");
+		} catch (IOException e) {
+			log.accept("Failed reading the bazaar tape to measure NPC edges: " + e);
+		}
+	}
+
+	private void maintainSalesTape() {
+		try {
+			// Summarise before deleting, so a day that ages out still leaves its rollup behind.
+			// One day per pass, so a client returning after a week spreads the decoding over
+			// several passes rather than doing all of it in one.
+			int rolled = tape.rollUpOneCompletedDay();
+			int removed = tape.prune();
+
+			List<SaleDailyStat> index = tape.readDailyIndex();
+			data.setSalesRollup(
+					(int) index.stream().map(SaleDailyStat::day).distinct().count(), index.size());
+
+			if (rolled > 0 || removed > 0) {
+				log.accept("Sales tape: rolled up " + rolled + " day(s), pruned " + removed
+						+ " expired file(s)");
+			}
+		} catch (IOException e) {
+			log.accept("Failed maintaining sales tape: " + e);
+		}
+	}
+
+	private void maintainBazaarTape() {
 		try {
 			// Summarise before deleting, so a day that ages out still leaves its rollup behind.
 			int rolled = bazaarTape.rollUpCompletedDays();
@@ -317,6 +465,12 @@ public final class MarketPoller implements AutoCloseable {
 	 */
 	private void schedule(PollTask task, Duration initialDelay, Duration interval) {
 		executor.scheduleAtFixedRate(guarded(task),
+				initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
+	}
+
+	/** As {@link #schedule}, on the thread that must never hold up a poll. */
+	private void scheduleMaintenance(PollTask task, Duration initialDelay, Duration interval) {
+		maintenance.scheduleAtFixedRate(guarded(task),
 				initialDelay.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
 	}
 

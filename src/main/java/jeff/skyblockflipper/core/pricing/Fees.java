@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.pricing;
 
 /**
@@ -7,16 +24,40 @@ package jeff.skyblockflipper.core.pricing;
  * roughly 1-1.25% on the bazaar and 2-3.5% on the auction house, so any idea with a gross margin
  * under that is a coin shredder that looks like a business.
  *
- * @param bazaarFlipperLevel Bazaar Flipper perk level, 0-6
+ * @param bazaarFlipperLevel Bazaar Flipper perk level, 0-2
  * @param derpy              whether Derpy currently holds office, which quadruples every AH fee
  */
 public record Fees(int bazaarFlipperLevel, boolean derpy) {
+	/**
+	 * Levels the Bazaar Flipper perk actually has in the Community Shop.
+	 *
+	 * <p>This used to be 6. The tax survived that, because {@link #BAZAAR_MIN_TAX} caught every
+	 * level above 2 anyway, so no quoted margin was ever wrong. {@link #bazaarOrderSlots()} has no
+	 * such floor: at level 6 it would report 56 slots against a real maximum of 28.
+	 */
+	public static final int MAX_BAZAAR_FLIPPER_LEVEL = 2;
+
 	/** Base bazaar sales tax before the Bazaar Flipper perk. */
 	private static final double BAZAAR_BASE_TAX = 0.0125d;
 	/** Each perk level removes this much tax... */
 	private static final double BAZAAR_TAX_PER_LEVEL = 0.00125d;
 	/** ...down to this floor. */
 	private static final double BAZAAR_MIN_TAX = 0.01d;
+
+	/** Buy orders and sell offers you may have resting at once with no perk. */
+	private static final int BAZAAR_BASE_ORDER_SLOTS = 14;
+	/** Extra slots each perk level grants, to a total of 28 at level 2. */
+	private static final int BAZAAR_ORDER_SLOTS_PER_LEVEL = 7;
+
+	/**
+	 * The most order slots any account can have: 28, at Bazaar Flipper 2.
+	 *
+	 * <p>Here rather than written out wherever a setting needs a ceiling. {@code npcMaxOrderSlots}
+	 * offered up to 56 - the old six-level formula - so the settings screen let a player ask for
+	 * twice the slots the game has, and the basket then reported a bound it could never reach.
+	 */
+	public static final int MAX_BAZAAR_ORDER_SLOTS =
+			BAZAAR_BASE_ORDER_SLOTS + BAZAAR_ORDER_SLOTS_PER_LEVEL * MAX_BAZAAR_FLIPPER_LEVEL;
 
 	private static final double BIN_FEE_UNDER_10M = 0.01d;
 	private static final double BIN_FEE_UNDER_100M = 0.02d;
@@ -29,7 +70,7 @@ public record Fees(int bazaarFlipperLevel, boolean derpy) {
 	private static final int DERPY_MULTIPLIER = 4;
 
 	public Fees {
-		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, 6);
+		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, MAX_BAZAAR_FLIPPER_LEVEL);
 	}
 
 	public static Fees none() {
@@ -39,6 +80,17 @@ public record Fees(int bazaarFlipperLevel, boolean derpy) {
 	/** Effective bazaar sales tax, as a fraction. */
 	public double bazaarTaxRate() {
 		return Math.max(BAZAAR_MIN_TAX, BAZAAR_BASE_TAX - BAZAAR_TAX_PER_LEVEL * bazaarFlipperLevel);
+	}
+
+	/**
+	 * Buy orders and sell offers that may rest at once: 14, plus 7 per perk level.
+	 *
+	 * <p>Not a fee, but it comes off the same perk level this record already carries, and every
+	 * caller that needs it is a strategy that already holds a {@code Fees}. Putting it anywhere
+	 * else would mean a second thing that knows what Bazaar Flipper does.
+	 */
+	public int bazaarOrderSlots() {
+		return BAZAAR_BASE_ORDER_SLOTS + BAZAAR_ORDER_SLOTS_PER_LEVEL * bazaarFlipperLevel;
 	}
 
 	/** What actually lands in your purse from a bazaar sell offer of {@code gross} coins. */

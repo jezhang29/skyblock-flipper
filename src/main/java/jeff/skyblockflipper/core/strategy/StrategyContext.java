@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
@@ -31,6 +48,18 @@ import java.util.List;
  *                         back. Plans are sized on what fills inside it, so it is a statement of
  *                         patience rather than a filter: it changes what ranks highest, not what is
  *                         allowed through
+ * @param maxCapitalShare  the largest fraction of {@link #bankroll()} one plan may ask for. 1.0
+ *                         means no cap, which is what every caller with no opinion gets
+ * @param npc              the NPC-specific half: measured edge history plus the settings that
+ *                         decide what is worth an order slot. Bundled because they are only ever
+ *                         read as a set, and because the basket allocator reads the same set
+ * @param craft            the craft-specific half: whether crafting is offered at all, and the
+ *                         order-slot budget one craft plan may spend out of the account's shared
+ *                         pool
+ * @param combine          the combine-specific half: whether enchanted-book combining is offered at
+ *                         all
+ * @param fusion           the fusion-specific half: whether attribute-shard fusion is offered, and
+ *                         the crocodile perk level that scales reptile-family output
  */
 public record StrategyContext(
 		BazaarSnapshot bazaar,
@@ -42,10 +71,18 @@ public record StrategyContext(
 		long minProfitPerFlip,
 		double minConfidence,
 		double maxAdverseDrift,
-		Duration fillHorizon
+		Duration fillHorizon,
+		double maxCapitalShare,
+		NpcContext npc,
+		CraftContext craft,
+		CombineContext combine,
+		FusionContext fusion
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
+
+	/** No cap, which is the behaviour every caller had before the cap existed. */
+	public static final double UNCAPPED = 1.0d;
 
 	public StrategyContext {
 		underpriced = List.copyOf(underpriced);
@@ -53,6 +90,44 @@ public record StrategyContext(
 		if (fillHorizon == null || fillHorizon.isZero() || fillHorizon.isNegative()) {
 			fillHorizon = DEFAULT_FILL_HORIZON;
 		}
+
+		maxCapitalShare = maxCapitalShare <= 0.0d ? UNCAPPED : Math.min(maxCapitalShare, UNCAPPED);
+		npc = npc == null ? NpcContext.unlimited() : npc;
+		craft = craft == null ? CraftContext.defaults() : craft;
+		combine = combine == null ? CombineContext.defaults() : combine;
+		fusion = fusion == null ? FusionContext.defaults() : fusion;
+	}
+
+	/** The shape before fusion had settings of its own, for callers that state up to combine. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc, CraftContext craft, CombineContext combine) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, craft, combine,
+				FusionContext.defaults());
+	}
+
+	/** The shape before combining had settings of its own, for callers that state only NPC and craft. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc, CraftContext craft) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, craft, CombineContext.defaults());
+	}
+
+	/**
+	 * The most one plan may ask for, which is what a strategy should size against rather than the
+	 * whole bankroll.
+	 *
+	 * <p>Measured need, from live play on 2026-08-04: a Recombobulator 3000 plan asked for
+	 * 249,212,105 of a 250,000,000 bankroll - 99.7% of everything on one item with a 25 unit order,
+	 * on a book that then failed to fill a single unit. Nothing in the ranking pushes back on that,
+	 * because profit per hour rises with size and the only ceiling was affordability.
+	 */
+	public long maxCapitalPerFlip() {
+		return Math.max(1L, Math.round(bankroll * maxCapitalShare));
 	}
 
 	/**
@@ -63,7 +138,34 @@ public record StrategyContext(
 			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
 			double minConfidence, double maxAdverseDrift) {
 		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
-				maxAdverseDrift, DEFAULT_FILL_HORIZON);
+				maxAdverseDrift, DEFAULT_FILL_HORIZON, UNCAPPED);
+	}
+
+	/** The shape before crafting had settings of its own, for callers that state only the NPC ones. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, CraftContext.defaults());
+	}
+
+	/** The shape before NPC planning had settings of its own, for callers that track none. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, NpcContext.unlimited(),
+				CraftContext.defaults());
+	}
+
+	/** The shape before a per-flip capital cap existed, for callers that do not want one. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, UNCAPPED);
 	}
 
 	/**

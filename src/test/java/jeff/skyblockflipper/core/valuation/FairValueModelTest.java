@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.valuation;
 
 import com.google.gson.Gson;
@@ -140,7 +157,7 @@ class FairValueModelTest {
 		// the name ("Ancient Necron's Helmet ✪✪✪✪✪"), so it does not even share a coarse key.
 		DecodedItem bare = new DecodedItem(upgraded.skyblockId(), "Necron's Helmet",
 				upgraded.count(), Rarity.LEGENDARY, "", 0, false, 0, Map.of(), List.of(), Map.of(),
-				null);
+				Map.of(), null, null, null, "", false, 0L);
 
 		assertTrue(model.valueOf(bare).isEmpty());
 
@@ -148,7 +165,8 @@ class FairValueModelTest {
 		// but hot potato books and a recombobulator the coarse key could never have seen.
 		DecodedItem sameNameQuietlyUpgraded = new DecodedItem(upgraded.skyblockId(),
 				upgraded.displayName(), upgraded.count(), upgraded.rarity(), upgraded.reforge(),
-				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), null);
+				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), Map.of(), null, null,
+				null, "", false, 0L);
 
 		assertTrue(model.valueOf(sameNameQuietlyUpgraded).isEmpty());
 	}
@@ -161,7 +179,8 @@ class FairValueModelTest {
 		DecodedItem bare = item("ANITA_TALISMAN");
 		// Same name and rarity, but now carrying enchantments the coarse key cannot see.
 		DecodedItem enchanted = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
-				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), Map.of(), null);
+				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), Map.of(), Map.of(),
+				null, null, null, "", false, 0L);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(enchanted).isEmpty());
@@ -178,10 +197,96 @@ class FairValueModelTest {
 		// on Crimson gear it is worth several times the item under it.
 		DecodedItem rolled = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of(), List.of(),
-				Map.of("mana_pool", 6, "mana_regeneration", 6), null);
+				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null, null, "", false, 0L);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(rolled).isEmpty());
+	}
+
+	@Test
+	void willNotPriceAnEtherwarpMergeOffTheCoarsePool() {
+		FairValueModel model = modelOf(sales("ANITA_TALISMAN", 3_000_000L, 3_000_000L, 3_000_000L,
+				3_000_000L, 3_000_000L, 3_000_000L));
+
+		DecodedItem bare = item("ANITA_TALISMAN");
+		// The merge is the attribute-roll case again: 315 of the 516 merged sales on the tape carry
+		// nothing else at all, and the display name the coarse key is built from never mentions it.
+		// On the tape a merged Aspect of the Void fetches about 4x a plain one.
+		DecodedItem merged = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
+				bare.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null,
+				null, "", true, 0L);
+
+		assertTrue(model.valueOf(bare).isPresent());
+		assertTrue(model.valueOf(merged).isEmpty());
+	}
+
+	/**
+	 * A Midas weapon is priced per coin bid for it, not from the pool of every bid.
+	 *
+	 * <p>The fixture sale is a real one: a {@code MIDAS_STAFF} bought at the Dark Auction for
+	 * 117,360,000 coins and resold for 100,000,000. Its signature says nothing about the bid - the
+	 * bid is deliberately not a key term, because it is continuous - so under a pooled median every
+	 * staff on the market is quoted at whatever the last few staffs happened to be worth, whatever
+	 * was burned on them.
+	 */
+	@Test
+	void pricesADarkAuctionItemAgainstTheBidItCarries() {
+		FairValueModel model = modelOf(sales("MIDAS_STAFF", 100_000_000L, 100_000_000L,
+				100_000_000L, 100_000_000L, 100_000_000L, 100_000_000L));
+
+		DecodedItem sold = item("MIDAS_STAFF");
+		assertEquals(117_360_000L, sold.winningBid());
+
+		// The item the sales are of prices at what they fetched, the same as any other estimate.
+		assertEquals(100_000_000.0d, model.valueOf(sold).orElseThrow().median(), 1.0d);
+
+		// And one bought for twice as much is worth about twice as much, off exactly the same sales.
+		// A pooled median would quote it at 100,000,000 and call the other 100,000,000 profit.
+		DecodedItem twiceTheBid = withBid(sold, sold.winningBid() * 2L);
+		ValueEstimate value = model.valueOf(twiceTheBid).orElseThrow();
+
+		assertEquals(200_000_000.0d, value.median(), 1.0d);
+		assertEquals(6, value.samples());
+		assertTrue(value.exact());
+	}
+
+	/**
+	 * A Dark Auction item never falls back to the coarse pool, which mixes every bid under one name.
+	 *
+	 * <p>Constructed rather than taped, and deliberately so: on six days of tape this clause never
+	 * decided a lookup, because a bid-carrying item's own signature always had sales of its own. It
+	 * is kept on the maxed dungeon flag's footing - it costs no coverage, and what it names is that
+	 * the display name is identical at every bid, so a coarse quote for one of these is a pool of
+	 * items that have nothing to do with each other. The case that would reach it is a second item
+	 * id wearing the same name, which is how {@code STARRED_MIDAS_STAFF} and {@code MIDAS_STAFF}
+	 * already sit in the tape.
+	 */
+	@Test
+	void willNotPriceADarkAuctionItemOffTheCoarsePool() {
+		FairValueModel model = modelOf(sales("MIDAS_STAFF", 100_000_000L, 100_000_000L,
+				100_000_000L, 100_000_000L, 100_000_000L, 100_000_000L));
+
+		DecodedItem sold = item("MIDAS_STAFF");
+		// Same display name and rarity as the sales, so the coarse key matches; a different item id,
+		// so the exact key does not. That is the only way into the coarse pool.
+		DecodedItem otherId = withId(sold, "STARRED_MIDAS_STAFF");
+
+		assertTrue(model.valueOf(withBid(otherId, 0L)).isPresent());
+		assertTrue(model.valueOf(otherId).isEmpty());
+	}
+
+	private static DecodedItem withBid(DecodedItem item, long bid) {
+		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
+				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
+				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
+				item.potion(), item.quality(), item.dye(), item.ethermerged(), bid);
+	}
+
+	private static DecodedItem withId(DecodedItem item, String skyblockId) {
+		return new DecodedItem(skyblockId, item.displayName(), item.count(), item.rarity(),
+				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
+				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
+				item.potion(), item.quality(), item.dye(), item.ethermerged(), item.winningBid());
 	}
 
 	/**
@@ -198,9 +303,10 @@ class FairValueModelTest {
 		PetInfo pet = real.petInfo().orElseThrow();
 
 		return new DecodedItem(real.skyblockId(), "[Lvl " + level + "] Mole", real.count(),
-				real.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(),
+				real.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(),
 				new PetInfo(pet.type(), pet.tier(), pet.exp(), level, pet.heldItem(),
-						pet.candyUsed(), pet.skin()));
+						pet.candyUsed(), pet.skin()),
+				null, null, "", false, 0L);
 	}
 
 	@Test

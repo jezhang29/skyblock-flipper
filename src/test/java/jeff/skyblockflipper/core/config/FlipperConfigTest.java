@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.config;
 
 import org.junit.jupiter.api.Test;
@@ -7,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlipperConfigTest {
@@ -34,6 +52,11 @@ class FlipperConfigTest {
 		assertEquals(250_000_000L, config.bankroll);
 		assertEquals(0.6d, config.minConfidence, 1e-9);
 		assertTrue(config.hudEnabled);
+		assertFalse(config.recoveryAlertsEnabled);
+		assertFalse(config.recoveryChatNotifications);
+		assertFalse(config.recoveryToastNotifications);
+		assertFalse(config.recoveryAlertSound);
+		assertEquals(0.15d, config.recoverySafetyBuffer, 1e-9);
 	}
 
 	@Test
@@ -50,8 +73,9 @@ class FlipperConfigTest {
 
 		FlipperConfig config = FlipperConfig.load(file);
 
-		// Level 99 would drive the bazaar tax negative and invent profit out of nothing.
-		assertEquals(6, config.bazaarFlipperLevel);
+		// Level 99 would drive the bazaar tax negative and invent profit out of nothing. The perk
+		// stops at 2, which is also what the derived bazaar order limit reads.
+		assertEquals(2, config.bazaarFlipperLevel);
 		assertEquals(0L, config.bankroll);
 		assertEquals(1.0d, config.minConfidence, 1e-9);
 		assertEquals(0L, config.minProfitPerFlip);
@@ -91,13 +115,13 @@ class FlipperConfigTest {
 		Path file = dir.resolve("config.json");
 
 		FlipperConfig original = new FlipperConfig();
-		original.bazaarFlipperLevel = 4;
+		original.bazaarFlipperLevel = 2;
 		original.bankroll = 1_234_567L;
 		original.save(file);
 
 		FlipperConfig reloaded = FlipperConfig.load(file);
 
-		assertEquals(4, reloaded.bazaarFlipperLevel);
+		assertEquals(2, reloaded.bazaarFlipperLevel);
 		assertEquals(1_234_567L, reloaded.bankroll);
 	}
 }

@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.valuation;
 
 import jeff.skyblockflipper.core.model.BazaarDailyStat;
@@ -71,8 +88,12 @@ public final class PriceHistory {
 	 * <p>Six times the nominal cadence, so an ordinary missed poll or a slow snapshot still counts
 	 * and a closed client does not. Generous on purpose: a caller sampling slower than nominal
 	 * should lose precision, not lose the measurement entirely.
+	 *
+	 * <p>Shared with {@link NpcEdgeHistory}, which streams the same tape at the same cadence and has
+	 * to draw the same line. Two definitions of "the client was closed" would eventually disagree,
+	 * and the two rates would then be measured over different denominators.
 	 */
-	private static final long MAX_OBSERVED_GAP_MILLIS = NOMINAL_SAMPLE_MINUTES * 6L * 60_000L;
+	static final long MAX_OBSERVED_GAP_MILLIS = NOMINAL_SAMPLE_MINUTES * 6L * 60_000L;
 
 	private final Map<String, Series> series = new HashMap<>();
 	private final Duration window;
@@ -105,6 +126,20 @@ public final class PriceHistory {
 		Series product = series.computeIfAbsent(sample.productId(), key -> new Series(capacity));
 		product.add(sample.timestamp(), sample.mid(), sample.bidPrice(), sample.askPrice());
 		product.evictBefore(newestTimestamp - window.toMillis());
+	}
+
+	/**
+	 * Forgets every sample, so a replay of the tape starts from nothing.
+	 *
+	 * <p>The ring deduplicates nothing - it cannot, since two genuine samples of a still book are
+	 * identical - so replaying a tape that has already been replayed would count every sample
+	 * twice and halve the apparent volatility. Anything that re-reads the tape clears first.
+	 */
+	public void clear() {
+		series.clear();
+		// Back to the value the constructor leaves it at, not a sentinel: eviction subtracts the
+		// window from it, and a minimum long would underflow before the first sample raised it.
+		newestTimestamp = 0L;
 	}
 
 	/**

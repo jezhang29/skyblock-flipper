@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.item;
 
 import com.google.gson.Gson;
@@ -22,12 +39,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decoding is checked against real blobs, not synthetic ones.
  *
- * <p>The fixture is nine trimmed captures chosen to cover the cases that a hand-written sample
+ * <p>The fixture is twenty-one trimmed captures chosen to cover the cases that a hand-written sample
  * would not have thought of: an item with no tooltip style, stars under the legacy attribute name,
- * a pet, gemstones, hot potato books, a Kuudra attribute roll, and a plain item with nothing on it
- * at all. Everything here
- * fails loudly if Hypixel changes the blob format, which is the point - a decode that quietly
- * drops an attribute prices a five-star recombobulated item as if it were bare.
+ * a pet, gemstones, hot potato books, a Kuudra attribute roll, two tiers of the same rune, a rune
+ * applied to something else, three potions differing only in effect and perks, two dungeon drops
+ * differing only in their floor tier, a stat boost with no tier under it, two Aspects of the Void
+ * differing only in an Etherwarp merge, and a plain item with nothing on it at all. Everything here fails
+ * loudly if Hypixel changes the blob format, which is the point - a decode that quietly drops an
+ * attribute prices a five-star recombobulated item as if it were bare.
  */
 class ItemDecoderTest {
 	private static List<EndedAuction> sales;
@@ -47,6 +66,15 @@ class ItemDecoderTest {
 				.filter(item -> item.skyblockId().equals(skyblockId))
 				.findFirst()
 				.orElseThrow(() -> new AssertionError(skyblockId + " is not in the fixture"));
+	}
+
+	private static DecodedItem decodeByName(String displayName) {
+		return sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.filter(item -> item.displayName().equals(displayName))
+				.findFirst()
+				.orElseThrow(() -> new AssertionError(displayName + " is not in the fixture"));
 	}
 
 	@Test
@@ -208,14 +236,15 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.pet());
+				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "", false, 0L);
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
 		DecodedItem oneStarLess = new DecodedItem(helmet.skyblockId(), helmet.displayName(),
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
-				helmet.gemstones(), helmet.attributes(), helmet.pet());
+				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
+				helmet.potion(), helmet.quality(), "", false, 0L);
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -244,7 +273,8 @@ class ItemDecoderTest {
 		DecodedItem unrolled = new DecodedItem(boots.skyblockId(), boots.displayName(),
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
-				boots.gemstones(), Map.of(), boots.pet());
+				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion(),
+				boots.quality(), "", false, 0L);
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -254,9 +284,243 @@ class ItemDecoderTest {
 		DecodedItem oneLevelLower = new DecodedItem(boots.skyblockId(), boots.displayName(),
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
-				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.pet());
+				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
+				boots.pet(), boots.potion(), boots.quality(), "", false, 0L);
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
+	}
+
+	@Test
+	void readsAppliedRunesWithTheirTier() {
+		DecodedItem rune = decodeByName("\u25c6 Music Rune I");
+
+		// Every rune in the game is the item id RUNE, so this map is the only thing separating one
+		// from another: on the tape a Music rune sells for 5,000,000 and a Gem rune for 2,000.
+		assertEquals(Map.of("MUSIC", 1), rune.runes());
+		assertEquals("RUNE", rune.skyblockId());
+		assertTrue(rune.signature().contains("runes=MUSIC:1"));
+	}
+
+	@Test
+	void aRuneTierIsADifferentItemFromTheSameRuneOneTierLower() {
+		DecodedItem first = decodeByName("\u25c6 Music Rune I");
+		DecodedItem third = decodeByName("\u25c6 Music Rune III");
+
+		// Same id and rarity, 12x apart on the tape - median 5,000,000 against 59,500,000.
+		assertEquals(first.skyblockId(), third.skyblockId());
+		assertEquals(first.rarity(), third.rarity());
+		assertNotEquals(first.signature(), third.signature());
+	}
+
+	@Test
+	void readsAPotionsEffectTierAndPerks() {
+		DecodedItem splashHealing = decodeByName("Healing VIII Splash Potion");
+		PotionInfo healing = splashHealing.potionInfo().orElseThrow();
+
+		assertEquals("POTION", splashHealing.skyblockId());
+		assertEquals("healing", healing.type());
+		assertEquals(8, healing.level());
+		assertTrue(healing.splash());
+		assertFalse(healing.enhanced());
+		assertTrue(splashHealing.signature().contains("potion=healing:8,splash"));
+	}
+
+	@Test
+	void twoPotionsAreOnlyTheSameItemIfEveryPerkMatches() {
+		DecodedItem speed = decodeByName("Speed VIII Potion");
+		DecodedItem cheese = decodeByName("Douce Pluie de Stinky Cheese I Potion");
+
+		// Every potion in the game is the item id POTION, and on the tape these two sit either side
+		// of the pooled median: Stinky Cheese at 950,000 coins and this Speed potion at 50,000.
+		assertEquals(speed.skyblockId(), cheese.skyblockId());
+		assertNotEquals(speed.signature(), cheese.signature());
+
+		// The perks are the part no coarse key could recover, because Hypixel leaves them out of the
+		// display name - this potion is enhanced and extended and still just reads "Speed VIII
+		// Potion". On the tape that is 82,525 coins against 58,999 for the plain one.
+		PotionInfo perks = speed.potionInfo().orElseThrow();
+		assertTrue(perks.enhanced());
+		assertTrue(perks.extended());
+		assertFalse(perks.splash());
+		assertEquals("speed:8,enhanced,extended", perks.signatureTerm());
+	}
+
+	@Test
+	void anItemThatIsNotAPotionCarriesNoPotionDetail() {
+		assertFalse(decode("GIANTS_SWORD").isPotion());
+		assertTrue(decode("GIANTS_SWORD").potionInfo().isEmpty());
+	}
+
+	@Test
+	void readsTheDungeonQualityRollAsAMaxedFlagAndAnExactTier() {
+		DecodedItem tier10 = decodeQuality(10);
+		DungeonQuality quality = tier10.dungeonQuality().orElseThrow();
+
+		assertTrue(quality.maxedStats());
+		assertTrue(quality.hasTier());
+		assertEquals(10, quality.floorTier());
+		assertEquals("maxed,tier=10", quality.signatureTerm());
+		assertTrue(tier10.signature().contains("quality=maxed,tier=10"));
+	}
+
+	@Test
+	void twoTiersOfTheSameDropAreDifferentItems() {
+		DecodedItem tier10 = decodeQuality(10);
+
+		// Both captures really are SKELETON_MASTER_CHESTPLATE, which is the item this whole term was
+		// built for: on the tape its tier-10s sell at a 113,000,000 median against 2,000,000 for its
+		// tier-7s, so pooling them makes half of them read as a 56x snipe. They differ in rarity as
+		// well, though, so the tier is dropped onto one of them to isolate it.
+		assertEquals(tier10.skyblockId(), decodeQuality(7).skyblockId());
+
+		DecodedItem lowerFloor = withQuality(tier10, new DungeonQuality(true, 7));
+
+		assertNotEquals(tier10.signature(), lowerFloor.signature());
+		assertTrue(lowerFloor.signature().contains("quality=maxed,tier=7"));
+	}
+
+	@Test
+	void anUnmaxedRollIsStillSeparatedByTheFloorItDroppedAt() {
+		// The stat boost being unmaxed does not make the tier stop mattering - a floor 6 drop and a
+		// floor 10 drop are different items whatever their rolls came out at.
+		DecodedItem leggings = decode("ZOMBIE_SOLDIER_LEGGINGS");
+		DungeonQuality quality = leggings.dungeonQuality().orElseThrow();
+
+		assertFalse(quality.maxedStats());
+		assertEquals(6, quality.floorTier());
+		assertEquals("tier=6", quality.signatureTerm());
+		assertTrue(leggings.signature().contains("quality=tier=6"));
+	}
+
+	@Test
+	void aDropWithNoTierStillKeysOnWhetherItsStatsAreMaxed() {
+		DecodedItem helmet = decode("SNIPER_HELMET");
+		DungeonQuality quality = helmet.dungeonQuality().orElseThrow();
+
+		// Not every item carrying a stat boost is a floor drop, so item_tier is often simply absent.
+		// The term has to survive that rather than defaulting the tier to some number.
+		assertFalse(quality.hasTier());
+		assertEquals(DungeonQuality.NO_TIER, quality.floorTier());
+
+		// This one rolled 21 out of 50. Every unmaxed value measured flat on the tape - medians
+		// between 48,000 and 74,000 across all of 1 to 49 - so it contributes no term at all and the
+		// item keeps the key it had before any of this was read.
+		assertFalse(quality.maxedStats());
+		assertEquals("", quality.signatureTerm());
+		assertFalse(helmet.hasQuality());
+		assertFalse(helmet.signature().contains("quality="));
+	}
+
+	@Test
+	void anItemThatIsNotADungeonDropCarriesNoQualityRoll() {
+		assertFalse(decode("GIANTS_SWORD").hasQuality());
+		assertTrue(decode("GIANTS_SWORD").dungeonQuality().isEmpty());
+	}
+
+	/** The same item wearing a different quality roll, so a test can vary that term alone. */
+	private static DecodedItem withQuality(DecodedItem item, DungeonQuality quality) {
+		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
+				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
+				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
+				item.potion(), quality, item.dye(), item.ethermerged(), item.winningBid());
+	}
+
+	@Test
+	void readsTheNamedDyeIntoTheSignature() {
+		DecodedItem dyed = decodeQuality(10);
+
+		assertTrue(dyed.isDyed());
+		assertEquals("DYE_CHARCOAL", dyed.dye());
+		assertTrue(dyed.signature().contains("dye=DYE_CHARCOAL"),
+				"the dye belongs in the key: nothing else about a dyed item states it, and the "
+						+ "display name does not mention it either");
+
+		// The same chestplate wearing no dye is a different item and must key as one.
+		assertFalse(decodeQuality(7).isDyed());
+		assertFalse(decodeQuality(7).signature().contains("dye="));
+	}
+
+	/**
+	 * The Etherwarp Conduit is one bit, and it is worth about 4x on the item that carries it.
+	 *
+	 * <p>The two fixture captures are the case in miniature: the same sword, the same rarity, nothing
+	 * else on either of them, sold within fourteen minutes of each other for 5,894,467 and 26,399,000
+	 * coins. Unread they share a key and a coarse pool, so the model quotes one number for both.
+	 */
+	@Test
+	void readsTheEtherwarpMergeIntoTheSignature() {
+		DecodedItem merged = decodeAspectOfTheVoid(true);
+		DecodedItem plain = decodeAspectOfTheVoid(false);
+
+		assertTrue(merged.ethermerged());
+		assertFalse(plain.ethermerged());
+		assertTrue(merged.signature().contains("ethermerge"));
+		assertFalse(plain.signature().contains("ethermerge"));
+		assertNotEquals(plain.signature(), merged.signature(),
+				"a merged Aspect of the Void is a different item from a plain one, and the display "
+						+ "name is identical, so the signature is the only thing that can say so");
+	}
+
+	/**
+	 * The Dark Auction bid is read as a number and kept out of the key, which is the opposite call
+	 * from every other attribute here and the right one.
+	 *
+	 * <p>On a Midas weapon the bid is what the stats were bought with, so it is the largest single
+	 * term in the price - and it is continuous, 103 distinct values across 439 taped
+	 * {@code MIDAS_STAFF} sales. In the signature it would make a cell per sale. Out of it, one
+	 * pooled price-per-coin-bid prices every bid; see {@code MidasBidBacktestTest}.
+	 */
+	@Test
+	void readsTheDarkAuctionBidButKeepsItOutOfTheSignature() {
+		DecodedItem staff = decode("MIDAS_STAFF");
+
+		assertEquals(117_360_000L, staff.winningBid());
+		assertTrue(staff.hasWinningBid());
+		assertFalse(staff.signature().contains("117360000"),
+				"the bid is a valuation input, not a key term: keying a number with a distinct value "
+						+ "per sale prices nothing at all");
+
+		assertFalse(decode("ANITA_TALISMAN").hasWinningBid());
+	}
+
+	/** Neither capture carries anything but the merge, which is what makes them comparable. */
+	private static DecodedItem decodeAspectOfTheVoid(boolean merged) {
+		return sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.filter(item -> item.skyblockId().equals("ASPECT_OF_THE_VOID"))
+				.filter(item -> item.ethermerged() == merged)
+				.findFirst()
+				.orElseThrow(() -> new AssertionError(
+						"no " + (merged ? "merged" : "plain") + " Aspect of the Void in the fixture"));
+	}
+
+	/**
+	 * The raw {@code color} triple is read by nothing, on purpose.
+	 *
+	 * <p>Measured in {@code DyeSignatureBacktestTest}: it is near-unique per sale where it is dense,
+	 * so an exact colour key prices nothing, and the coarse pool it falls into today is right about
+	 * it. Keying it out would drop 191 held-out coloured sales to 5 to fix 2 overvaluations. If this
+	 * test ever starts failing because somebody added the term, that measurement is what to redo.
+	 */
+	@Test
+	void leavesTheRawColourOutOfTheSignature() {
+		DecodedItem coloured = decode("TARANTULA_HELMET");
+
+		assertFalse(coloured.isDyed(), "a colour is not a dye");
+		assertFalse(coloured.signature().contains("252:243:255"));
+		assertFalse(coloured.signature().contains("color"));
+	}
+
+	/** The fixture holds two {@code SKELETON_MASTER_CHESTPLATE}s that differ in their tier. */
+	private static DecodedItem decodeQuality(int tier) {
+		return sales.stream()
+				.map(sale -> ItemDecoder.decode(sale.itemBytes()))
+				.flatMap(java.util.Optional::stream)
+				.filter(item -> item.dungeonQuality()
+						.filter(quality -> quality.floorTier() == tier).isPresent())
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("no tier " + tier + " drop in the fixture"));
 	}
 
 	@Test

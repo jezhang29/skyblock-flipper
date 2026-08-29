@@ -1,9 +1,29 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.command.FlipCommand;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
+import jeff.skyblockflipper.client.hud.BazaarOverlay;
 import jeff.skyblockflipper.client.hud.FlipHud;
+import jeff.skyblockflipper.client.track.CaptureService;
+import jeff.skyblockflipper.client.track.MenuMemory;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -52,10 +72,18 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		reloadConfig();
 		LedgerService.load();
+		FlipIntentsService.load();
 		FlipCommand.register();
 		CandidateFeed.register();
+		RecoveryFeed.register();
+		RecoveryAlertService.register();
 		FlipHud.register();
+		BazaarOverlay.register();
 		FlipKeybinds.register();
+		CaptureService.register();
+		MenuMemory.register();
+		NpcCheckInService.register();
+		NpcProbeService.register();
 		MarketDataService.start();
 
 		// Daemon poller threads would die with the JVM anyway; this just makes shutdown orderly

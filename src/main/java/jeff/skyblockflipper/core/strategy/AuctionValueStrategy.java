@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
@@ -18,9 +35,9 @@ import java.util.Optional;
  * spread closes - it is that the valuation is wrong, which is why nothing reaches this class until
  * it has been matched against realized sales of the same signature.
  *
- * <p>What this cannot do is guarantee the listing is still there. The mod is advisory and does not
- * click; by the time a human reads a line and opens the auction house, a genuine underprice may
- * well have been taken. That is stated on every candidate rather than implied away.
+ * <p>What this cannot do is guarantee the listing is still there.
+ * By the time a human reads a line and opens the auction house, a genuine underprice may
+ * well have been taken by bots. That is stated on every candidate rather than implied away.
  *
  * <p>Resale time comes from the observed sale rate of that configuration rather than from
  * optimism. Profit per hour on an item that sells twice a week is not the same business as the
@@ -52,7 +69,9 @@ public final class AuctionValueStrategy implements FlipStrategy {
 		long price = priced.listing().price();
 		ValueEstimate value = priced.value();
 
-		if (price > context.bankroll()) {
+		// A single listing is one indivisible position, so the per-flip cap is the right ceiling:
+		// a 200M BIN out of a 250M bankroll is affordable and still not a sane thing to suggest.
+		if (price > context.maxCapitalPerFlip()) {
 			return Optional.empty();
 		}
 
