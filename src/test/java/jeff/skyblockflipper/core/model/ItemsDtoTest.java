@@ -115,4 +115,19 @@ class ItemsDtoTest {
 		assertEquals(0, catalog.get("ENCHANTED_MELON").orElseThrow().maxStars());
 		assertTrue(catalog.get("ENCHANTED_MELON").orElseThrow().upgradeCosts().isEmpty());
 	}
+
+	@Test
+	void namesTheShardsTheEndpointOmits() {
+		// The live resource lists none of the 320 SHARD_* the bazaar trades, so without the bundled
+		// names every fusion view prints the raw id. The fixture carries no shards either, so these
+		// entries can only have come from FusionTable.
+		assertEquals("Grove", catalog.displayName("SHARD_GROVE"));
+		assertEquals("Moltenfish", catalog.displayName("SHARD_MOLTENFISH"));
+	}
+
+	@Test
+	void resolvesAShardByItsRealNameNotItsId() {
+		// The point of naming them: a player reads "Grove" off the bazaar, not SHARD_GROVE.
+		assertEquals("SHARD_GROVE", catalog.find("Grove").only().orElseThrow());
+	}
 }
