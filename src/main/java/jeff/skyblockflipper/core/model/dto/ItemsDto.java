@@ -21,6 +21,7 @@ import com.google.gson.annotations.SerializedName;
 
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.UpgradeCost;
+import jeff.skyblockflipper.core.recipe.FusionTable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -156,7 +157,33 @@ public final class ItemsDto {
 			}
 		}
 
+		addShardEntries(entries);
+
 		return new ItemCatalog(entries);
+	}
+
+	/**
+	 * Attribute shards are bazaar products the endpoint omits wholesale, the same gap essences have.
+	 *
+	 * <p>Measured 2026-08-29: the live {@code resources/skyblock/items} lists 5650 items and not one
+	 * of the 320 {@code SHARD_*} the bazaar trades, so {@link ItemCatalog#displayName} falls back to
+	 * the raw id and every fusion view prints {@code SHARD_MOLTENFISH} instead of {@code Molten
+	 * Fish}. The names the endpoint withholds are bundled in {@link FusionTable} (from SkyShards), so
+	 * synthesise the entry here at the single point the catalog is built, and the fusion job rows,
+	 * the candidate list, the HUD and {@code find()} name-search all read the real name for free.
+	 *
+	 * <p>{@code computeIfAbsent} so a real shard row the endpoint ever does ship wins over the
+	 * bundled one - today only the unrelated {@code SHARD_OF_THE_SHREDDED} is present.
+	 */
+	private static void addShardEntries(Map<String, ItemCatalog.Entry> entries) {
+		for (FusionTable.Shard shard : FusionTable.bundled().shards()) {
+			if (shard.name() == null || shard.name().isBlank()) {
+				continue;
+			}
+
+			entries.computeIfAbsent(shard.id(),
+					k -> new ItemCatalog.Entry(shard.id(), shard.name(), null));
+		}
 	}
 
 	/**
