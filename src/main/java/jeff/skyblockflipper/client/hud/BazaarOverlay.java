@@ -879,12 +879,27 @@ public final class BazaarOverlay {
 				// the coloured half of the line, and a fourth column at this width costs more than it
 				// says.
 				rows.add(Row.line(colourOf(step.stage()), step.stage().ordinal(),
-						"  ".repeat(step.depth()) + job.progressOf(step, orders).badge() + " "
-								+ step.label(), step.displayName(),
+						" ".repeat(step.depth()) + job.progressOf(step, orders).badge() + " "
+								+ shortVerb(step.label()), step.displayName(),
 						step.stage().priced() ? String.format("%.1f", step.price()) : "",
 						step.orderSplit()));
 				names.add(step.displayName());
 			}
+		}
+
+		/**
+		 * The step verb trimmed for the 170px panel, so the shard name after it is not cut off. The
+		 * accent bar and badge already say which stage the row is, so "Buy Order" spends width the name
+		 * needs. The flip screen, wider, keeps the full label - this is display-only, like the name
+		 * truncation beside it.
+		 */
+		private static String shortVerb(String label) {
+			return switch (label) {
+				case "Buy Order" -> "Buy";
+				case "Sell Offer" -> "Sell";
+				case "Buy Instantly" -> "Buy now";
+				default -> label;
+			};
 		}
 
 		/** The type chips wrapped to as many rows as the panel width needs. */
