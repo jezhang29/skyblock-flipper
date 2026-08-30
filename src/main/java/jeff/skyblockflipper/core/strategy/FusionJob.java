@@ -179,12 +179,13 @@ public record FusionJob(String outputId, String displayName, List<Row> rows, Fus
 		// Fusions bottom-up, exactly as the quote laid them out: make the inputs, then fuse them.
 		for (Fusion fusion : quote.fusions()) {
 			long clicks = Math.max(1L, Math.round(fusion.fusionsPerOutput() * quote.outputs()));
-			String recipe = String.format(Locale.ROOT, "%s x%d + %s x%d -> %s",
-					nameOf(fusion.inputA(), catalog), fusion.amountA(),
-					nameOf(fusion.inputB(), catalog), fusion.amountB(),
-					nameOf(fusion.outputId(), catalog));
+			// Just the output and the per-fuse input ratio. The inputs themselves are the buy rows
+			// indented above this one, and the fusion machine shows the full recipe when the output is
+			// picked, so restating "A x5 + B x5 -> Out" here only overflows the 170px overlay.
+			String made = String.format(Locale.ROOT, "%s (%d+%d)",
+					nameOf(fusion.outputId(), catalog), fusion.amountA(), fusion.amountB());
 
-			rows.add(new Row(Action.FUSE, fusion.outputId(), recipe, 0.0d, clicks,
+			rows.add(new Row(Action.FUSE, fusion.outputId(), made, 0.0d, clicks,
 					String.valueOf(clicks), 0, depths.getOrDefault(fusion.outputId(), 0)));
 		}
 
