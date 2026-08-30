@@ -64,7 +64,7 @@ class WorkedJobTest {
 	}
 
 	private static WorkedJob.Step step(WorkedJob.Stage stage, String itemId) {
-		return new WorkedJob.Step(stage, stage.label(), itemId, itemId, 1.0d, 10L, "10");
+		return new WorkedJob.Step(stage, stage.label(), itemId, itemId, 1.0d, 10L, "10", 0);
 	}
 
 	private static WorkedJob job(WorkedJob.Step... steps) {

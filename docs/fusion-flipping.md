@@ -33,6 +33,14 @@ This is **multi-step**: an input is itself sourced as `min(bazaar acquire cost, 
 make it)`, recursively, up to a depth cap. So a flip is a *tree* of buys and fusions, flattened for
 display (below).
 
+`FusionJob.Row` carries a `depth` per shard — 0 for the output (its sell offer and the root fusion),
+one deeper per fusion level, `min` where two branches reach the same shard. The rows stay in
+buy-then-fuse-then-sell order, which reads top-down as the shard's progression; every renderer (the
+bazaar overlay, the Jobs tab, `/flip fusion`, `/flip jobs`) indents each line by that depth so the
+flat list draws as the tree. `FusionJobTest` pins the depths. Shard names come from the catalog,
+which `ItemsDto.toCatalog` backfills from `FusionTable` because `resources/skyblock/items` lists no
+`SHARD_*`.
+
 ## Fusion mechanics (game rules, from the wiki + the reference tool)
 
 - A fusion consumes **`fuse_amount` of each input shard**, where `fuse_amount` is a property of the

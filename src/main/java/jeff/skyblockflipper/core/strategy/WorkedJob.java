@@ -97,9 +97,12 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 	 *                   - a combine says "Combine" where a craft says "Craft"
 	 * @param price      coins per unit to type, or 0 where {@link Stage#priced()} is false
 	 * @param orderSplit how {@code units} divides into orders the bazaar will take
+	 * @param depth      how far to indent this step, for a plan that is a tree rather than a line -
+	 *                   fusion sources its inputs recursively, so its steps nest. 0 for a flat plan
+	 *                   (a craft, a combine, a spread), where every step sits at the same level.
 	 */
 	public record Step(Stage stage, String label, String itemId, String displayName, double price,
-			long units, String orderSplit) {
+			long units, String orderSplit, int depth) {
 	}
 
 	/** How far along a step is, as far as the order tracker can tell. */
@@ -229,7 +232,7 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 
 		for (CraftJob.Row row : job.rows()) {
 			steps.add(new Step(stageOf(row.action()), row.action().label(), row.itemId(),
-					row.displayName(), row.price(), row.units(), row.orderSplit()));
+					row.displayName(), row.price(), row.units(), row.orderSplit(), 0));
 		}
 
 		return new WorkedJob(StrategyKind.CRAFT, outputId, job.displayName(), steps, job.capital(),
@@ -246,7 +249,7 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 
 		for (CombineJob.Row row : job.rows()) {
 			steps.add(new Step(stageOf(row.action()), row.action().label(), row.itemId(),
-					row.displayName(), row.price(), row.units(), row.orderSplit()));
+					row.displayName(), row.price(), row.units(), row.orderSplit(), 0));
 		}
 
 		return new WorkedJob(StrategyKind.COMBINE, targetId, job.displayName(), steps,
@@ -263,7 +266,7 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 
 		for (FusionJob.Row row : job.rows()) {
 			steps.add(new Step(stageOf(row.action()), row.action().label(), row.itemId(),
-					row.displayName(), row.price(), row.units(), row.orderSplit()));
+					row.displayName(), row.price(), row.units(), row.orderSplit(), row.depth()));
 		}
 
 		return new WorkedJob(StrategyKind.FUSION, outputId, job.displayName(), steps, job.capital(),
@@ -289,10 +292,10 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 
 		return new WorkedJob(StrategyKind.BAZAAR_SPREAD, itemId, candidate.displayName(), List.of(
 				new Step(Stage.BUY_ORDER, Stage.BUY_ORDER.label(), itemId, candidate.displayName(),
-						candidate.unitBuyPrice(), candidate.units(), split),
+						candidate.unitBuyPrice(), candidate.units(), split, 0),
 				new Step(Stage.SELL_OFFER, Stage.SELL_OFFER.label(), itemId,
 						candidate.displayName(), candidate.unitSellPrice(), candidate.units(),
-						split)),
+						split, 0)),
 				candidate.capitalRequired(), candidate.totalNetProfit(), "");
 	}
 
@@ -331,8 +334,8 @@ public record WorkedJob(StrategyKind kind, String itemId, String displayName, Li
 	/** One line, for the places that render a job as text rather than as rows. */
 	public String describe(Step step, List<TrackedOrder> orders) {
 		Progress progress = progressOf(step, orders);
-		StringBuilder line = new StringBuilder(progress.badge()).append(' ').append(step.label())
-				.append(' ').append(step.displayName());
+		StringBuilder line = new StringBuilder("  ".repeat(step.depth())).append(progress.badge())
+				.append(' ').append(step.label()).append(' ').append(step.displayName());
 
 		if (step.stage().priced()) {
 			line.append(String.format(" at %.1f", step.price()));

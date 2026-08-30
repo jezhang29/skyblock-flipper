@@ -363,7 +363,7 @@ class BazaarStepTest {
 
 	private static WorkedJob.Step step(WorkedJob.Stage stage, double price) {
 		return new WorkedJob.Step(stage, stage.label(), "TRANSMISSION_TUNER", "Transmission Tuner",
-				price, 256L, "256");
+				price, 256L, "256", 0);
 	}
 
 	@Test

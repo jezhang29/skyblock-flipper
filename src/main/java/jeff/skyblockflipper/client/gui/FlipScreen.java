@@ -1035,7 +1035,8 @@ public final class FlipScreen extends Screen {
 				WorkedJob.Progress progress = job.progressOf(step, jobOrders);
 
 				cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
-						"  " + progress.badge() + " " + step.label() + " " + step.displayName(),
+						"  " + "  ".repeat(step.depth()) + progress.badge() + " " + step.label() + " "
+								+ step.displayName(),
 						step.stage().priced() ? String.format("%.1f", step.price()) : "",
 						step.orderSplit(), stepColour(progress.state()));
 				jobRowIds.add(job.itemId());
