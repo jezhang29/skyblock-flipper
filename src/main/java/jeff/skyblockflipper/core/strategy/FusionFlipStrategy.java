@@ -173,7 +173,9 @@ public final class FusionFlipStrategy implements FlipStrategy {
 		List<String> steps = new ArrayList<>(job.rows().size());
 
 		for (FusionJob.Row row : job.rows()) {
-			steps.add(row.describe());
+			// Indented by tree depth, so the flat buy-fuse-sell list reads top-down as the shard's
+			// progression: base buys at the leaves, the output's sell offer at the root.
+			steps.add("  ".repeat(row.depth()) + row.describe());
 		}
 
 		return steps;

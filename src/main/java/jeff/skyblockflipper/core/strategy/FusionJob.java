@@ -27,8 +27,10 @@ import jeff.skyblockflipper.core.pricing.FusionQuote.Leaf;
 import jeff.skyblockflipper.core.pricing.FusionQuote.SourceRoute;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -87,9 +89,14 @@ public record FusionJob(String outputId, String displayName, List<Row> rows, Fus
 	 * @param units      how many, in the row's own unit: base shards, fusion clicks, or output shards
 	 * @param orderSplit how {@code units} divides into orders the bazaar will accept
 	 * @param orders     how many orders that split is, which is what the row costs in slots
+	 * @param depth      how far this shard sits below the output in the fusion tree - 0 for the output
+	 *                   itself (its sell offer and the root fusion), one more for each fusion level
+	 *                   under it - so a renderer can indent the flat list back into the tree it came
+	 *                   from. The rows stay in buy-then-fuse-then-sell order, which reads top-down as
+	 *                   the shard's progression; the depth is only how deep to indent each line.
 	 */
 	public record Row(Action action, String itemId, String displayName, double price, long units,
-			String orderSplit, int orders) {
+			String orderSplit, int orders, int depth) {
 		/** One line, for the places that render a job as text rather than as rows. */
 		public String describe() {
 			String amount = orderSplit.equals(String.valueOf(units))
@@ -142,6 +149,11 @@ public record FusionJob(String outputId, String displayName, List<Row> rows, Fus
 		String outputName = nameOf(outputId, catalog);
 		List<Row> rows = new ArrayList<>(quote.leaves().size() + quote.fusions().size() + 1);
 
+		// How far each shard sits below the output, so the flat list can be indented back into the
+		// tree the quote flattened. Keyed by shard id, which the min-cost solver resolves to one
+		// decision per shard, so a shard has one depth.
+		Map<String, Integer> depths = depths(quote);
+
 		// Base buys first, aggregated by id already inside the quote.
 		for (Leaf leaf : quote.leaves()) {
 			BazaarProduct source = bazaar.product(leaf.shardId()).orElse(null);
@@ -152,14 +164,15 @@ public record FusionJob(String outputId, String displayName, List<Row> rows, Fus
 
 			long units = quote.shardsToBuy(leaf);
 			String name = nameOf(leaf.shardId(), catalog);
+			int depth = depths.getOrDefault(leaf.shardId(), 1);
 
 			if (leaf.route() == SourceRoute.BUY_ORDER) {
 				rows.add(restingRow(Action.BUY_ORDER, leaf.shardId(), name, source, leaf.unitPrice(),
-						units, catalog));
+						units, catalog, depth));
 			} else {
 				// An instant buy is a button, not an order, so it occupies no slot and needs no split.
 				rows.add(new Row(Action.INSTANT_BUY, leaf.shardId(), name, 0.0d, units,
-						String.valueOf(units), 0));
+						String.valueOf(units), 0, depth));
 			}
 		}
 
@@ -172,23 +185,61 @@ public record FusionJob(String outputId, String displayName, List<Row> rows, Fus
 					nameOf(fusion.outputId(), catalog));
 
 			rows.add(new Row(Action.FUSE, fusion.outputId(), recipe, 0.0d, clicks,
-					String.valueOf(clicks), 0));
+					String.valueOf(clicks), 0, depths.getOrDefault(fusion.outputId(), 0)));
 		}
 
 		rows.add(restingRow(Action.SELL_OFFER, outputId, outputName, target, quote.unitSellPrice(),
-				quote.outputs(), catalog));
+				quote.outputs(), catalog, 0));
 
 		return Optional.of(new FusionJob(outputId, outputName, rows, quote));
 	}
 
+	/**
+	 * The depth of every shard in the flip's tree, from the flattened quote.
+	 *
+	 * <p>The output is 0; each of a fusion's two inputs is one deeper than the shard it makes. Walked
+	 * from the output down the fusion edges, so a shard reached by no fusion - a pure base buy - keeps
+	 * whatever depth its parent gave it. {@code min} on revisit keeps the shallowest reading, which is
+	 * the only one that matters for how far to indent.
+	 */
+	private static Map<String, Integer> depths(FusionQuote quote) {
+		Map<String, Fusion> byOutput = new HashMap<>();
+
+		for (Fusion fusion : quote.fusions()) {
+			byOutput.put(fusion.outputId(), fusion);
+		}
+
+		Map<String, Integer> depths = new HashMap<>();
+		walkDepth(quote.outputId(), 0, byOutput, depths);
+
+		return depths;
+	}
+
+	private static void walkDepth(String shardId, int depth, Map<String, Fusion> byOutput,
+			Map<String, Integer> depths) {
+		Integer seen = depths.get(shardId);
+
+		if (seen != null && seen <= depth) {
+			return;
+		}
+
+		depths.put(shardId, depth);
+		Fusion fusion = byOutput.get(shardId);
+
+		if (fusion != null) {
+			walkDepth(fusion.inputA(), depth + 1, byOutput, depths);
+			walkDepth(fusion.inputB(), depth + 1, byOutput, depths);
+		}
+	}
+
 	/** One row that rests on the book, split into orders the bazaar will take. */
 	private static Row restingRow(Action action, String itemId, String name, BazaarProduct product,
-			double price, long units, ItemCatalog catalog) {
+			double price, long units, ItemCatalog catalog, int depth) {
 		ItemCatalog names = catalog == null ? ItemCatalog.empty() : catalog;
 		long perOrder = Stacking.unitsPerOrder(names.get(itemId).orElse(null), product);
 
 		return new Row(action, itemId, name, price, units, Stacking.orderSplit(units, perOrder),
-				(int) Math.max(1L, (units + perOrder - 1L) / perOrder));
+				(int) Math.max(1L, (units + perOrder - 1L) / perOrder), depth);
 	}
 
 	/** The shard's name: the catalog's where it has one, otherwise its bazaar id. */

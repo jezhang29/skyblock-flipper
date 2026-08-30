@@ -103,6 +103,22 @@ class FusionJobTest {
 		assertEquals("SHARD_MID", fuses.get(0).itemId());
 		assertEquals("SHARD_OUT", fuses.get(1).itemId());
 		assertEquals(FusionJob.Action.SELL_OFFER, job.rows().getLast().action());
+
+		// Tree depth per shard, for indenting the flat list: the output and its root fusion sit at 0,
+		// each fusion level one deeper, and a shard reached by two branches takes the shallower depth.
+		assertEquals(0, depthOf(job, "SHARD_OUT"));  // root fusion + sell offer
+		assertEquals(1, depthOf(job, "SHARD_MID"));  // fused one level under the output
+		assertEquals(1, depthOf(job, "SHARD_IN1"));  // a direct input to OUT, so shallower than via MID
+		assertEquals(2, depthOf(job, "SHARD_IN2"));  // only reached inside MID
+	}
+
+	/** The depth on any row for {@code shardId}; base buys and the fusion that makes it share one. */
+	private static int depthOf(FusionJob job, String shardId) {
+		return job.rows().stream()
+				.filter(r -> r.itemId().equals(shardId))
+				.mapToInt(FusionJob.Row::depth)
+				.min()
+				.orElseThrow();
 	}
 
 	@Test

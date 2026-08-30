@@ -879,7 +879,8 @@ public final class BazaarOverlay {
 				// the coloured half of the line, and a fourth column at this width costs more than it
 				// says.
 				rows.add(Row.line(colourOf(step.stage()), step.stage().ordinal(),
-						job.progressOf(step, orders).badge() + " " + step.label(), step.displayName(),
+						"  ".repeat(step.depth()) + job.progressOf(step, orders).badge() + " "
+								+ step.label(), step.displayName(),
 						step.stage().priced() ? String.format("%.1f", step.price()) : "",
 						step.orderSplit()));
 				names.add(step.displayName());
