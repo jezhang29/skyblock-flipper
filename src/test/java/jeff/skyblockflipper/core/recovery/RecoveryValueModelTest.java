@@ -19,7 +19,9 @@ package jeff.skyblockflipper.core.recovery;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
 import jeff.skyblockflipper.core.item.DetailedDecodedItem;
+import jeff.skyblockflipper.core.item.ItemDecoder;
 import jeff.skyblockflipper.core.item.Rarity;
+import jeff.skyblockflipper.core.item.WitherScrollNbtFixtures;
 import jeff.skyblockflipper.core.valuation.ValueEstimate;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RecoveryValueModelTest {
@@ -129,5 +132,33 @@ class RecoveryValueModelTest {
 		assertTrue(model.cleanHostValue(new DetailedDecodedItem(host, metadata(
 				new RecoveryAttachment(RecoveryComponentKind.GEMSTONE, "COMBAT_0",
 						"FINE_RUBY_GEM", 1L)))).isEmpty());
+	}
+
+	@Test
+	void cleanHostKeysRetainTheAbilityScrollSet() {
+		DecodedItem none = ItemDecoder.fromRoot(
+				WitherScrollNbtFixtures.unscrolledHyperion()).orElseThrow();
+		DecodedItem full = ItemDecoder.fromRoot(WitherScrollNbtFixtures.hyperionWith(List.of(
+				WitherScrollNbtFixtures.IMPLOSION, WitherScrollNbtFixtures.SHADOW_WARP,
+				WitherScrollNbtFixtures.WITHER_SHIELD))).orElseThrow();
+
+		String noneKey = RecoveryValueModel.cleanHostKey(none);
+		String fullKey = RecoveryValueModel.cleanHostKey(full);
+
+		assertTrue(noneKey.contains("abilityScrolls=none"));
+		assertTrue(fullKey.contains("abilityScrolls=IMPLOSION_SCROLL,SHADOW_WARP_SCROLL,"
+				+ "WITHER_SHIELD_SCROLL"));
+		assertNotEquals(noneKey, fullKey);
+	}
+
+	@Test
+	void temporaryContainmentSuppressesRecoveryCleanHostValues() {
+		DecodedItem blade = ItemDecoder.fromRoot(
+				WitherScrollNbtFixtures.unscrolledHyperion()).orElseThrow();
+		RecoveryValueModel.Builder builder = new RecoveryValueModel.Builder(Duration.ofDays(2));
+		add(builder, new DetailedDecodedItem(blade, RecoveryMetadata.EMPTY), 510_000_000.0d, 8);
+
+		assertTrue(builder.build().cleanHostValue(
+				new DetailedDecodedItem(blade, RecoveryMetadata.EMPTY)).isEmpty());
 	}
 }

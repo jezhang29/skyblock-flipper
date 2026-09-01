@@ -19,7 +19,9 @@ package jeff.skyblockflipper.core.recovery;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
 import jeff.skyblockflipper.core.item.DetailedDecodedItem;
+import jeff.skyblockflipper.core.item.ItemDecoder;
 import jeff.skyblockflipper.core.item.Rarity;
+import jeff.skyblockflipper.core.item.WitherScrollNbtFixtures;
 import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
@@ -92,6 +94,29 @@ class RecoveryListingScanTest {
 		assertFalse(opportunity.componentQuotes().get(0).credited());
 		assertTrue(opportunity.warnings().contains(RecoveryWarning.UNKNOWN_REMOVAL_COST));
 		assertTrue(opportunity.warnings().contains(RecoveryWarning.PREVIEW_REQUIRED));
+	}
+
+	@Test
+	void temporaryContainmentSuppressesTheWholeWitherBladeRecoveryOpportunity() {
+		DecodedItem blade = ItemDecoder.fromRoot(WitherScrollNbtFixtures.hyperionWith(List.of(
+				WitherScrollNbtFixtures.IMPLOSION, WitherScrollNbtFixtures.SHADOW_WARP,
+				WitherScrollNbtFixtures.WITHER_SHIELD))).orElseThrow();
+		RecoveryValueModel.Builder builder = new RecoveryValueModel.Builder(Duration.ofDays(2));
+		for (int i = 0; i < 8; i++) {
+			builder.add(new DetailedDecodedItem(blade, RecoveryMetadata.EMPTY),
+					1_064_000_000.0d + i);
+		}
+		RecoveryAttachment gem = new RecoveryAttachment(RecoveryComponentKind.GEMSTONE,
+				"COMBAT_0", "FINE_RUBY_GEM", 1L);
+		DetailedDecodedItem attached = new DetailedDecodedItem(blade,
+				new RecoveryMetadata(List.of(gem), Map.of(), Set.of()));
+		RecoveryListingScan scan = new RecoveryListingScan(builder.build(), BazaarSnapshot.empty(),
+				Fees.none(), RecoveryScanPolicy.conservativeDefaults(), NOW);
+
+		scan.offerDecoded(new ActiveListing("contained", "Hyperion", Rarity.LEGENDARY,
+				1L, "unused"), attached);
+
+		assertTrue(scan.results().isEmpty());
 	}
 
 	private static DecodedItem item(String id, String name, List<String> gems) {

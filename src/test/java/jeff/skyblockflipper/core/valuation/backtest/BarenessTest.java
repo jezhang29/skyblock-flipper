@@ -142,4 +142,15 @@ class BarenessTest {
 		assertTrue(Bareness.bare(heroic), "the backtest copy disagreed with production about a "
 				+ "reforged item, which is the case the string-derived rule got wrong");
 	}
+
+	@Test
+	void anUnscrolledWitherBladeCannotReachTheCoarsePool() {
+		DecodedItem hyperion = new DecodedItem("HYPERION", "Hyperion", 1, Rarity.LEGENDARY, "",
+				0, false, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false,
+				0L);
+
+		assertEquals("HYPERION|LEGENDARY|abilityScrolls=none", hyperion.signature());
+		assertFalse(Keying.PRODUCTION.isBare(hyperion));
+		assertFalse(Bareness.bare(hyperion));
+	}
 }

@@ -97,6 +97,11 @@ public final class UnderpricedScan implements ListingSink {
 		}
 
 		decoded++;
+		if (WitherBladeValuationContainment.suppresses(item.get())) {
+			// Temporary incident containment. The corrected signature still trains behind this gate.
+			rejectedOnExactValue++;
+			return;
+		}
 		Optional<ValueEstimate> exact = model.valueOf(item.get());
 
 		if (exact.isEmpty() || !isDiscounted(listing.price(), exact.get())) {

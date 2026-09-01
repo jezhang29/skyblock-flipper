@@ -151,6 +151,13 @@ public final class ItemDecoder {
 		NbtCompound display = tag.child("display");
 		// Read once: the pet level is in here too, and it is the only place it is stated.
 		String name = stripFormatting(display.string("Name").orElse(skyblockId));
+		Optional<List<String>> abilityScrolls = abilityScrolls(extra);
+
+		if (abilityScrolls.isEmpty()) {
+			// This field changes a Wither blade's value by hundreds of millions of coins. A malformed
+			// or future value is not equivalent to no scrolls and must not enter any valuation pool.
+			return Optional.empty();
+		}
 
 		DecodedItem decoded = new DecodedItem(
 				skyblockId,
@@ -168,11 +175,36 @@ public final class ItemDecoder {
 				pet(skyblockId, extra, name),
 				potion(extra),
 				quality(extra),
+				abilityScrolls.get(),
 				extra.string("dye_item").orElse(""),
 				extra.flag("ethermerge"),
 				(long) extra.number("winning_bid").orElse(0.0d));
 
 		return Optional.of(new DetailedDecodedItem(decoded, recovery(extra)));
+	}
+
+	/**
+	 * The Wither-impact scroll list, distinct from the unrelated gemstone power-scroll field.
+	 * Missing means a known empty set; present-but-not-a-string-list, duplicates, and unknown values
+	 * are rejected so a new or corrupt state cannot masquerade as an unscrolled blade.
+	 */
+	private static Optional<List<String>> abilityScrolls(NbtCompound extra) {
+		if (!extra.contains("ability_scroll")) {
+			return Optional.of(List.of());
+		}
+
+		Object raw = extra.entries().get("ability_scroll");
+		if (!(raw instanceof List<?> values)
+				|| values.stream().anyMatch(value -> !(value instanceof String))) {
+			return Optional.empty();
+		}
+
+		try {
+			return Optional.of(DecodedItem.normalizeAbilityScrolls(
+					values.stream().map(String.class::cast).toList()));
+		} catch (IllegalArgumentException invalid) {
+			return Optional.empty();
+		}
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */

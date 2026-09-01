@@ -22,6 +22,7 @@ import jeff.skyblockflipper.core.pricing.UpgradePricing;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.ValueEstimate;
+import jeff.skyblockflipper.core.valuation.WitherBladeValuationContainment;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -66,6 +67,11 @@ public final class AuctionValueStrategy implements FlipStrategy {
 	}
 
 	private Optional<FlipCandidate> evaluate(PricedListing priced, StrategyContext context) {
+		if (WitherBladeValuationContainment.suppresses(priced.item())) {
+			// Defence in depth for callers supplying a precomputed listing during containment.
+			return Optional.empty();
+		}
+
 		long price = priced.listing().price();
 		ValueEstimate value = priced.value();
 
