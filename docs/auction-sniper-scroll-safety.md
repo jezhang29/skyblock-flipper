@@ -71,7 +71,16 @@ the exact listing rather than found by an ambiguous name search.
 ### P2 — backtest and release gates
 
 Completed offline 2026-09-01 against the eight retained UTC tape days 2026-08-25 through
-2026-09-01. `Backtest.holdout` streamed each arm through the real `FairValueModel`; the corrected
+2026-09-01. Reproduce with the live sales tape, which must span the scroll release; the checked-in
+July fixture predates it and the rolling gate skips itself there rather than failing:
+
+```
+./gradlew test -PtapeBacktest \
+  -PtapeDir="$HOME/Library/Application Support/minecraft/config/skyblock-flipper/tape" \
+  --tests '*WitherScrollReleaseBacktestTest'
+```
+
+`Backtest.holdout` streamed each arm through the real `FairValueModel`; the corrected
 arm was `Keying.PRODUCTION`, and the pre-fix arm was
 `CounterfactualKeying.withoutTerm("abilityScrolls=")`. Each day was anchored at its end (the newest
 record for the partial current day), with 6-, 12-, and 24-hour holdouts and the shipped 48-hour
