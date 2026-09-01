@@ -70,15 +70,78 @@ the exact listing rather than found by an ambiguous name search.
 
 ### P2 — backtest and release gates
 
-1. Make the unread-attribute probe render list values canonically; it currently reduces list-shaped
-   attributes to an unhelpful generic value.
-2. Run rolling 6-, 12-, and 24-hour holdouts over every retained tape day using the shipped 48-hour
-   training window.
-3. Require zero unscrolled Wither-blade quotes at 2x or more, and report absolute coin exposure,
-   p90 error, coverage, sample counts, and resale-rate changes.
-4. Run the unread-field alarm against the newest tape before every valuation release.
-5. Add a high-ticket quarantine experiment for multimodal or incomplete estimates. Ship a circuit
-   breaker only if the whole-market holdout demonstrates a gain; do not invent an arbitrary 300M cap.
+Completed offline 2026-09-01 against the eight retained UTC tape days 2026-08-25 through
+2026-09-01. `Backtest.holdout` streamed each arm through the real `FairValueModel`; the corrected
+arm was `Keying.PRODUCTION`, and the pre-fix arm was
+`CounterfactualKeying.withoutTerm("abilityScrolls=")`. Each day was anchored at its end (the newest
+record for the partial current day), with 6-, 12-, and 24-hour holdouts and the shipped 48-hour
+training window. The first retained day necessarily has no earlier raw day to train from and fails
+closed; it remains in every denominator rather than being silently discarded.
+
+The dangerous-exposure figure below is absolute quoted excess (`estimate - realized`) on an
+unscrolled blade only when the quote was at least 2x realized price. Counts are holdout observations
+across the eight daily anchors for that horizon; they do not combine horizons, so a sale is not
+triple-counted inside a row.
+
+| Holdout | Arm | Priced / held | Coverage | p90 abs log error | Unscrolled >=2x exposure | Median resale rate |
+|---|---|---:|---:|---:|---:|---:|
+| 6h | ability-scroll unread | 81 / 296 | 27.36% | 0.709 | 2.842B | 0.479 sales/h |
+| 6h | corrected | 70 / 296 | 23.65% | 0.033 | **0** | 0.417 sales/h (-13.0%) |
+| 12h | ability-scroll unread | 122 / 565 | 21.59% | 0.703 | 3.462B | 0.313 sales/h |
+| 12h | corrected | 109 / 565 | 19.29% | 0.039 | **0** | 0.292 sales/h (-6.7%) |
+| 24h | ability-scroll unread | 190 / 924 | 20.56% | 0.703 | 3.466B | 0.458 sales/h |
+| 24h | corrected | 162 / 924 | 17.53% | 0.037 | **0** | 0.375 sales/h (-18.2%) |
+
+All 24 corrected day/horizon cells have zero unscrolled quotes at 2x or more. The pre-fix arm
+reproduces the failure in every horizon on 2026-08-30, 2026-08-31, and the partial 2026-09-01 day.
+The coverage and resale-rate reductions are expected: the old arm called the combined scroll pool
+one fast-selling configuration, while the corrected arm requires six sales of the exact scroll set.
+
+Per-variant holdout and model sample counts (`I` = Implosion, `S` = Shadow Warp, `W` = Wither
+Shield, and `ISW` = all three):
+
+| Holdout | Held out (none, I, S, W, ISW) | Priced pre-fix | Priced corrected | Median backing samples pre-fix -> corrected |
+|---|---|---|---|---|
+| 6h | 108, 7, 1, 2, 178 | 57, 0, 0, 0, 24 | 52, 0, 0, 0, 18 | none: 23 -> 22; ISW: 13 -> 13 |
+| 12h | 222, 7, 3, 3, 330 | 90, 0, 0, 0, 32 | 84, 0, 0, 0, 25 | none: 25 -> 22; ISW: 13 -> 11 |
+| 24h | 374, 11, 6, 6, 527 | 137, 1, 0, 0, 52 | 123, 0, 0, 0, 39 | none: 25 -> 25; I: 25 -> unpriced; ISW: 13 -> 11 |
+
+The unread-value renderer now sorts and spells list contents instead of collapsing them to `-1`.
+Before `ability_scroll` was added to the probe's decoded-field set, the retained tape named the
+actual dominant configuration as
+`[IMPLOSION_SCROLL,SHADOW_WARP_SCROLL,WITHER_SHIELD_SCROLL]` (477 of 499 scroll-bearing sales),
+followed by `[IMPLOSION_SCROLL]` (11), `[SHADOW_WARP_SCROLL]` (6), and
+`[WITHER_SHIELD_SCROLL]` (5). This is the canonical evidence behind the pre-P1 7.78B alarm, not a
+generic list marker.
+
+The final 100M release alarm ran only against the newest UTC tape day, 2026-09-01, and passed. Its
+top upward entries, including their canonical leading values, were:
+
+| Unread field | Upward coins | Leading canonical values |
+|---|---:|---|
+| `bossId` | 2,684,999 | `a5cd2d97-e256-4a00-88bd-1c750a16b0b2` (4), `114bc507-5ef7-4dd1-8259-de292fc9d263` (3), `40fd1a3a-be58-4445-91be-2f83ace67198` (3) |
+| `spawnedFor` | 2,684,999 | `9c063d8b-557c-43e3-a0d0-ab2b487226c6` (13), `dd4d55d9-2b58-4c59-b581-d13d1ff512fa` (12), `77100e98-b546-495e-afaa-7717ff18f478` (10) |
+| `color` | 1,590,000 | `0:0:0` (17), `204:85:0` (7), `41:240:233` (6) |
+| `boss_tier` | 1,109,997 | `4` (289), `0` (161), `2` (143) |
+| `new_years_cake` | 1,100,000 | `510` (9), `509` (5), `504` (3) |
+
+The whole-market quarantine experiment used the newest 24-hour holdout under
+`Keying.PRODUCTION`. "High ticket" was the holdout's top quote decile (13.5M on this tape), not a
+fixed coin cap. Within it, the experiment quarantined estimates already carrying a shipped warning:
+fewer than 12 samples, dispersion above 0.4, or a non-exact basis. It selected 1,876 of 134,099
+priced sales (1.40%).
+
+| Whole-market metric | Before | After quarantine | Delta |
+|---|---:|---:|---:|
+| p90 abs log error | 0.583 | 0.586 | **+0.002 (worse)** |
+| Coverage by count | 87.95% | 86.72% | -1.23pp |
+| Coverage by realized coins | 62.74% | 52.78% | -9.95pp |
+| Quotes >=2x realized | 4,945 | 4,864 | -81 |
+| >=2x quoted excess | 4.158B | 2.360B | -1.799B |
+
+**Quarantine verdict: no-go.** It removes some high-coin errors, but does not improve whole-market
+p90 and gives up nearly ten percentage points of coin coverage to do it. No circuit breaker or coin
+cap ships from this experiment.
 
 ## Review
 
