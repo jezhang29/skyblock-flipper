@@ -121,6 +121,7 @@ public interface Keying {
 		@Override
 		public boolean isBare(DecodedItem item) {
 			return !item.isPet()
+					&& !item.isScrollCapableBlade()
 					&& !item.isDyed()
 					&& !item.ethermerged()
 					&& !item.hasWinningBid()

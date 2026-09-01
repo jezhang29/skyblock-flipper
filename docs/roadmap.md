@@ -121,7 +121,12 @@ play-verification queue below.
 
 ## What is next
 
-Two items stand, both the same shape: work finished offline that has never been seen in play.
+An urgent valuation-safety item now precedes the play-verification queue: **decode and key Wither
+blade `ability_scroll` state**. The current tape shows scrolled and unscrolled Hyperions pooled under
+one signature, producing a reproduced 2.15x unscrolled overvaluation. The full implementation order,
+acceptance gates, and review are in [`docs/auction-sniper-scroll-safety.md`](auction-sniper-scroll-safety.md).
+
+Two earlier items stand, both the same shape: work finished offline that has never been seen in play.
 
 1. **Play a craft flip, a combine flip, and a fusion flip.** Nothing in the three transformation
    strategies has been made and sold on Hypixel. What only play can answer for craft: whether a
@@ -176,11 +181,10 @@ Done and closed since the last write:
   unattended bazaar-to-NPC makes almost nothing. Do not rebuild an away-mode. See
   `npc-unattended-verdict` in memory and `docs/npc-flipping.md`.
 
-Nothing else is queued beyond those two. The signature-gap seam is closed and measured closed: the harm probe's top
-entry is `eman_kills` at 45.5M coins, and everything below it is a counter or a per-item identifier.
-`UnreadAttributeProbeTest` asserts the top stays under 100M — it is the alarm for a Skyblock update
-adding a new invisible upgrade, not a to-do list. Do not start another attribute branch without a
-fresh probe run showing something above that line.
+The older signature-gap seam was considered closed on the previous tape: its harm probe's top entry
+was `eman_kills` at 45.5M coins. The current tape disproves that closure for `ability_scroll`, which
+now fails the 100M alarm and is therefore an active repair, not a new speculative attribute branch.
+After this fix, keep the alarm as the release check for future invisible upgrades.
 
 ## Settled — do not re-open
 

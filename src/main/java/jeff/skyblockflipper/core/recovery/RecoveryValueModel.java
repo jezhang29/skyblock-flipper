@@ -23,6 +23,7 @@ import jeff.skyblockflipper.core.item.Rarity;
 import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.valuation.Keying;
 import jeff.skyblockflipper.core.valuation.ValueEstimate;
+import jeff.skyblockflipper.core.valuation.WitherBladeValuationContainment;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -62,7 +63,8 @@ public final class RecoveryValueModel {
 	}
 
 	public Optional<ValueEstimate> cleanHostValue(DetailedDecodedItem detailed) {
-		if (detailed == null || uncertain(detailed.recovery())) {
+		if (detailed == null || WitherBladeValuationContainment.suppresses(detailed.item())
+				|| uncertain(detailed.recovery())) {
 			return Optional.empty();
 		}
 		return Optional.ofNullable(cleanHosts.get(cleanHostKey(detailed.item())))
@@ -112,8 +114,8 @@ public final class RecoveryValueModel {
 		DecodedItem stripped = new DecodedItem(item.skyblockId(), item.displayName(), item.count(),
 				item.rarity(), item.reforge(), item.stars(), item.recombobulated(),
 				item.hotPotatoBooks(), item.enchantments(), List.of(), Map.of(), item.runes(),
-				item.pet(), item.potion(), item.quality(), item.dye(), item.ethermerged(),
-				item.winningBid());
+				item.pet(), item.potion(), item.quality(), item.abilityScrolls(), item.dye(),
+				item.ethermerged(), item.winningBid());
 		return stripped.signature() + "|recovery=clean";
 	}
 

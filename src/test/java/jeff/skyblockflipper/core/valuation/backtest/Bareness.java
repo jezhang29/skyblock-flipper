@@ -56,6 +56,8 @@ final class Bareness {
 		BY_TERM.put("runes=", item -> !item.runes().isEmpty());
 		BY_TERM.put("potion=", DecodedItem::isPotion);
 		BY_TERM.put("quality=", DecodedItem::hasQuality);
+		BY_TERM.put("abilityScrolls=", item -> item.isScrollCapableBlade()
+				|| !item.abilityScrolls().isEmpty());
 		BY_TERM.put("ethermerge", DecodedItem::ethermerged);
 		BY_TERM.put("dye=", DecodedItem::isDyed);
 	}

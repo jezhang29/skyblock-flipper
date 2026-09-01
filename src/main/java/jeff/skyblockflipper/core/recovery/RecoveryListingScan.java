@@ -23,6 +23,7 @@ import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.valuation.ValueEstimate;
+import jeff.skyblockflipper.core.valuation.WitherBladeValuationContainment;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -59,6 +60,11 @@ public final class RecoveryListingScan {
 
 	public void offerDecoded(ActiveListing listing, DetailedDecodedItem detailed) {
 		decoded++;
+		if (WitherBladeValuationContainment.suppresses(detailed.item())) {
+			// Suppress the whole recovery opportunity, not just its clean-host leg: a zero host could
+			// otherwise leave removable components looking sufficient to justify the listing.
+			return;
+		}
 		if (!detailed.recovery().hasRecoverableParts()
 				|| detailed.recovery().warnings().contains(RecoveryWarning.MALFORMED_METADATA)
 				|| detailed.recovery().warnings().contains(RecoveryWarning.UNSUPPORTED_SLOT)) {

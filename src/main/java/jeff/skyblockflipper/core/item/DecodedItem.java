@@ -18,9 +18,11 @@
 package jeff.skyblockflipper.core.item;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.TreeMap;
 
@@ -38,6 +40,7 @@ import java.util.TreeMap;
  * @param pet          pet detail, or null when this is not a pet
  * @param potion       potion detail, or null when this is not a potion
  * @param quality      dungeon drop quality, or null when this item carries no such roll
+ * @param abilityScrolls normalized Wither-impact ability scroll ids applied to this item
  * @param dye          the named dye applied to this leather item, or "" for none
  * @param ethermerged  whether an Etherwarp Conduit has been merged into this item
  * @param winningBid   coins paid for this item at the Dark Auction, or 0 for the items that are not
@@ -60,10 +63,16 @@ public record DecodedItem(
 		PetInfo pet,
 		PotionInfo potion,
 		DungeonQuality quality,
+		List<String> abilityScrolls,
 		String dye,
 		boolean ethermerged,
 		long winningBid
 ) {
+	private static final List<String> KNOWN_ABILITY_SCROLLS = List.of(
+			"IMPLOSION_SCROLL", "SHADOW_WARP_SCROLL", "WITHER_SHIELD_SCROLL");
+	private static final Set<String> SCROLL_CAPABLE_BLADE_IDS = Set.of(
+			"HYPERION", "ASTRAEA", "SCYLLA", "VALKYRIE", "NECRON_BLADE");
+
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
 		// order is salted per JVM - and signature() below promises the same string every time.
@@ -71,7 +80,51 @@ public record DecodedItem(
 		gemstones = List.copyOf(gemstones);
 		attributes = Collections.unmodifiableMap(new TreeMap<>(attributes));
 		runes = Collections.unmodifiableMap(new TreeMap<>(runes));
+		abilityScrolls = normalizeAbilityScrolls(abilityScrolls);
 		dye = dye == null ? "" : dye;
+	}
+
+	/** The pre-ability-scroll record shape, kept for callers constructing an item with no scrolls. */
+	public DecodedItem(String skyblockId, String displayName, int count, Rarity rarity,
+			String reforge, int stars, boolean recombobulated, int hotPotatoBooks,
+			Map<String, Integer> enchantments, List<String> gemstones,
+			Map<String, Integer> attributes, Map<String, Integer> runes, PetInfo pet,
+			PotionInfo potion, DungeonQuality quality, String dye, boolean ethermerged,
+			long winningBid) {
+		this(skyblockId, displayName, count, rarity, reforge, stars, recombobulated,
+				hotPotatoBooks, enchantments, gemstones, attributes, runes, pet, potion, quality,
+				List.of(), dye, ethermerged, winningBid);
+	}
+
+	/** True for every blade whose price depends on the invisible Wither-impact scroll list. */
+	public boolean isScrollCapableBlade() {
+		return SCROLL_CAPABLE_BLADE_IDS.contains(skyblockId);
+	}
+
+	/** Whether all three known Wither-impact scrolls are applied. */
+	public boolean hasCompleteAbilityScrollSet() {
+		return abilityScrolls.equals(KNOWN_ABILITY_SCROLLS);
+	}
+
+	/**
+	 * Sorts a valid scroll set and rejects ambiguity rather than silently pooling it.
+	 *
+	 * <p>Package-private so {@link ItemDecoder} can validate an untrusted NBT list before it creates
+	 * an item. Unknown values and duplicates may acquire meaning in a future SkyBlock update; treating
+	 * either as a known configuration would be a valuation guess.
+	 */
+	static List<String> normalizeAbilityScrolls(List<String> scrolls) {
+		if (scrolls == null) {
+			throw new IllegalArgumentException("ability scrolls are missing");
+		}
+
+		Set<String> normalized = new HashSet<>();
+		for (String scroll : scrolls) {
+			if (!KNOWN_ABILITY_SCROLLS.contains(scroll) || !normalized.add(scroll)) {
+				throw new IllegalArgumentException("unknown or duplicate ability scroll");
+			}
+		}
+		return normalized.stream().sorted().toList();
 	}
 
 	public boolean isPet() {
@@ -201,6 +254,15 @@ public record DecodedItem(
 		// for why the stat boost is a flag here and the tier is a number.
 		if (hasQuality()) {
 			key.add("quality=" + quality.signatureTerm());
+		}
+
+		// Wither-impact scrolls are an invisible half-billion-coin state change on this blade family.
+		// The empty set is a term too: without it an unscrolled blade can fall back to
+		// a name-and-rarity pool containing fully scrolled sales. Unknown or malformed lists never
+		// reach an item at all; ItemDecoder fails them closed.
+		if (isScrollCapableBlade() || !abilityScrolls.isEmpty()) {
+			key.add("abilityScrolls=" + (abilityScrolls.isEmpty()
+					? "none" : String.join(",", abilityScrolls)));
 		}
 
 		// One bit, and the only entry from the unread-attribute list in four to survive being
