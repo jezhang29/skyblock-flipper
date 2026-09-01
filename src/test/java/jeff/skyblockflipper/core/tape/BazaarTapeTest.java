@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.tape;
 
 import com.google.gson.Gson;
@@ -46,7 +63,9 @@ class BazaarTapeTest {
 		try (InputStream in = BazaarTapeTest.class.getResourceAsStream("/bazaar-sample.json")) {
 			BazaarDto dto = new Gson().fromJson(
 					new InputStreamReader(in, StandardCharsets.UTF_8), BazaarDto.class);
-			return dto.toSnapshot();
+			// The sample carries a fixed lastUpdated stamp; restamp to now so shape tests stay
+			// inside forEachRecent's window as the fixture ages past it.
+			return restamped(dto.toSnapshot(), Instant.now());
 		}
 	}
 
