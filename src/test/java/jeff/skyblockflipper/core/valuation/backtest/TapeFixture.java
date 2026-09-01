@@ -23,9 +23,16 @@ import jeff.skyblockflipper.core.nbt.NbtCompound;
 import jeff.skyblockflipper.core.nbt.NbtReader;
 import jeff.skyblockflipper.core.tape.SalesTape;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.OptionalDouble;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -96,6 +103,21 @@ public final class TapeFixture {
 
 		assertTrue(newest[0] > 0L, "no sales on the tape at " + tapeDir());
 		return newest[0];
+	}
+
+	/** Each retained UTC day and the newest sale timestamp recorded in it, oldest first. */
+	public static Map<LocalDate, Long> retainedDayEnds() throws IOException {
+		Map<LocalDate, Long> ends = new TreeMap<>();
+		tape().forEachRecent(ALL_DAYS, sale -> {
+			if (sale.timestamp() <= 0L) {
+				return;
+			}
+
+			LocalDate day = Instant.ofEpochMilli(sale.timestamp())
+					.atZone(ZoneOffset.UTC).toLocalDate();
+			ends.merge(day, sale.timestamp(), Math::max);
+		});
+		return Collections.unmodifiableMap(ends);
 	}
 
 	public static SalesTape tape() {

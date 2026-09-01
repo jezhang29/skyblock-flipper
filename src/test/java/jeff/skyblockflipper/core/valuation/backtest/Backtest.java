@@ -25,7 +25,9 @@ import jeff.skyblockflipper.core.valuation.ValueEstimate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Predicate;
@@ -66,7 +68,8 @@ public final class Backtest {
 	 * @param estimate what the model quoted, per unit
 	 */
 	public record Priced(String saleKey, DecodedItem item, long timestamp, double actual,
-			double estimate, ValueEstimate.Basis basis) {
+			double estimate, int samples, double dispersion, double salesPerHour, double confidence,
+			ValueEstimate.Basis basis) {
 		/** Absolute log error, the scale-free way to average a 2x miss on a cheap and a dear item. */
 		public double logError() {
 			return Math.abs(Math.log(estimate / actual));
@@ -77,12 +80,21 @@ public final class Backtest {
 		}
 	}
 
+	/** One held-out sale whether the model could quote it or not. */
+	public record Observed(String saleKey, DecodedItem item, long timestamp, double actual) {
+	}
+
 	/**
 	 * @param priced   held-out sales the model could quote, in tape order
 	 * @param heldOut  held-out sales it saw, quoted or not - the denominator for coverage
 	 * @param trained  sales that reached the model's indices
 	 */
-	public record Result(List<Priced> priced, int heldOut, int trained) {
+	public record Result(List<Priced> priced, int heldOut, int trained, List<Observed> observed) {
+		/** Source compatibility for backtests that construct only aggregate fixtures. */
+		public Result(List<Priced> priced, int heldOut, int trained) {
+			this(priced, heldOut, trained, List.of());
+		}
+
 		public double medianLogError() {
 			List<Double> sorted = sortedLogErrors();
 			return sorted.isEmpty() ? Double.NaN : sorted.get(sorted.size() / 2);
@@ -123,6 +135,15 @@ public final class Backtest {
 		}
 	}
 
+	/** A bounded holdout, with a training cutoff at {@link #startInclusive}. */
+	public record Period(String label, long startInclusive, long endExclusive) {
+		public Period {
+			if (label == null || label.isBlank() || endExclusive <= startInclusive) {
+				throw new IllegalArgumentException("a holdout period needs a label and positive range");
+			}
+		}
+	}
+
 	/**
 	 * Trains under {@code keying} on everything older than {@code cutoff}, then prices what is newer.
 	 *
@@ -151,9 +172,38 @@ public final class Backtest {
 	 */
 	public static Result holdout(Keying keying, long cutoff, Duration window,
 			Predicate<DecodedItem> include, TapeFixture.SaleVisitor observer) throws Exception {
-		FairValueModel.Builder builder =
-				FairValueModel.builder(Instant.ofEpochMilli(cutoff), window, keying);
-		List<Held> held = new ArrayList<>();
+		Period period = new Period("holdout", cutoff, Long.MAX_VALUE);
+		return holdout(keying, List.of(period), window, include, observer).get(period);
+	}
+
+	/**
+	 * Scores several bounded holdouts in one streamed tape pass.
+	 *
+	 * <p>Each period still owns a real {@link FairValueModel.Builder} ending at its own cutoff. The
+	 * shared pass changes only the I/O cost: a decoded sale is offered to every period whose 48-hour
+	 * training window or holdout contains it, then the blob is dropped. This is what makes a rolling
+	 * day-by-day gate affordable without ever collecting a tape day in memory.
+	 */
+	public static Map<Period, Result> holdout(Keying keying, List<Period> periods, Duration window,
+			Predicate<DecodedItem> include) throws Exception {
+		return holdout(keying, periods, window, include,
+				(item, extra, timestamp, unitPrice) -> { });
+	}
+
+	/** As above, showing each included sale to an unread-term observer once. */
+	public static Map<Period, Result> holdout(Keying keying, List<Period> periods, Duration window,
+			Predicate<DecodedItem> include, TapeFixture.SaleVisitor observer) throws Exception {
+		if (periods == null || periods.isEmpty()) {
+			return Map.of();
+		}
+
+		Map<Period, FairValueModel.Builder> builders = new LinkedHashMap<>();
+		Map<Period, List<Held>> heldByPeriod = new LinkedHashMap<>();
+		for (Period period : periods) {
+			builders.put(period, FairValueModel.builder(
+					Instant.ofEpochMilli(period.startInclusive()), window, keying));
+			heldByPeriod.put(period, new ArrayList<>());
+		}
 
 		TapeFixture.forEachSale((item, extra, timestamp, unitPrice) -> {
 			if (unitPrice <= 0.0d || !include.test(item)) {
@@ -162,14 +212,23 @@ public final class Backtest {
 
 			observer.accept(item, extra, timestamp, unitPrice);
 
-			if (timestamp >= cutoff) {
-				held.add(new Held(item, timestamp, unitPrice));
-			} else {
-				builder.add(item, unitPrice, timestamp);
+			for (Period period : periods) {
+				if (timestamp >= period.startInclusive() && timestamp < period.endExclusive()) {
+					heldByPeriod.get(period).add(new Held(item, timestamp, unitPrice));
+				} else if (timestamp < period.startInclusive()) {
+					builders.get(period).add(item, unitPrice, timestamp);
+				}
 			}
 		});
 
-		FairValueModel model = builder.build();
+		Map<Period, Result> results = new LinkedHashMap<>();
+		for (Period period : periods) {
+			results.put(period, score(builders.get(period).build(), heldByPeriod.get(period)));
+		}
+		return Map.copyOf(results);
+	}
+
+	private static Result score(FairValueModel model, List<Held> held) {
 		List<Priced> priced = new ArrayList<>();
 
 		for (Held sale : held) {
@@ -179,11 +238,16 @@ public final class Backtest {
 				continue;
 			}
 
+			ValueEstimate value = estimate.get();
 			priced.add(new Priced(sale.saleKey(), sale.item(), sale.timestamp(), sale.unitPrice(),
-					estimate.get().median(), estimate.get().basis()));
+					value.median(), value.samples(), value.dispersion(), value.salesPerHour(),
+					value.confidence(), value.basis()));
 		}
 
-		return new Result(List.copyOf(priced), held.size(), model.salesConsidered());
+		List<Observed> observed = held.stream()
+				.map(sale -> new Observed(sale.saleKey(), sale.item(), sale.timestamp(), sale.unitPrice()))
+				.toList();
+		return new Result(List.copyOf(priced), held.size(), model.salesConsidered(), observed);
 	}
 
 	/** Everything on the tape, priced under one keying. */
