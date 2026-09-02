@@ -879,8 +879,10 @@ public final class BazaarOverlay {
 				// the coloured half of the line, and a fourth column at this width costs more than it
 				// says.
 				rows.add(Row.line(colourOf(step.stage()), step.stage().ordinal(),
-						" ".repeat(step.depth()) + job.progressOf(step, orders).badge() + " "
-								+ shortVerb(step.label()), step.displayName(),
+						// Two spaces per tree level, one level under the job heading - the same scheme
+						// FlipScreen draws, so the same fusion tree nests the same in both panels.
+						"  ".repeat(step.depth() + 1) + job.progressOf(step, orders).badge() + " "
+								+ shortVerb(step), step.displayName(),
 						step.stage().priced() ? String.format("%.1f", step.price()) : "",
 						step.orderSplit()));
 				names.add(step.displayName());
@@ -891,14 +893,15 @@ public final class BazaarOverlay {
 		 * The step verb trimmed for the 170px panel, so the shard name after it is not cut off. The
 		 * accent bar and badge already say which stage the row is, so "Buy Order" spends width the name
 		 * needs. The flip screen, wider, keeps the full label - this is display-only, like the name
-		 * truncation beside it.
+		 * truncation beside it. Keyed on the stage, not its label text, so a label reword cannot
+		 * silently fall through to the long form; TRANSFORM keeps the job's own verb (Craft/Combine/Fuse).
 		 */
-		private static String shortVerb(String label) {
-			return switch (label) {
-				case "Buy Order" -> "Buy";
-				case "Sell Offer" -> "Sell";
-				case "Buy Instantly" -> "Buy now";
-				default -> label;
+		private static String shortVerb(WorkedJob.Step step) {
+			return switch (step.stage()) {
+				case BUY_ORDER -> "Buy";
+				case SELL_OFFER -> "Sell";
+				case INSTANT_BUY -> "Buy now";
+				case TRANSFORM -> step.label();
 			};
 		}
 
