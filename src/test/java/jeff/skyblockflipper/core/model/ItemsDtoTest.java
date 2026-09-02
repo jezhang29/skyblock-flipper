@@ -117,6 +117,15 @@ class ItemsDtoTest {
 	}
 
 	@Test
+	void namesEssencesNoItemUsesAsAStarIngredient() {
+		// ESSENCE_SAFARI and ESSENCE_FOSSIL trade on the bazaar but appear in no upgrade_costs, so
+		// per-item discovery never sees them. The bundled essence set names them anyway. The fixture
+		// carries neither, so these entries can only have come from the bundle.
+		assertEquals("Safari Essence", catalog.displayName("ESSENCE_SAFARI"));
+		assertEquals("Fossil Essence", catalog.displayName("ESSENCE_FOSSIL"));
+	}
+
+	@Test
 	void namesTheShardsTheEndpointOmits() {
 		// The live resource lists none of the 320 SHARD_* the bazaar trades, so without the bundled
 		// names every fusion view prints the raw id. The fixture carries no shards either, so these
@@ -129,5 +138,20 @@ class ItemsDtoTest {
 	void resolvesAShardByItsRealNameNotItsId() {
 		// The point of naming them: a player reads "Grove" off the bazaar, not SHARD_GROVE.
 		assertEquals("SHARD_GROVE", catalog.find("Grove").only().orElseThrow());
+	}
+
+	@Test
+	void doesNotLetAShardNameShadowAnExistingItem() {
+		// SHARD_KIWI is named "Kiwi", the same name the live catalog gives BUILDER_KIWI. Naming the
+		// shard "Kiwi" too would put two ids in find()'s exact-name tier, so "Kiwi" would resolve to
+		// neither and typing it off the bazaar would find nothing. The shard keeps its raw id instead.
+		ItemsDto dto = new Gson().fromJson(
+				"{\"items\":[{\"id\":\"BUILDER_KIWI\",\"name\":\"Kiwi\"}]}", ItemsDto.class);
+		ItemCatalog withKiwi = dto.toCatalog();
+
+		assertEquals("BUILDER_KIWI", withKiwi.find("Kiwi").only().orElseThrow());
+		assertEquals("SHARD_KIWI", withKiwi.displayName("SHARD_KIWI"));
+		// A shard whose name is free is still named, so the guard only bites on a real collision.
+		assertEquals("Grove", withKiwi.displayName("SHARD_GROVE"));
 	}
 }

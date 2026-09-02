@@ -25,9 +25,12 @@ import jeff.skyblockflipper.core.recipe.FusionTable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Wire format of {@code /v2/resources/skyblock/items}.
@@ -158,8 +161,31 @@ public final class ItemsDto {
 		}
 
 		addShardEntries(entries);
+		addBundledEssenceEntries(entries);
 
 		return new ItemCatalog(entries);
+	}
+
+	/**
+	 * The full set of essence types the bazaar trades, so a new essence names itself even before any
+	 * item lists it as a star ingredient.
+	 *
+	 * <p>{@link #addEssenceEntries} only ever discovers the essences that appear in some item's
+	 * {@code upgrade_costs}. Measured 2026-09-01 against the live bazaar: 11 {@code ESSENCE_*}
+	 * products trade, but only 9 essence types appear in any {@code upgrade_costs}, so
+	 * {@code ESSENCE_FOSSIL} and {@code ESSENCE_SAFARI} - the two newest - had no catalog entry and
+	 * every view showed the raw id. Essences are a small closed game set, so bundle it here the way
+	 * shards are bundled; add a row when the game ships a new essence.
+	 */
+	private static final List<String> ESSENCE_TYPES = List.of(
+			"CRIMSON", "DIAMOND", "DRAGON", "FOREST", "FOSSIL", "GOLD", "ICE", "SAFARI", "SPIDER",
+			"UNDEAD", "WITHER");
+
+	private static void addBundledEssenceEntries(Map<String, ItemCatalog.Entry> entries) {
+		for (String type : ESSENCE_TYPES) {
+			String id = "ESSENCE_" + type;
+			entries.computeIfAbsent(id, k -> new ItemCatalog.Entry(id, essenceName(type), null));
+		}
 	}
 
 	/**
@@ -174,15 +200,37 @@ public final class ItemsDto {
 	 *
 	 * <p>{@code computeIfAbsent} so a real shard row the endpoint ever does ship wins over the
 	 * bundled one - today only the unrelated {@code SHARD_OF_THE_SHREDDED} is present.
+	 *
+	 * <p>A shard name that exactly equals an existing item's name is added <b>without</b> the name,
+	 * keeping the raw-id fallback, because a duplicate name breaks {@link ItemCatalog#find}: its
+	 * exact-name tier would then hold two ids and resolve neither, so typing that name off the bazaar
+	 * finds nothing. Measured 2026-08-30: one collision live - {@code SHARD_KIWI} ("Kiwi") against
+	 * {@code BUILDER_KIWI} ("Kiwi") - so the shard shows its id rather than shadowing the builder
+	 * block. Prefix shadowing ({@code shadowedBy}) is left alone: it is surfaced as a warning, not
+	 * silently broken.
 	 */
 	private static void addShardEntries(Map<String, ItemCatalog.Entry> entries) {
+		Set<String> takenNames = new HashSet<>();
+
+		for (ItemCatalog.Entry entry : entries.values()) {
+			if (entry.name() != null && !entry.name().isBlank()) {
+				takenNames.add(entry.name().toLowerCase(Locale.ROOT));
+			}
+		}
+
 		for (FusionTable.Shard shard : FusionTable.bundled().shards()) {
-			if (shard.name() == null || shard.name().isBlank()) {
+			String name = shard.name();
+
+			if (name == null || name.isBlank()) {
 				continue;
 			}
 
+			// Null the name on collision so displayName falls back to the id and find() stays
+			// unambiguous. Record what we do keep, so a second shard with the same name collides too.
+			String kept = takenNames.add(name.toLowerCase(Locale.ROOT)) ? name : null;
+
 			entries.computeIfAbsent(shard.id(),
-					k -> new ItemCatalog.Entry(shard.id(), shard.name(), null));
+					k -> new ItemCatalog.Entry(shard.id(), kept, null));
 		}
 	}
 
