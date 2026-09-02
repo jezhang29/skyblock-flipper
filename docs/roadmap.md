@@ -121,12 +121,10 @@ play-verification queue below.
 
 ## What is next
 
-An urgent valuation-safety item now precedes the play-verification queue: **decode and key Wither
-blade `ability_scroll` state**. The current tape shows scrolled and unscrolled Hyperions pooled under
-one signature, producing a reproduced 2.15x unscrolled overvaluation. The full implementation order,
-acceptance gates, and review are in [`docs/auction-sniper-scroll-safety.md`](auction-sniper-scroll-safety.md).
+The urgent valuation-safety item — decode and key Wither-blade `ability_scroll` state — is done and
+moved to the closed list below.
 
-Two earlier items stand, both the same shape: work finished offline that has never been seen in play.
+Two items stand, both the same shape: work finished offline that has never been seen in play.
 
 1. **Play a craft flip, a combine flip, and a fusion flip.** Nothing in the three transformation
    strategies has been made and sold on Hypixel. What only play can answer for craft: whether a
@@ -170,6 +168,16 @@ bazaar and craft ranking, and it lowers quoted profit rather than raising it.
 
 Done and closed since the last write:
 
+- **Rework the bazaar overlay into a per-type view.** Built on this branch: pick a flip type from a
+  small auto-generated list, see that type's committed jobs + top candidates + instructions one type
+  at a time, with the green box following the active type. `BazaarStep` generalized off
+  `NpcWorklist.Task` via `BazaarAction`; fixed geometry and constant font. Plan and hooks in
+  `docs/bazaar-overlay-rework.md`. Design settled by grill 2026-08-28.
+- **Decode and key Wither-blade `ability_scroll`** (was the urgent valuation-safety item). Built on
+  this branch: scrolled and unscrolled Hyperions no longer pool under one signature, containing the
+  reproduced 2.15x unscrolled overvaluation. Release gates added, and the rolling gate is skipped on
+  the pre-incident tape. Keep the `UnreadAttributeProbeTest` 100M alarm as the release check for the
+  next invisible upgrade. Full record in `docs/auction-sniper-scroll-safety.md`.
 - **Confirm the bazaar place-flow button names** (was next-2). Done 2026-08-16: `Create Buy Order`,
   `Create Sell Offer`, `Custom Amount`, `Custom Price` and `Top Order +0.1` all read off a live
   `/flip menu` and pinned in `BazaarSlotsTest`. Every screenshot guess was exact. Open sub-finding: a
