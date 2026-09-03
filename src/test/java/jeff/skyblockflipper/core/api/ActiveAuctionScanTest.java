@@ -18,6 +18,7 @@
 package jeff.skyblockflipper.core.api;
 
 import com.google.gson.Gson;
+import jeff.skyblockflipper.core.item.DecodedItem;
 import jeff.skyblockflipper.core.item.DetailedDecodedItem;
 import jeff.skyblockflipper.core.item.ItemDecoder;
 import jeff.skyblockflipper.core.model.ActiveListing;
@@ -26,8 +27,13 @@ import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.recovery.RecoveryListingScan;
+import jeff.skyblockflipper.core.recovery.RecoveryAttachment;
+import jeff.skyblockflipper.core.recovery.RecoveryComponentKind;
+import jeff.skyblockflipper.core.recovery.RecoveryMetadata;
 import jeff.skyblockflipper.core.recovery.RecoveryScanPolicy;
 import jeff.skyblockflipper.core.recovery.RecoveryValuationModels;
+import jeff.skyblockflipper.core.recovery.RecoveryValueModel;
+import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +44,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -89,5 +97,83 @@ class ActiveAuctionScanTest {
 		assertEquals(2, decoderCalls.get());
 		assertEquals(2, combined.decodedBlobs());
 		assertEquals(1, combined.failures());
+	}
+
+	@Test
+	void recoveryInspectsABlobOrdinaryValuationAlreadyDecoded() throws Exception {
+		EndedAuction fixture;
+		try (InputStream in = getClass().getResourceAsStream("/item-bytes-sample.json")) {
+			fixture = new Gson().fromJson(new InputStreamReader(in, StandardCharsets.UTF_8),
+					EndedAuctionsDto.class).auctions.getFirst();
+		}
+		DetailedDecodedItem decoded = ItemDecoder.decodeDetailed(fixture.itemBytes()).orElseThrow();
+		Instant now = Instant.ofEpochMilli(fixture.timestamp() + Duration.ofHours(1).toMillis());
+		RecoveryValuationModels.Builder builder = RecoveryValuationModels.builder(now,
+				Duration.ofDays(2));
+		for (int i = 0; i < 8; i++) {
+			builder.add(new EndedAuction("sale-" + i, "s", "b", fixture.timestamp() + i,
+					3_000_000L, true, fixture.itemBytes()));
+		}
+		DetailedDecodedItem attached = new DetailedDecodedItem(decoded.item(), new RecoveryMetadata(
+				List.of(new RecoveryAttachment(RecoveryComponentKind.GEMSTONE, "COMBAT_0",
+						"FINE_RUBY_GEM", 1L)), Map.of(), Set.of()));
+		UnderpricedScan ordinary = new UnderpricedScan(builder.build().ordinary(), 0.15d,
+				10_000_000L);
+		RecoveryListingScan recovery = new RecoveryListingScan(RecoveryValueModel.empty(),
+				BazaarSnapshot.empty(), Fees.none(), RecoveryScanPolicy.conservativeDefaults(), now);
+		ActiveAuctionScan combined = new ActiveAuctionScan(ordinary, recovery,
+				ignored -> java.util.Optional.of(attached));
+
+		combined.offer(new ActiveListing("active", decoded.item().displayName(),
+				decoded.item().rarity(), 1_000_000L, "shared"));
+
+		assertEquals(1, combined.ordinaryResults().size());
+		assertEquals(1, combined.recovery().decoded());
+		assertEquals(1, combined.decodedBlobs());
+	}
+
+	@Test
+	void recoveryDecodeLetsOrdinaryReachAHighValueExactConfiguration() throws Exception {
+		EndedAuction fixture;
+		try (InputStream in = getClass().getResourceAsStream("/item-bytes-sample.json")) {
+			fixture = new Gson().fromJson(new InputStreamReader(in, StandardCharsets.UTF_8),
+					EndedAuctionsDto.class).auctions.getFirst();
+		}
+		DetailedDecodedItem decoded = ItemDecoder.decodeDetailed(fixture.itemBytes()).orElseThrow();
+		Instant now = Instant.ofEpochMilli(fixture.timestamp() + Duration.ofHours(1).toMillis());
+		RecoveryValuationModels.Builder recoveryBuilder = RecoveryValuationModels.builder(now,
+				Duration.ofDays(2));
+		for (int i = 0; i < 8; i++) {
+			recoveryBuilder.add(new EndedAuction("recovery-" + i, "s", "b",
+					fixture.timestamp() + i, 3_000_000L, true, fixture.itemBytes()));
+		}
+		DecodedItem plain = new DecodedItem("HOST", decoded.item().displayName(), 1,
+				decoded.item().rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(),
+				Map.of(), null, null, null, "", false, 0L);
+		DecodedItem upgraded = new DecodedItem("HOST", decoded.item().displayName(), 1,
+				decoded.item().rarity(), "", 0, false, 0, Map.of("ultimate_wise", 5),
+				List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L);
+		FairValueModel.Builder ordinaryBuilder = FairValueModel.builder(now, Duration.ofDays(2));
+		for (int i = 0; i < 20; i++) {
+			ordinaryBuilder.add(plain, 10_000_000.0d, now.minusSeconds(i).toEpochMilli());
+		}
+		for (int i = 0; i < 8; i++) {
+			ordinaryBuilder.add(upgraded, 100_000_000.0d,
+					now.minusSeconds(i).toEpochMilli());
+		}
+		UnderpricedScan ordinary = new UnderpricedScan(ordinaryBuilder.build(), 0.15d,
+				100_000_000L);
+		RecoveryListingScan recovery = new RecoveryListingScan(recoveryBuilder.build().recovery(),
+				BazaarSnapshot.empty(), Fees.none(), RecoveryScanPolicy.conservativeDefaults(), now);
+		ActiveAuctionScan combined = new ActiveAuctionScan(ordinary, recovery,
+				ignored -> java.util.Optional.of(new DetailedDecodedItem(upgraded,
+						RecoveryMetadata.EMPTY)));
+
+		combined.offer(new ActiveListing("upgraded", upgraded.displayName(), upgraded.rarity(),
+				80_000_000L, "shared"));
+
+		assertEquals(80_000_000L,
+				combined.ordinaryResults().getFirst().listing().price());
+		assertEquals(1, combined.decodedBlobs());
 	}
 }
