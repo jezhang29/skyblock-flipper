@@ -144,7 +144,7 @@ The urgent valuation-safety item — decode and key Wither-blade `ability_scroll
 moved to the closed list below.
 
 **Auction sniper profit improvements (2026-09-02 plan).** Three steps, each independent, each
-measurable against the holdout before shipping. Step 3 shipped; steps 4-5 stand. The analysis, fee
+measurable against the holdout before shipping. Steps 3-4 shipped; step 5 stands. The analysis, fee
 math, validator corrections and rejected alternatives are in the conversation that produced this
 plan (session `01FUETCQupia61S987thhXAV`); only the decisions survive here.
 
@@ -167,15 +167,18 @@ dispersion, false-positive rate tracked the margin, not the dispersion cap: 5% �
 inside the noise. 12% clears it; 5% does not. Robust at resale truth >= 8 sales. So the exact gate
 can loosen from 15% to 12%, no further.
 
-4. **Supply counting from the existing sweep.** Every listing already flows through
-   `ActiveAuctionScan.offer()`. Add a `Map<String, List<Long>>` that accumulates listing prices per
-   coarse key (`itemName|rarity`) at zero additional API cost. Log items where: multiple listings sit
-   below fair value, `salesPerHour >= 0.2`, and the gap between the cheap cluster and the next tier
-   exceeds fees. This is data-gathering only — no strategy, no UI, no action. Study the distribution
-   before building anything around it. The validator noted that coarse-keyed counts mix
-   configurations (bare vs. 5-star), so the signal is approximate; exact-signature grouping requires
-   decoding every listing, which defeats the coarse gate. Accept the approximation for logging;
-   decode only when the coarse distribution shows a gap worth investigating.
+Step 4 — **supply counting from the existing sweep** — is **done**. `SupplyCounter`
+(`core/valuation`) accumulates listing prices per coarse key (`itemName|rarity`) as each listing
+passes `ActiveAuctionScan.offer()`, reading only the name, rarity and price already present, so it
+decodes nothing and adds no request. After a sweep, `MarketPoller.logSupplySignals` logs each coarse
+key that clears all three conditions: two or more listings below the name-and-rarity median,
+`salesPerHour >= 0.2`, and a positive `Fees.binRoundTripProfit(cheapClusterMax, nextTier)` where
+`nextTier` is the cheapest listing above the cheap cluster, or the median when the whole live supply
+sits below it. Data-gathering only — nothing acts on a `SupplySignal`; it says which key is worth
+decoding, not that an opportunity is settled. The counts stay coarse-keyed, so they mix
+configurations (bare vs. 5-star); that approximation is accepted for logging, per the validator, and
+the top 20 signals per sweep are logged with the rest as a count. Study the distribution in the logs
+before step 5.
 
 5. **Floor-sweep strategy (build only after step 4 data justifies it).** A new
    `AuctionFloorStrategy` beside `AuctionValueStrategy`. For items where step 4 shows 2-3 listings
