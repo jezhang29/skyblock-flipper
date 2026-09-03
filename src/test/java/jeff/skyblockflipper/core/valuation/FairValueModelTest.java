@@ -140,7 +140,7 @@ class FairValueModelTest {
 		// the name ("Ancient Necron's Helmet ✪✪✪✪✪"), so it does not even share a coarse key.
 		DecodedItem bare = new DecodedItem(upgraded.skyblockId(), "Necron's Helmet",
 				upgraded.count(), Rarity.LEGENDARY, "", 0, false, 0, Map.of(), List.of(), Map.of(),
-				Map.of(), null, null, null, "", false, 0L);
+				Map.of(), null, null, null, "", false, 0L, 0);
 
 		assertTrue(model.valueOf(bare).isEmpty());
 
@@ -149,7 +149,7 @@ class FairValueModelTest {
 		DecodedItem sameNameQuietlyUpgraded = new DecodedItem(upgraded.skyblockId(),
 				upgraded.displayName(), upgraded.count(), upgraded.rarity(), upgraded.reforge(),
 				upgraded.stars(), true, 10, Map.of(), List.of(), Map.of(), Map.of(), null, null,
-				null, "", false, 0L);
+				null, "", false, 0L, 0);
 
 		assertTrue(model.valueOf(sameNameQuietlyUpgraded).isEmpty());
 	}
@@ -163,7 +163,7 @@ class FairValueModelTest {
 		// Same name and rarity, but now carrying enchantments the coarse key cannot see.
 		DecodedItem enchanted = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of("sharpness", 7), List.of(), Map.of(), Map.of(),
-				null, null, null, "", false, 0L);
+				null, null, null, "", false, 0L, 0);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(enchanted).isEmpty());
@@ -180,7 +180,7 @@ class FairValueModelTest {
 		// on Crimson gear it is worth several times the item under it.
 		DecodedItem rolled = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of(), List.of(),
-				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null, null, "", false, 0L);
+				Map.of("mana_pool", 6, "mana_regeneration", 6), Map.of(), null, null, null, "", false, 0L, 0);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(rolled).isEmpty());
@@ -197,10 +197,71 @@ class FairValueModelTest {
 		// On the tape a merged Aspect of the Void fetches about 4x a plain one.
 		DecodedItem merged = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
 				bare.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null,
-				null, "", true, 0L);
+				null, "", true, 0L, 0);
 
 		assertTrue(model.valueOf(bare).isPresent());
 		assertTrue(model.valueOf(merged).isEmpty());
+	}
+
+	/**
+	 * A locked-slot item is not priced off the pool of unlocked-slot sales.
+	 *
+	 * <p>The bug found in play 2026-09-02: a Divan's Helmet with its gemstone slots shut, quoted at
+	 * ~60M and flagged as a snipe against sales whose slots were paid open. Same id, rarity, reforge
+	 * and recomb, so before the {@code slots} term the two shared one exact key and one median - and
+	 * with unlocked pieces dominating a mixed pool, the locked one was quoted at the unlocked price.
+	 */
+	@Test
+	void willNotPriceALockedSlotItemOffUnlockedSlotSales() {
+		// Six sales of a fully-unlocked, recombobulated Jaded Divan's Helmet, and nothing else.
+		FairValueModel.Builder builder = FairValueModel.builder(NOW, WINDOW);
+
+		for (int i = 0; i < 6; i++) {
+			builder.add(divanHelmet(5), 62_000_000.0d,
+					NOW.minus(Duration.ofHours(i + 1L)).toEpochMilli());
+		}
+
+		FairValueModel model = builder.build();
+
+		// The slot count is the only thing between them, and it is now in the key.
+		assertEquals("DIVAN_HELMET|MYTHIC|reforge=jaded|recomb", divanHelmet(0).signature());
+		assertEquals("DIVAN_HELMET|MYTHIC|reforge=jaded|recomb|slots", divanHelmet(5).signature());
+
+		// The unlocked piece prices off its own sales.
+		assertEquals(62_000_000.0d, model.valueOf(divanHelmet(5)).orElseThrow().median(), 1e-6);
+
+		// The locked piece no longer shares that key, and recomb plus a reforge keep it out of the
+		// coarse pool too, so it gets no quote rather than the unlocked median - the snipe is gone.
+		assertTrue(model.valueOf(divanHelmet(0)).isEmpty());
+	}
+
+	/**
+	 * An unlocked-but-empty slot does not fall back to the coarse pool, and the exact-gate refuses it.
+	 *
+	 * <p>The other half of the same bug, and where {@code UnderpricedScan}'s exact re-check earns its
+	 * place. A slot paid open but left empty places no gem, so before the {@code slots} term the item
+	 * read as bare and priced off the coarse pool of gemmed and unlocked sales. The coarse hit still
+	 * exists - name and rarity match, which is what the scan prunes on before decoding - but a paid-open
+	 * slot is not bare, so the exact re-check no longer lets that pool value it.
+	 */
+	@Test
+	void willNotPriceAnUnlockedSlotItemOffTheCoarsePool() {
+		FairValueModel model = modelOf(sales("ANITA_TALISMAN", 3_000_000L, 3_000_000L, 3_000_000L,
+				3_000_000L, 3_000_000L, 3_000_000L));
+
+		DecodedItem bare = item("ANITA_TALISMAN");
+		// Same name and rarity as the sales, but two gemstone slots paid open - an investment the
+		// display name the coarse key is built from never mentions.
+		DecodedItem unlocked = new DecodedItem(bare.skyblockId(), bare.displayName(), bare.count(),
+				bare.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null,
+				null, "", false, 0L, 2);
+
+		// The coarse hit the scan prunes on is present for both - it is keyed on name and rarity.
+		assertTrue(model.roughValueOf(bare.displayName(), bare.rarity()).isPresent());
+
+		// The bare item takes the coarse value; the unlocked one is refused rather than quoted off it.
+		assertTrue(model.valueOf(bare).isPresent());
+		assertTrue(model.valueOf(unlocked).isEmpty());
 	}
 
 	/**
@@ -262,14 +323,23 @@ class FairValueModelTest {
 		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
 				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
 				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
-				item.potion(), item.quality(), item.dye(), item.ethermerged(), bid);
+				item.potion(), item.quality(), item.dye(), item.ethermerged(), bid,
+				item.unlockedSlots());
+	}
+
+	/** A recombobulated Jaded Divan's Helmet with the given number of gemstone slots paid open. */
+	private static DecodedItem divanHelmet(int unlockedSlots) {
+		return new DecodedItem("DIVAN_HELMET", "Jaded Divan's Helmet", 1, Rarity.MYTHIC, "jaded", 0,
+				true, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L,
+				unlockedSlots);
 	}
 
 	private static DecodedItem withId(DecodedItem item, String skyblockId) {
 		return new DecodedItem(skyblockId, item.displayName(), item.count(), item.rarity(),
 				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
 				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
-				item.potion(), item.quality(), item.dye(), item.ethermerged(), item.winningBid());
+				item.potion(), item.quality(), item.dye(), item.ethermerged(), item.winningBid(),
+				item.unlockedSlots());
 	}
 
 	/**
@@ -289,7 +359,7 @@ class FairValueModelTest {
 				real.rarity(), "", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(),
 				new PetInfo(pet.type(), pet.tier(), pet.exp(), level, pet.heldItem(),
 						pet.candyUsed(), pet.skin()),
-				null, null, "", false, 0L);
+				null, null, "", false, 0L, 0);
 	}
 
 	@Test

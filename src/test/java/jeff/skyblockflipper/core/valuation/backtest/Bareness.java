@@ -40,6 +40,7 @@ final class Bareness {
 		BY_TERM.put("potion=", DecodedItem::isPotion);
 		BY_TERM.put("quality=", DecodedItem::hasQuality);
 		BY_TERM.put("ethermerge", DecodedItem::ethermerged);
+		BY_TERM.put("slots", item -> item.unlockedSlots() > 0);
 		BY_TERM.put("dye=", DecodedItem::isDyed);
 	}
 

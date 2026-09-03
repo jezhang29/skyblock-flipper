@@ -26,6 +26,12 @@ import java.util.TreeMap;
  * @param winningBid   coins paid for this item at the Dark Auction, or 0 for the items that are not
  *                     sold there. Deliberately absent from {@link #signature()} - see
  *                     {@link #hasWinningBid()}
+ * @param unlockedSlots how many gemstone slots have been paid open, the union of the
+ *                     {@code unlocked_slots} array and the slots holding a placed gem. A locked slot
+ *                     costs real coins to open, so an item with slots open is worth far more than the
+ *                     same item with them shut - and {@link #gemstones} alone cannot tell the two
+ *                     apart, because an unlocked-but-empty slot places no gem. Sibling of
+ *                     {@code gemstones}; kept at the end to spare the positional constructors
  */
 public record DecodedItem(
 		String skyblockId,
@@ -45,7 +51,8 @@ public record DecodedItem(
 		DungeonQuality quality,
 		String dye,
 		boolean ethermerged,
-		long winningBid
+		long winningBid,
+		int unlockedSlots
 ) {
 	public DecodedItem {
 		// Sorted and kept sorted. Map.copyOf would be immutable but not ordered - its iteration
@@ -207,6 +214,28 @@ public record DecodedItem(
 		// See EthermergeBacktestTest.
 		if (ethermerged) {
 			key.add("ethermerge");
+		}
+
+		// The count of gemstone slots paid open, as one bit rather than the number. A locked slot
+		// costs real coins and gemstone materials, so an unlocked piece is worth far more than the
+		// same piece shut - a Divan's Helmet ran ~38M locked against ~76M with its five slots open on
+		// the tape - yet unread the two share this key and the pooled median quotes the locked one at
+		// the unlocked price. Found in play 2026-09-02 quoting locked Divan pieces at ~60M as snipes.
+		//
+		// It is the attribute UnreadAttributeProbeTest was blind to: unlocked_slots lives inside the
+		// gems compound, which the probe marked read for its placed gems, so the "no further
+		// shared-id-shaped gap on this tape" claim was never tested against it.
+		//
+		// Shipped as a bit, not the count: on a 24h holdout of the 283 ids that ever unlock a slot,
+		// keying the bit and keying the exact count were indistinguishable on fake snipes (622 against
+		// 621 of 18,656 priced) and on error (median |log err| 0.126, p90 0.545), and the bit kept
+		// more coverage (18,554 priced against 18,529; 229 open-slot sales against 204) because
+		// intermediate slot counts are too sparse to form a pool. Against the count unread the bit
+		// takes fake snipes 632 -> 622 for 102 valuations, mostly by refusing to quote the locked
+		// minority of a mixed pool rather than mispricing it. The slot index (which hole) is dropped,
+		// like placed gems: it does not move price. See GemstoneSlotBacktestTest.
+		if (unlockedSlots > 0) {
+			key.add("slots");
 		}
 
 		// Last, so a test can strip it back off to compare a dyed sale against a plain one. Worth
