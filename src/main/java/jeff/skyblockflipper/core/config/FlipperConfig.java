@@ -505,6 +505,17 @@ public final class FlipperConfig {
 	 */
 	public boolean bazaarHighlightEnabled = true;
 
+	/**
+	 * Draw the auction-snipe list beside Hypixel's auction-house menu.
+	 *
+	 * <p>On by default for the same reason {@link #bazaarOverlayEnabled} is: it writes nothing and
+	 * sends nothing, only listing the {@code AUCTION_VALUE} finds beside the house where they get
+	 * searched. Unlike the bazaar panel it draws no box and points at no slot - a snipe is one bid on
+	 * an ephemeral listing, not a step in an order book - so a click only ever copies the item's name
+	 * to paste into the search sign. It reuses {@link #bazaarOverlaySide} for which side to sit on.
+	 */
+	public boolean auctionOverlayEnabled = true;
+
 	/** How many candidates the HUD lists. Kept short; the full list is what {@code /flip} is for. */
 	public int hudLines = 3;
 
