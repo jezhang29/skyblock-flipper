@@ -47,12 +47,24 @@ Done and closed since the last write:
   premium holds the top ~10 minutes of a session (3% of samples) and catch-dumps ~1.4M/day;
   unattended bazaar-to-NPC makes almost nothing. Do not rebuild an away-mode. See
   `npc-unattended-verdict` in memory and `docs/npc-flipping.md`.
+- **Gemstone unlocked-slot valuation** (found in play 2026-09-02). Locked-slot items priced off
+  unlocked-slot sales and were flagged as ~60M snipes, because `unlocked_slots` (nested in `gems`)
+  reached neither the signature nor the harm probe. Now decoded into `DecodedItem.unlockedSlots` and
+  keyed as a one-bit `slots` term, with a paid-open slot made non-bare so the coarse fallback cannot
+  undo it. Verdict on the user's tape: the bit beats no-op (fake snipes 632 → 622 over the 283 ids
+  that ever unlock a slot, error flat, 102 valuations) and ties the exact count while keeping more
+  coverage, so it ships as a bit. Both probes un-blinded to the nested key. See
+  `docs/gemstone-slot-valuation.md`, `GemstoneSlotBacktestTest`, and the `signature-findings` skill.
 
-Nothing else is queued. The signature-gap seam is closed and measured closed: the harm probe's top
-entry is `eman_kills` at 45.5M coins, and everything below it is a counter or a per-item identifier.
-`UnreadAttributeProbeTest` asserts the top stays under 100M — it is the alarm for a Skyblock update
-adding a new invisible upgrade, not a to-do list. Do not start another attribute branch without a
-fresh probe run showing something above that line.
+Nothing else is queued. The signature-gap seam is closed for top-level attributes, and now for a
+nested one too: the harm probe ranked only top-level `ExtraAttributes` keys, so it was blind to
+`unlocked_slots` hidden inside the `gems` compound — a real ~60M gemstone-slot gap that surfaced in
+play 2026-09-02, not on the probe. Both probes now split that nested key out, and the gemstone slot
+bit shipped (below). With it read the harm probe's top entry is again `eman_kills` at 45.5M coins, a
+counter, and everything below it is a counter or a per-item identifier. `UnreadAttributeProbeTest`
+asserts the top stays under 100M — the alarm for a Skyblock update adding a new invisible upgrade, not
+a to-do list. Do not start another attribute branch without a fresh probe run above that line, and
+check for a newly nested attribute the same way this one was missed.
 
 ## Settled — do not re-open
 
@@ -90,12 +102,15 @@ rather than a memory.
 ### Valuation (see the `signature-findings` skill for the full record)
 
 - **Shared item ids are the recurring silent bug.** `PET`, `RUNE`, `POTION` each pooled a whole
-  market on one key until split by their in-blob identity. The seam is now closed.
+  market on one key until split by their in-blob identity. The seam is now closed, including one
+  nested case: `unlocked_slots` hid inside the `gems` compound and pooled locked with unlocked
+  gemstone-slot items until it shipped as the `slots` bit (2026-09-02).
 - **Six attributes measured out and must not be re-opened:** raw `color`, `power_ability_scroll`, the
   drill parts, `tuned_transmission`, `baseStatBoostPercentage` as a number (it is a `maxed` flag),
   and `dungeon_item`. Each is huge at the bare item id and flat at the production signature.
-- **Three shipped:** `dye_item`, `ethermerge`, and `winning_bid` (as a price-to-bid ratio quote, not
-  a key term). Pet level, dungeon `item_tier` and Kuudra `attributes` also ship.
+- **Four shipped:** `dye_item`, `ethermerge`, the gemstone unlocked-slot bit (`slots`), and
+  `winning_bid` (as a price-to-bid ratio quote, not a key term). Pet level, dungeon `item_tier` and
+  Kuudra `attributes` also ship.
 - **More tape does not buy pricing accuracy.** Coverage is 88.9% at 48h against 89.3% at 120h;
   `valuationWindowDays` stays 2.
 - **AH → BZ arbitrage is dead by game rule.** The two venues trade disjoint item sets. Craft flips
