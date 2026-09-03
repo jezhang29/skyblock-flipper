@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -199,5 +200,57 @@ class AuctionValueStrategyTest {
 				.getFirst();
 
 		assertTrue(slow.risks().stream().anyMatch(risk -> risk.contains("parked")));
+	}
+
+	@Test
+	void quarantinesAnImplausiblyDeepDiscountOnAHighValueItem() {
+		// 72% off a 250M item. On the tape a discount this deep on an item this dear is far more often
+		// a hidden upgrade the signature does not read - the gemstone slot, the Hyperion scroll - than
+		// a seller's mistake, so it is flagged to verify rather than trusted on the model's word.
+		FlipCandidate suspect = candidates(context(
+				List.of(priced(70_000_000L, 250_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
+				.getFirst();
+
+		assertTrue(suspect.suspect(), "a deep discount on a high-value item should be quarantined");
+		assertTrue(suspect.risks().stream().anyMatch(risk -> risk.contains("hidden upgrade")),
+				"the quarantine has to say why: " + suspect.risks());
+	}
+
+	@Test
+	void aQuarantinedFlipRanksBelowAnOrdinaryOneEvenWithMoreQuotedProfit() {
+		// The suspect quotes the larger profit per hour, which is the whole trap: a wrong-high quote
+		// is the biggest quote on the book. It still has to sort under the clean flip.
+		List<FlipCandidate> found = candidates(context(List.of(
+				priced(70_000_000L, 250_000_000L, 30, 4.0d, ValueEstimate.Basis.EXACT),
+				priced(6_000_000L, 10_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false));
+
+		assertEquals(2, found.size());
+		assertFalse(found.getFirst().suspect(), "the clean flip has to rank first");
+		assertTrue(found.getLast().suspect(), "the suspect flip has to rank last");
+		assertTrue(found.getLast().profitPerHour() > found.getFirst().profitPerHour(),
+				"the demotion has to beat profit ranking, not ride it");
+	}
+
+	@Test
+	void doesNotQuarantineAnOrdinaryDiscountOnAValuableItem() {
+		// 40% off a 40M item: deep enough to be worth a look, not deep enough to be a probable mirage.
+		FlipCandidate clean = candidates(context(
+				List.of(priced(24_000_000L, 40_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
+				.getFirst();
+
+		assertFalse(clean.suspect(), "a 40% discount is the strategy's bread and butter, not a suspect");
+		assertTrue(clean.risks().stream().noneMatch(risk -> risk.contains("hidden upgrade")),
+				"a clean flip must not carry the verify-first warning: " + clean.risks());
+	}
+
+	@Test
+	void doesNotQuarantineADeepDiscountOnACheapItem() {
+		// 70% off, but the item is only worth 2M: a hidden upgrade here is cheap to verify and cheap
+		// to be wrong about, so the guard leaves it alone.
+		FlipCandidate clean = candidates(context(
+				List.of(priced(600_000L, 2_000_000L, 30, 1.0d, ValueEstimate.Basis.EXACT)), 0.0d, 0L, false))
+				.getFirst();
+
+		assertFalse(clean.suspect(), "a deep discount below the value floor is not quarantined");
 	}
 }

@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Every other valuation backtest scores the model's quote against what a sale fetched - coverage,
  * log error, fake snipes. None of them close the loop the auction sniper actually runs: flag a live
  * listing priced under the model, buy it, relist, and see what comes back after fees. This one does,
- * against the shipped gate stack ({@code snipeMinDiscount 0.15}, {@code minConfidence 0.6},
+ * against the shipped gate stack ({@code snipeMinDiscount 0.25}, {@code minConfidence 0.6},
  * {@code minProfitPerFlip 50k}) and the shipped valuation window (2 days).
  *
  * <p>The simulation. Hold out the newest {@code HOLDOUT_HOURS}; train the real {@link FairValueModel}
@@ -53,8 +53,8 @@ class SnipeProfitBacktestTest {
 	/** What the shipped model prices from: {@code valuationWindowDays = 2}. */
 	private static final Duration WINDOW = Duration.ofDays(2);
 
-	/** The shipped gate. */
-	private static final double SNIPE_MIN_DISCOUNT = 0.15d;
+	/** The shipped gate. Raised from 0.15 on the strength of this test's own band breakdown. */
+	private static final double SNIPE_MIN_DISCOUNT = 0.25d;
 	private static final double MIN_CONFIDENCE = 0.6d;
 	private static final long MIN_PROFIT_PER_FLIP = 50_000L;
 
@@ -159,9 +159,9 @@ class SnipeProfitBacktestTest {
 						+ "%,d of %,d quotable (%.2f%%) - the standing fake-snipe rate%n",
 				median(logErrors), overvalued2x, quoted, pct(overvalued2x, quoted));
 
-		// The base case: the shipped 0.15 discount, uncapped, so the number is about the model and not
-		// the bankroll.
-		report("SHIPPED GATE (discount 0.15, uncapped)", pool, SNIPE_MIN_DISCOUNT, UNCAPPED);
+		// The base case: the shipped 0.25 discount, uncapped, so the number is about the model and not
+		// the bankroll. The 0.15 row of the sweep below is the old floor, kept for the comparison.
+		report("SHIPPED GATE (discount 0.25, uncapped)", pool, SNIPE_MIN_DISCOUNT, UNCAPPED);
 
 		System.out.printf("%n--- the same gate under a per-flip capital cap ---%n");
 		report("10M bankroll  (cap 2.5M)", pool, SNIPE_MIN_DISCOUNT, CAP_10M);
