@@ -94,6 +94,11 @@ test {
 		// to npcMinMarginRatio cannot be checked before it is made.
 		systemProperty "skyblockflipper.npcMinMarginRatio",
 				project.findProperty("npcMinMarginRatio") ?: "0.15"
+		// The exact-margin backtest judges each flag against the post-split resale median of its
+		// signature; a thicker minimum resale sample rules out a false-positive rate that is really
+		// just resale noise on thinly-traded configurations.
+		systemProperty "skyblockflipper.minResaleSamples",
+				project.findProperty("minResaleSamples") ?: "3"
 		// It prints the measurement it makes, which is the point of running it.
 		testLogging.showStandardStreams = true
 		// A week of server-collected tape is over a gigabyte of blobs, and the window backtest

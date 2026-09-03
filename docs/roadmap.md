@@ -143,20 +143,29 @@ were excluded because their local HTTP servers cannot bind in the same sandbox.
 The urgent valuation-safety item — decode and key Wither-blade `ability_scroll` state — is done and
 moved to the closed list below.
 
-**Auction sniper profit improvements (2026-09-02 plan, not started).** Three steps, each
-independent, each measurable against the holdout before shipping. The analysis, fee math, validator
-corrections and rejected alternatives are in the conversation that produced this plan (session
-`01FUETCQupia61S987thhXAV`); only the decisions survive here.
+**Auction sniper profit improvements (2026-09-02 plan).** Three steps, each independent, each
+measurable against the holdout before shipping. Step 3 shipped; steps 4-5 stand. The analysis, fee
+math, validator corrections and rejected alternatives are in the conversation that produced this
+plan (session `01FUETCQupia61S987thhXAV`); only the decisions survive here.
 
-3. **Lower the exact-gate discount threshold.** The shipped `snipeMinDiscount` (15%) applies
-   identically to the coarse gate and the exact gate. The coarse gate needs that margin because
-   name-and-rarity mixes configurations. The exact gate does not: a listing matched against its full
-   decoded signature with confidence > 0.8, samples >= 15 and dispersion < 0.20 is safely priced to
-   within a few percent, so a 5% discount on that estimate is a real opportunity the current 15%
-   threshold walks past. Add `exactMinDiscount` (default 0.05) that fires only after the exact gate
-   passes and only when all three guards hold. The coarse gate keeps its own threshold unchanged.
-   Backtest against a 6-hour holdout before shipping: count opportunities found, false-positive rate
-   at the tighter threshold, and net profit after `Fees.binRoundTripProfit`.
+Step 3 — **lower the exact-gate discount threshold** — is **done**, but the tape corrected the
+number. `snipeMinDiscount` (15%) had applied to both gates. The coarse gate needs that width because
+name-and-rarity mixes configurations; the exact gate matches a full decoded signature, so it does
+not. `exactMinDiscount` (default **0.12**) is a second margin that fires only after the exact gate
+passes and only when the estimate is trusted: confidence > 0.80, samples >= 15, and the discount
+larger than the market's own spread (`dispersion < exactMinDiscount`). The coarse gate is unchanged
+and the cheap prune still never decodes a listing that fails it.
+
+The plan proposed 0.05; the holdout said no. `ExactMarginBacktestTest` on 36,106 held-out BIN sales
+(48h train, 6h holdout, each flag scored by whether buying at the listing and reselling at the
+signature's post-split median clears `Fees.binRoundTripProfit`): the 15% baseline flagged 6,216
+listings at a 26% false-positive rate. A 5% exact margin added 2,961 flags (+48%) but they lost to
+fees 57% of the time and earned ~34k coins each against the baseline's ~253k. Sweeping margin against
+dispersion, false-positive rate tracked the margin, not the dispersion cap: 5% ≈ 55%, 7% ≈ 50%,
+10% ≈ 37%, and 12% ≈ 30%, matching the baseline. The reason is the model's own ~10% median error
+(`ValuationWindowBacktestTest`, 0.106 median absolute log error) — a discount smaller than that is
+inside the noise. 12% clears it; 5% does not. Robust at resale truth >= 8 sales. So the exact gate
+can loosen from 15% to 12%, no further.
 
 4. **Supply counting from the existing sweep.** Every listing already flows through
    `ActiveAuctionScan.offer()`. Add a `Map<String, List<Long>>` that accumulates listing prices per

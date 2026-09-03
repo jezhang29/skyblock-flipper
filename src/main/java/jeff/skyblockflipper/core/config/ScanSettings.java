@@ -27,6 +27,10 @@ package jeff.skyblockflipper.core.config;
  *                                sweep, which is a real cost to somebody's connection
  * @param valuationWindowDays     how far back realized sales are trusted as evidence of current value
  * @param minDiscount             how far under fair value a listing must be to be worth decoding
+ * @param exactMinDiscount        the exact gate's own, smaller discount, applied after a listing is
+ *                                matched to its full decoded signature and only when that estimate
+ *                                is well-backed. Equal to {@code minDiscount} leaves the exact gate
+ *                                at the coarse margin
  * @param maxPrice                listings above this cannot be acted on, so they are not examined
  * @param bazaarTapeEnabled       whether to record bazaar top-of-book to disk
  * @param bazaarTapeRetentionDays how many days of bazaar tape to keep
@@ -39,6 +43,7 @@ public record ScanSettings(
 		boolean scanAuctions,
 		int valuationWindowDays,
 		double minDiscount,
+		double exactMinDiscount,
 		long maxPrice,
 		boolean bazaarTapeEnabled,
 		int bazaarTapeRetentionDays,
@@ -47,11 +52,14 @@ public record ScanSettings(
 		int bazaarFlipperLevel,
 		RecoverySettings recovery
 ) {
-	/** Source compatibility for callers that predate recovery's fee-aware active scan. */
+	/**
+	 * Source compatibility for callers that predate recovery's fee-aware active scan. The exact gate
+	 * defaults to the coarse margin, so these callers see the pre-exact-gate behaviour unchanged.
+	 */
 	public ScanSettings(boolean scanAuctions, int valuationWindowDays, double minDiscount,
 			long maxPrice, boolean bazaarTapeEnabled, int bazaarTapeRetentionDays,
 			int trendWindowHours, int bazaarPollSeconds) {
-		this(scanAuctions, valuationWindowDays, minDiscount, maxPrice, bazaarTapeEnabled,
+		this(scanAuctions, valuationWindowDays, minDiscount, minDiscount, maxPrice, bazaarTapeEnabled,
 				bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds, 0,
 				new FlipperConfig().recoverySettings());
 	}
