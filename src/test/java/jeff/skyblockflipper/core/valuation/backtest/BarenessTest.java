@@ -131,7 +131,7 @@ class BarenessTest {
 	void aReforgedItemWithNothingElseOnItIsBare() {
 		DecodedItem heroic = new DecodedItem("ASPECT_OF_THE_END", "Heroic Aspect of the End", 1,
 				Rarity.RARE, "heroic", 0, false, 0, Map.of(), List.of(), Map.of(), Map.of(),
-				null, null, null, "", false, 0L);
+				null, null, null, List.of(), "", false, 0L, 0);
 
 		assertEquals("ASPECT_OF_THE_END|RARE|reforge=heroic", heroic.signature(),
 				"the reforge is expected in the signature - if it has moved, this test is about "

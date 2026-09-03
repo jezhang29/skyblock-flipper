@@ -131,6 +131,16 @@ public final class FlipperConfig {
 	 * How far under fair value a listing has to be listed before it is worth looking at (0-1).
 	 * Also the prune that keeps a sweep affordable: almost every listing fails it before its
 	 * item data is ever parsed.
+	 *
+	 * <p>0.15, kept deliberately rather than raised. A blanket floor was measured to be the wrong
+	 * instrument: {@code SnipeGateReconcileBacktestTest} resold every held-out flag at the concurrent
+	 * market median and found the losing 0.15-0.25 band splits by trust, not by depth. A trusted quote
+	 * there - EXACT signature, enough samples, a tight book - resells at a profit about four times in
+	 * five, while the untrusted half is a coin toss. Raising this floor to 0.25 throws the good trusted
+	 * flags out with the junk, ~2.2B of realized profit on the tape. The right lever is a tighter margin
+	 * gated on the quote's trust, not a higher floor here. The deep end past ~0.60 is handled the other
+	 * way, by {@code AuctionValueStrategy}'s hidden-upgrade guard: a discount that deep on a valuable
+	 * item is more often a signature the model cannot fully read than a bargain.
 	 */
 	public double snipeMinDiscount = 0.15d;
 

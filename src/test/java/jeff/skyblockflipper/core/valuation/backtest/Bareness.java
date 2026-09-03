@@ -59,6 +59,7 @@ final class Bareness {
 		BY_TERM.put("abilityScrolls=", item -> item.isScrollCapableBlade()
 				|| !item.abilityScrolls().isEmpty());
 		BY_TERM.put("ethermerge", DecodedItem::ethermerged);
+		BY_TERM.put("slots", item -> item.unlockedSlots() > 0);
 		BY_TERM.put("dye=", DecodedItem::isDyed);
 	}
 

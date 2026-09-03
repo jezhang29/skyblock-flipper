@@ -21,6 +21,7 @@ import com.google.gson.Gson;
 
 import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
+import jeff.skyblockflipper.core.nbt.NbtCompound;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -236,7 +237,8 @@ class ItemDecoderTest {
 				helmet.recombobulated(), helmet.hotPotatoBooks(),
 				// Same enchantments, different iteration order.
 				new java.util.HashMap<>(helmet.enchantments()), helmet.gemstones(), helmet.attributes(),
-				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), "", false, 0L);
+				helmet.runes(), helmet.pet(), helmet.potion(), helmet.quality(), List.of(), "", false, 0L,
+				helmet.unlockedSlots());
 
 		assertEquals(helmet.signature(), sameAgain.signature());
 
@@ -244,7 +246,7 @@ class ItemDecoderTest {
 				helmet.count(), helmet.rarity(), helmet.reforge(), helmet.stars() - 1,
 				helmet.recombobulated(), helmet.hotPotatoBooks(), helmet.enchantments(),
 				helmet.gemstones(), helmet.attributes(), helmet.runes(), helmet.pet(),
-				helmet.potion(), helmet.quality(), "", false, 0L);
+				helmet.potion(), helmet.quality(), List.of(), "", false, 0L, helmet.unlockedSlots());
 
 		assertNotEquals(helmet.signature(), oneStarLess.signature());
 	}
@@ -274,7 +276,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of(), boots.runes(), boots.pet(), boots.potion(),
-				boots.quality(), "", false, 0L);
+				boots.quality(), List.of(), "", false, 0L, boots.unlockedSlots());
 
 		// Rolled Crimson gear was asking several times what the bare item was. Sharing a signature
 		// with it would price one off sales of the other in whichever direction happens to hurt.
@@ -285,7 +287,7 @@ class ItemDecoderTest {
 				boots.count(), boots.rarity(), boots.reforge(), boots.stars(),
 				boots.recombobulated(), boots.hotPotatoBooks(), boots.enchantments(),
 				boots.gemstones(), Map.of("mana_regeneration", 4, "lifeline", 4), boots.runes(),
-				boots.pet(), boots.potion(), boots.quality(), "", false, 0L);
+				boots.pet(), boots.potion(), boots.quality(), List.of(), "", false, 0L, boots.unlockedSlots());
 
 		assertNotEquals(boots.signature(), oneLevelLower.signature());
 	}
@@ -422,7 +424,8 @@ class ItemDecoderTest {
 		return new DecodedItem(item.skyblockId(), item.displayName(), item.count(), item.rarity(),
 				item.reforge(), item.stars(), item.recombobulated(), item.hotPotatoBooks(),
 				item.enchantments(), item.gemstones(), item.attributes(), item.runes(), item.pet(),
-				item.potion(), quality, item.dye(), item.ethermerged(), item.winningBid());
+				item.potion(), quality, item.abilityScrolls(), item.dye(), item.ethermerged(),
+				item.winningBid(), item.unlockedSlots());
 	}
 
 	@Test
@@ -493,6 +496,51 @@ class ItemDecoderTest {
 				.findFirst()
 				.orElseThrow(() -> new AssertionError(
 						"no " + (merged ? "merged" : "plain") + " Aspect of the Void in the fixture"));
+	}
+
+	/**
+	 * A locked gemstone slot costs coins and materials to open, so a Divan's Helmet with its slots
+	 * shut is worth a fraction of the same helmet with them open - and {@link DecodedItem#gemstones()}
+	 * cannot tell the two apart, because an unlocked-but-empty slot holds no gem. The decode counts the
+	 * union of the {@code unlocked_slots} array and the slots holding a placed gem.
+	 *
+	 * <p>Built from a parsed-blob tree rather than a real capture: the fixture holds no Divan piece,
+	 * and the count is a pure function of the {@code gems} compound, so a hand-built compound pins it
+	 * exactly across the three states. The count is decoded but not yet in the signature - that term
+	 * ships only if it survives the holdout in {@code GemstoneSlotBacktestTest}.
+	 */
+	@Test
+	void countsUnlockedGemstoneSlotsAsTheUnionOfOpenedAndGemmedSlots() {
+		// Locked: nothing paid open at all.
+		assertEquals(0, divan(NbtCompound.empty()).unlockedSlots());
+
+		// Unlocked and empty: two slots opened, no gems placed. gemstones() is still empty, which is
+		// the bug this closes - such an item used to read as bare and price off the coarse pool.
+		DecodedItem unlockedEmpty = divan(new NbtCompound(Map.<String, Object>of(
+				"unlocked_slots", List.of("COMBAT_0", "COMBAT_1"))));
+		assertEquals(2, unlockedEmpty.unlockedSlots());
+		assertTrue(unlockedEmpty.gemstones().isEmpty());
+
+		// Unlocked and gemmed: the array names one slot and both hold a gem. The gemmed-and-listed slot
+		// is not counted twice, and COMBAT_1 - gemmed in the newer compound format but absent from the
+		// array - still counts, so a fully-gemmed item never reads as zero.
+		DecodedItem gemmed = divan(new NbtCompound(Map.<String, Object>of(
+				"unlocked_slots", List.of("COMBAT_0"),
+				"COMBAT_0", "FINE",
+				"COMBAT_1", new NbtCompound(Map.<String, Object>of("quality", "PERFECT", "uuid", "u")))));
+		assertEquals(2, gemmed.unlockedSlots());
+	}
+
+	/** A Divan's Helmet carrying the given {@code gems} compound, assembled from the blob tree upward. */
+	private static DecodedItem divan(NbtCompound gems) {
+		NbtCompound extra = new NbtCompound(Map.<String, Object>of("id", "DIVAN_HELMET", "gems", gems));
+		NbtCompound tag = new NbtCompound(Map.<String, Object>of("ExtraAttributes", extra,
+				"display", new NbtCompound(Map.<String, Object>of("Name", "Divan's Helmet"))));
+		NbtCompound stack = new NbtCompound(Map.<String, Object>of("tag", tag, "components",
+				new NbtCompound(Map.<String, Object>of(
+						"minecraft:tooltip_style", "hypixel_skyblock:legendary"))));
+		return ItemDecoder.fromRoot(new NbtCompound(Map.<String, Object>of("i", List.of(stack))))
+				.orElseThrow();
 	}
 
 	/**

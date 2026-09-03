@@ -307,11 +307,50 @@ Done and closed since the last write:
   premium holds the top ~10 minutes of a session (3% of samples) and catch-dumps ~1.4M/day;
   unattended bazaar-to-NPC makes almost nothing. Do not rebuild an away-mode. See
   `npc-unattended-verdict` in memory and `docs/npc-flipping.md`.
+- **Gemstone unlocked-slot valuation** (found in play 2026-09-02). Locked-slot items priced off
+  unlocked-slot sales and were flagged as ~60M snipes, because `unlocked_slots` (nested in `gems`)
+  reached neither the signature nor the harm probe. Now decoded into `DecodedItem.unlockedSlots` and
+  keyed as a one-bit `slots` term, with a paid-open slot made non-bare so the coarse fallback cannot
+  undo it. Verdict on the user's tape: the bit beats no-op (fake snipes 632 → 622 over the 283 ids
+  that ever unlock a slot, error flat, 102 valuations) and ties the exact count while keeping more
+  coverage, so it ships as a bit. Both probes un-blinded to the nested key. See
+  `docs/gemstone-slot-valuation.md`, `GemstoneSlotBacktestTest`, and the `signature-findings` skill.
+- **Harden the auction sniper, and reconcile the discount gate across branches** (audit + reconcile
+  2026-09-03). A realized-P&L backtest (`SnipeProfitBacktestTest`) closed the loop the accuracy tests
+  never did: it resells each held-out snipe at the concurrent market median, not the model's own quote.
+  The within-signature edge is real but the quote runs ~2x optimistic — ~58% survives, ~15% of flags
+  resell at a loss, and the losing tail is the shallow 0.15–0.25 discount band (25.6% loss-rate). Two
+  things shipped and **stay**: a runtime **hidden-upgrade guard** in `AuctionValueStrategy` (a discount
+  past 0.60 on a 25M+ item is flagged `FlipCandidate.suspect`, sorted below every trusted flip, stamped
+  with a verify-every-attribute risk, so a signature miss cannot rank as the top snipe — the general
+  backstop the per-attribute probes are not), and the gemstone `slots` bit above.
 
-The older signature-gap seam was considered closed on the previous tape: its harm probe's top entry
-was `eman_kills` at 45.5M coins. The current tape disproves that closure for `ability_scroll`, which
-now fails the 100M alarm and is therefore an active repair, not a new speculative attribute branch.
-After this fix, keep the alarm as the release check for future invisible upgrades.
+  A first mitigation — raising `snipeMinDiscount` 0.15 → 0.25 to drop that band — was **built then
+  reverted**, because a parallel branch (`auction-overlay`, codex) had tuned the same knob the *other*
+  way: keep the 0.15 coarse floor and add a tighter `exactMinDiscount` (0.12) firing only for a trusted
+  EXACT quote (confidence > 0.80, samples ≥ 15, dispersion < 0.20). `SnipeGateReconcileBacktestTest`
+  settled it on one 24h holdout — both gates resold at the same realized median, so the premise that
+  they used different resale truths was wrong: the 25.6% band splits by **trust, not depth**. Trusted
+  EXACT flags in [0.12, 0.25) resell at 19.8% loss / 0.37M per flag / +2.23B realized, ~80% profitable;
+  the untrusted half (33.1% loss) is junk either gate drops. Codex's trusted-exact gate books MORE
+  realized profit than the 0.25 floor (4,332M vs 4,197M) with fewer flags. **Verdict: the blanket floor
+  is the wrong instrument; the trust-gated exact margin is right.** So the floor stays at 0.15 and
+  codex's 0.12 exact gate ships beside it (reconciled onto the overlay line 2026-09-03). The audit's
+  old open #3 — `UnreadAttributeProbeTest` RED on `ability_scroll` (Hyperion) — is done: `ability_scroll`
+  is decoded and keyed on the overlay line (`docs/auction-sniper-scroll-safety.md`), so it is no longer
+  open. See `SnipeGateReconcileBacktestTest`, `AuctionValueStrategyTest`, and
+  `docs/handoff-auction-sniper.md`.
+
+The signature-gap seam is closed for top-level attributes — including Wither-blade `ability_scroll`,
+decoded and keyed on the overlay line — and now for a nested one too: the harm probe ranked only
+top-level `ExtraAttributes` keys, so it was blind to `unlocked_slots` hidden inside the `gems`
+compound — a real ~60M gemstone-slot gap that surfaced in play 2026-09-02, not on the probe. Both
+probes now split that nested key out, and the gemstone slot bit shipped (above). With both read the
+harm probe's top entry is again `eman_kills` at 45.5M coins, a counter, and everything below it is a
+counter or a per-item identifier. `UnreadAttributeProbeTest` asserts the top stays under 100M — the
+alarm for a Skyblock update adding a new invisible upgrade, not a to-do list. Do not start another
+attribute branch without a fresh probe run above that line, and check for a newly nested attribute the
+same way this one was missed.
 
 ## Settled — do not re-open
 
@@ -352,12 +391,15 @@ rather than a memory.
 ### Valuation (see the `signature-findings` skill for the full record)
 
 - **Shared item ids are the recurring silent bug.** `PET`, `RUNE`, `POTION` each pooled a whole
-  market on one key until split by their in-blob identity. The seam is now closed.
+  market on one key until split by their in-blob identity. The seam is now closed, including one
+  nested case: `unlocked_slots` hid inside the `gems` compound and pooled locked with unlocked
+  gemstone-slot items until it shipped as the `slots` bit (2026-09-02).
 - **Six attributes measured out and must not be re-opened:** raw `color`, `power_ability_scroll`, the
   drill parts, `tuned_transmission`, `baseStatBoostPercentage` as a number (it is a `maxed` flag),
   and `dungeon_item`. Each is huge at the bare item id and flat at the production signature.
-- **Three shipped:** `dye_item`, `ethermerge`, and `winning_bid` (as a price-to-bid ratio quote, not
-  a key term). Pet level, dungeon `item_tier` and Kuudra `attributes` also ship.
+- **Four shipped:** `dye_item`, `ethermerge`, the gemstone unlocked-slot bit (`slots`), and
+  `winning_bid` (as a price-to-bid ratio quote, not a key term). Pet level, dungeon `item_tier` and
+  Kuudra `attributes` also ship.
 - **More tape does not buy pricing accuracy.** Coverage is 88.9% at 48h against 89.3% at 120h;
   `valuationWindowDays` stays 2.
 - **AH → BZ arbitrage is dead by game rule.** The two venues trade disjoint item sets.

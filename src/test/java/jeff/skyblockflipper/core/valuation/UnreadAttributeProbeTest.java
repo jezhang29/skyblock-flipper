@@ -81,16 +81,32 @@ class UnreadAttributeProbeTest {
 	private static final String NONE = "(none)";
 
 	/**
+	 * The count of unlocked gemstone slots, nested inside the {@code gems} compound rather than at the
+	 * top of {@code ExtraAttributes}, so the top-level walk cannot reach it. It <b>now ships</b> as the
+	 * one-bit {@code slots} signature term (see {@code docs/gemstone-slot-valuation.md} and
+	 * {@code GemstoneSlotBacktestTest}), so it is in {@link #READ}. The hand-surfacing below is kept
+	 * but guarded off by that membership: it is the mechanism for ranking a nested attribute, re-armed
+	 * by dropping the entry from {@link #READ}, and the record of the blind spot that hid this one.
+	 */
+	private static final String UNLOCKED_SLOTS = "unlocked_slots";
+
+	/**
 	 * Everything the decoder already reads, plus the per-item identity that could never be a key.
 	 *
 	 * <p>Kept in step with {@code SignatureGapProbeTest} by hand, which is a small duplication and the
 	 * honest one: these two probes ask different questions and a shared list would be a third thing to
 	 * keep in step with both.
+	 *
+	 * <p>{@code gems} is here for its placed gems, which the {@code gems=} signature term reads. Its
+	 * nested {@code unlocked_slots} was the blind spot: nothing read it and marking the whole compound
+	 * read hid it, so the settled "no further shared-id-shaped gap" claim stood untested against it.
+	 * It now ships as the {@code slots} bit and is listed here as {@link #UNLOCKED_SLOTS}; the
+	 * hand-surfacing below stays, guarded by that membership so a shipped term is not re-ranked.
 	 */
 	private static final Set<String> READ = Set.of(
 			"id", "modifier", "upgrade_level", "dungeon_item_level", "rarity_upgrades",
-			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo", "runes",
-			"potion", "potion_level", "splash", "enhanced", "extended",
+			"hot_potato_count", "enchantments", "gems", UNLOCKED_SLOTS, "attributes", "petInfo",
+			"runes", "potion", "potion_level", "splash", "enhanced", "extended",
 			"baseStatBoostPercentage", "item_tier", "ability_scroll", "ethermerge", "dye_item",
 			"winning_bid",
 			"uuid", "timestamp", "originTag", "donated_museum");
@@ -272,14 +288,25 @@ class UnreadAttributeProbeTest {
 		Map<String, Set<String>> idsByAttribute = new TreeMap<>();
 		Map<String, Integer> counts = new TreeMap<>();
 
-		forEachSale(dayStart, (item, extra, unitPrice) -> extra.keys().forEach(key -> {
-			if (READ.contains(key)) {
-				return;
-			}
+		forEachSale(dayStart, (item, extra, unitPrice) -> {
+			extra.keys().forEach(key -> {
+				if (READ.contains(key)) {
+					return;
+				}
 
-			counts.merge(key, 1, Integer::sum);
-			idsByAttribute.computeIfAbsent(key, k -> new HashSet<>()).add(item.skyblockId());
-		}));
+				counts.merge(key, 1, Integer::sum);
+				idsByAttribute.computeIfAbsent(key, k -> new HashSet<>()).add(item.skyblockId());
+			});
+
+			// The nested attribute the top-level walk cannot reach, surfaced as its own candidate -
+			// unless it is READ, which it now is, having shipped as the slots bit. Drop it from READ
+			// to re-arm this and rank it again.
+			if (!READ.contains(UNLOCKED_SLOTS) && unlockedSlotCount(extra.child("gems")) > 0) {
+				counts.merge(UNLOCKED_SLOTS, 1, Integer::sum);
+				idsByAttribute.computeIfAbsent(UNLOCKED_SLOTS, k -> new HashSet<>())
+						.add(item.skyblockId());
+			}
+		});
 
 		idsByAttribute.keySet().removeIf(key -> counts.get(key) < MIN_SALES);
 		System.out.printf("%n%,d unread attributes carried by at least %d sales%n",
@@ -296,6 +323,12 @@ class UnreadAttributeProbeTest {
 	 * gap, never invent one.
 	 */
 	static String value(NbtCompound extra, String key) {
+		// Nested, and rendered as the count the term would key on rather than the raw slot list.
+		if (key.equals(UNLOCKED_SLOTS)) {
+			int count = unlockedSlotCount(extra.child("gems"));
+			return count > 0 ? String.valueOf(count) : NONE;
+		}
+
 		if (!extra.contains(key)) {
 			return NONE;
 		}
@@ -321,6 +354,31 @@ class UnreadAttributeProbeTest {
 		}
 
 		return String.valueOf(value);
+	}
+
+	/**
+	 * Unlocked gemstone slots, counted as the union of the {@code unlocked_slots} array and the slots
+	 * holding a placed gem - a gemmed slot is an unlocked one whether or not the array also names it.
+	 *
+	 * <p>Read straight off the raw gems compound because this probe runs before, and independently of,
+	 * the decode that reads the count into {@code DecodedItem}. A slot key ends in {@code _<index>}
+	 * ({@code COMBAT_0}); {@code unlocked_slots} and the {@code _gem} companion keys do not, so the
+	 * regex counts each slot once and skips both.
+	 */
+	private static int unlockedSlotCount(NbtCompound gems) {
+		if (gems.isEmpty()) {
+			return 0;
+		}
+
+		Set<String> slots = new HashSet<>(gems.strings(UNLOCKED_SLOTS));
+
+		for (String slot : gems.keys()) {
+			if (slot.matches(".*_\\d+$")) {
+				slots.add(slot);
+			}
+		}
+
+		return slots.size();
 	}
 
 	/**

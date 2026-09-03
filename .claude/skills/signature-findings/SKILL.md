@@ -1,6 +1,6 @@
 ---
 name: signature-findings
-description: What has been measured about auction signature terms and why each attribute ships or does not — the probe methodology, the six rejected attributes, and the three that shipped. Read before proposing a new signature key term, adding a valuation input, or re-opening a rejected attribute.
+description: What has been measured about auction signature terms and why each attribute ships or does not — the probe methodology, the six rejected attributes, and the shipped terms (dye, ethermerge, the gemstone-slot bit, Wither-blade ability scrolls, the Midas ratio quote). Read before proposing a new signature key term, adding a valuation input, or re-opening a rejected attribute.
 ---
 
 # Signature findings
@@ -44,9 +44,17 @@ what their own configuration fetched. On six days of tape it put `ethermerge` fi
 over 207 sales, an order of magnitude clear, where the spread ranking had it eighth — and that one
 survived its holdout and shipped. With it read, the list drops to `eman_kills` at 45.5M over 26
 sales, a counter with 979 distinct values that would cost 988 valuations to fix 26; everything below
-is the same shape. **There is no further shared-id-shaped gap on this tape**, and the probe's 100M
-threshold now stands as the alarm for a new one arriving. `dungeon_item` reads 1 on 2,218 of 2,223
-sales and separates nothing — ignore it.
+is the same shape. **There was one more gap, and this probe could not see it:** both probes walk only
+top-level `ExtraAttributes` keys, and `unlocked_slots` is nested inside the `gems` compound — so the
+~60M gemstone-slot gap surfaced in play 2026-09-02, not here (it ships now; see below). Both probes
+now split that nested key out. The probe *did* catch a top-level gap the earlier tapes lacked: after
+the Wither-blade scroll release (late Aug 2026) it ranked `ability_scroll` first at 7.78B upward, an
+order of magnitude past the alarm, and that one shipped as the `abilityScrolls=` term (below) —
+distinct from the rejected `power_ability_scroll`. With both fixed the top is again `eman_kills`, so
+**there is no further shared-id-shaped gap on this tape**, and the probe's 100M threshold stands as
+the alarm for a new top-level one arriving — but check nested compounds by hand the way
+`unlocked_slots` was missed.
+`dungeon_item` reads 1 on 2,218 of 2,223 sales and separates nothing — ignore it.
 
 **`winning_bid` was the exception to that whole frame, and it ships as a valuation input rather than
 a key term.** On a Midas weapon the coins burned at the Dark Auction *are* the item, so the attribute
@@ -137,6 +145,41 @@ sale reads as a snipe. Aggregate at 48h unmoved (88.3% / 64.0% / 0.098 / 4,717 c
 costs seven more valuations for no fewer overvaluations. The `isBare` guard is load-bearing here: 315
 of the 516 merged sales carry nothing else, so unguarded they join the coarse pool and every plain
 Aspect of the Void gets quoted off sales worth 4x it. See `EthermergeBacktestTest`.
+
+**The gemstone unlocked-slot bit ships, and it is `ethermerge`'s twin — the second bit, and the first
+gap found in play rather than by the probe.** A gemstone slot paid open costs real coins and
+materials, so a Divan's piece with its slots open is worth far more than the same piece shut — ~76M
+against ~38M on the tape for a mythic jaded recomb Divan's Helmet — yet unread the two share one
+signature and the pooled median quotes the locked one at the unlocked price. It hid from the harm
+probe because `unlocked_slots` is nested inside the `gems` compound the probe marked read for its
+placed gems, so it reached the tape as a ~60M fake snipe on locked Divan pieces (2026-09-02) instead
+of a probe entry. Like `ethermerge` it is one bit, the plain (locked) sales can dominate a mixed pool,
+and it is cheap. On a 24h holdout of the 283 ids that ever unlock a slot: fake snipes 632 → 622,
+median |log err| 0.127 → 0.126, p90 0.547 → 0.545, for 102 valuations in 18,656. Small in aggregate
+because the expensive cases are rare in a single day, and it works mostly by **refusing to quote** the
+locked minority of a mixed pool — `item_tier`'s mechanism — not by quoting it better. **It ships as a
+bit, not the exact count:** the count tied the bit on fake snipes (621 against 622) and error and
+shattered more pools (18,529 priced against 18,554; 204 open-slot sales priced against 229), because
+intermediate slot counts (1–4) are too sparse on the tape to form a pool. The slot *index* (which
+hole) is dropped, like placed gems: it does not move price. The `isBare` guard is load-bearing as it
+was for the merge: 167 of the unlocked-slot sales are otherwise bare, so unguarded a paid-open piece
+reads as bare and prices off the coarse pool of locked and gemmed ones. See `GemstoneSlotBacktestTest`.
+
+**Wither-blade `ability_scroll` ships too, and it is the one the probe caught after a game update
+rather than one it always saw.** The field carries the three Wither-impact scrolls (`IMPLOSION_SCROLL`,
+`SHADOW_WARP_SCROLL`, `WITHER_SHIELD_SCROLL`); unread, a fully scrolled Hyperion (median ~1.06B on the
+tape) pools with an unscrolled one (~510M) and quotes both at ~1.04B, so an unscrolled blade listed
+near its own 510M value reads as a ~500M snipe — reproduced as a 2.15x overvaluation on a 12h holdout.
+This is **not** `power_ability_scroll`, the rejected gemstone power-scroll field above; the two must not
+be conflated or co-reasoned. It shipped as the `abilityScrolls=` term (a canonicalised set, so no/one/
+two/three scrolls each key apart), with scroll-capable blade families barred from the coarse fallback
+when scroll state is absent — the same `isBare` guard `ethermerge` and the gemstone bit need. On the
+release backtest (`WitherScrollReleaseBacktestTest`, eight UTC days 2026-08-25..09-01, arm
+`CounterfactualKeying.withoutTerm("abilityScrolls=")`) all 24 corrected day×horizon cells drop the
+unscrolled ≥2x exposure to **0** (from 2.8–3.5B), p90 |log err| 0.703 → 0.037, at a small coverage and
+resale-rate cost that is the intended fail-closed trade. A whole-market quarantine circuit-breaker was
+measured against the same tape and rejected (no p90 gain, −10pp coin coverage). Full record in
+`docs/auction-sniper-scroll-safety.md`, reproduced by `WitherScrollReleaseBacktestTest`.
 
 **Measure a signature split against the tail, not the median.** The median sale under a pooled key
 is whatever dominates its count, and pooling is accidentally right about that item — splitting

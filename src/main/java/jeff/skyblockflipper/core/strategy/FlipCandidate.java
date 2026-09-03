@@ -50,6 +50,11 @@ import java.util.Optional;
  * @param fill            how fast the two legs are expected to clear, and whether that was measured
  *                        or assumed. Null for strategies that do not rest an order on a book, and
  *                        for the tests and callers that predate it
+ * @param suspect         a flag the strategy could not fully trust: an auction priced so far under
+ *                        its own recorded history that the discount is likelier a hidden upgrade the
+ *                        signature does not read than a real underprice. Sorted below every trusted
+ *                        candidate so a signature-miss mirage can never be the top line, and never
+ *                        set by the order-book strategies, which price from a live book
  */
 public record FlipCandidate(
 		String itemId,
@@ -65,12 +70,26 @@ public record FlipCandidate(
 		List<String> steps,
 		List<String> risks,
 		List<String> notes,
-		FillModel.FillEstimate fill
+		FillModel.FillEstimate fill,
+		boolean suspect
 ) implements Comparable<FlipCandidate> {
 	public FlipCandidate {
 		steps = List.copyOf(steps);
 		risks = List.copyOf(risks);
 		notes = List.copyOf(notes);
+	}
+
+	/**
+	 * The shape before a candidate could be flagged suspect, so every existing caller stays a trusted
+	 * flip without restating it. Only {@link AuctionValueStrategy} sets the flag, through
+	 * {@link #asSuspect()}.
+	 */
+	public FlipCandidate(String itemId, String displayName, StrategyKind kind, double unitBuyPrice,
+			double unitSellPrice, double unitNetProfit, long units, long capitalRequired,
+			double profitPerHour, double confidence, List<String> steps, List<String> risks,
+			List<String> notes, FillModel.FillEstimate fill) {
+		this(itemId, displayName, kind, unitBuyPrice, unitSellPrice, unitNetProfit, units,
+				capitalRequired, profitPerHour, confidence, steps, risks, notes, fill, false);
 	}
 
 	/**
@@ -129,9 +148,35 @@ public record FlipCandidate(
 		return capitalRequired <= 0L ? 0.0d : totalNetProfit() / capitalRequired;
 	}
 
-	/** Descending by profit per hour, so natural ordering is already "best first". */
+	/**
+	 * The same candidate, marked as one to verify before trusting - a discount too deep on an item
+	 * too valuable to take on the model's word alone.
+	 *
+	 * <p>A wither rather than a constructor argument because only one strategy ever sets it, and only
+	 * after the candidate is otherwise built: the profit and the steps are unchanged, what changes is
+	 * where it ranks and that it now carries a verify-first risk.
+	 */
+	public FlipCandidate asSuspect() {
+		return suspect ? this : new FlipCandidate(itemId, displayName, kind, unitBuyPrice,
+				unitSellPrice, unitNetProfit, units, capitalRequired, profitPerHour, confidence,
+				steps, risks, notes, fill, true);
+	}
+
+	/**
+	 * Trusted candidates first, then by profit per hour within each group.
+	 *
+	 * <p>The suspect split comes before the profit comparison on purpose: a signature-miss mirage
+	 * quotes the most profit of anything on the book precisely because its quote is wrong, so ranking
+	 * on profit alone would float it to the top. Demoting it as a class keeps it visible - it is not
+	 * dropped, only quarantined - while making it impossible for it to be the first line a player acts
+	 * on.
+	 */
 	@Override
 	public int compareTo(FlipCandidate other) {
+		if (suspect != other.suspect) {
+			return suspect ? 1 : -1;
+		}
+
 		return Double.compare(other.profitPerHour, profitPerHour);
 	}
 }
