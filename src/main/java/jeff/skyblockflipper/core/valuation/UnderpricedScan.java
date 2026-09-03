@@ -47,8 +47,19 @@ public final class UnderpricedScan implements ListingSink {
 	/** A sweep that somehow found thousands of bargains has found a bug, not a market. */
 	private static final int MAX_RESULTS = 200;
 
+	/**
+	 * Before the exact gate will trust its smaller margin, the estimate has to be well-backed on two
+	 * counts that no margin can substitute for: a high confidence off enough sales. A high confidence
+	 * from a handful of sales is still an anecdote. The third condition - that the market is quiet
+	 * enough for the discount to mean something - is not a fixed number but the margin itself; see
+	 * {@link #clearsExactGate}.
+	 */
+	private static final double EXACT_GATE_MIN_CONFIDENCE = 0.80d;
+	private static final int EXACT_GATE_MIN_SAMPLES = 15;
+
 	private final FairValueModel model;
 	private final double minDiscount;
+	private final double exactMinDiscount;
 	private final long maxPrice;
 
 	private final List<PricedListing> found = new ArrayList<>();
@@ -62,8 +73,26 @@ public final class UnderpricedScan implements ListingSink {
 	 * @param maxPrice    listings above this are not actionable, so not worth decoding either
 	 */
 	public UnderpricedScan(FairValueModel model, double minDiscount, long maxPrice) {
+		this(model, minDiscount, minDiscount, maxPrice);
+	}
+
+	/**
+	 * @param minDiscount      the coarse gate's margin: how far under the name-and-rarity value a
+	 *                         listing has to be to be worth decoding at all. Name-and-rarity mixes
+	 *                         every configuration together, so it needs a wide margin
+	 * @param exactMinDiscount the exact gate's margin, applied only after a listing is matched to
+	 *                         its full decoded signature and only when that estimate is trusted
+	 *                         (confidence, samples, dispersion). Usually smaller than
+	 *                         {@code minDiscount}: a well-backed exact match is priced closely, so a
+	 *                         smaller discount on it is already a real opportunity. Pass the same
+	 *                         value as {@code minDiscount} to leave the exact gate unchanged
+	 * @param maxPrice         listings above this are not actionable, so not worth decoding either
+	 */
+	public UnderpricedScan(FairValueModel model, double minDiscount, double exactMinDiscount,
+			long maxPrice) {
 		this.model = model;
 		this.minDiscount = minDiscount;
+		this.exactMinDiscount = exactMinDiscount;
 		this.maxPrice = maxPrice;
 	}
 
@@ -120,7 +149,7 @@ public final class UnderpricedScan implements ListingSink {
 		}
 		Optional<ValueEstimate> exact = model.valueOf(item.get());
 
-		if (exact.isEmpty() || !isDiscounted(listing.price(), exact.get())) {
+		if (exact.isEmpty() || !clearsExactGate(listing.price(), exact.get())) {
 			// The coarse hit was an illusion: this configuration is not actually cheap, or we
 			// cannot price it at all.
 			rejectedOnExactValue++;
@@ -152,6 +181,40 @@ public final class UnderpricedScan implements ListingSink {
 	}
 
 	private boolean isDiscounted(long price, ValueEstimate value) {
-		return price <= value.median() * (1.0d - minDiscount);
+		return isDiscounted(price, value, minDiscount);
+	}
+
+	private static boolean isDiscounted(long price, ValueEstimate value, double discount) {
+		return price <= value.median() * (1.0d - discount);
+	}
+
+	/**
+	 * The bar an exact-signature estimate has to clear.
+	 *
+	 * <p>Always passes at the coarse margin, so nothing that cleared the old exact check stops
+	 * clearing it. On top of that, a listing under fair value by the smaller {@code exactMinDiscount}
+	 * counts when the exact estimate is trusted - matched to the full decoded signature, off enough
+	 * well-agreeing sales that the median is not a guess. That is the opportunity the wide coarse
+	 * margin walks past: an item priced a shade under what its exact configuration actually sells for.
+	 *
+	 * <p>Trusted means three things. Confidence and sample count are fixed bars. The third is the
+	 * discount against the market's own spread: the claimed edge has to be bigger than how much the
+	 * market disagrees with itself ({@link ValueEstimate#dispersion}, the interquartile range over the
+	 * median), because a discount smaller than the spread is inside the noise, not below it. The
+	 * measured floor under {@code exactMinDiscount} exists for the same reason - a 5% discount lost to
+	 * fees more than half the time on the tape because the model's own median carries ~10% error, so a
+	 * discount has to clear that error to be real. Backtest: {@code ExactMarginBacktestTest}.
+	 */
+	private boolean clearsExactGate(long price, ValueEstimate exact) {
+		if (isDiscounted(price, exact, minDiscount)) {
+			return true;
+		}
+		return exactEstimateTrusted(exact) && isDiscounted(price, exact, exactMinDiscount);
+	}
+
+	private boolean exactEstimateTrusted(ValueEstimate exact) {
+		return exact.confidence() > EXACT_GATE_MIN_CONFIDENCE
+				&& exact.samples() >= EXACT_GATE_MIN_SAMPLES
+				&& exact.dispersion() < exactMinDiscount;
 	}
 }

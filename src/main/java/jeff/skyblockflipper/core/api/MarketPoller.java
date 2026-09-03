@@ -363,7 +363,8 @@ public final class MarketPoller implements AutoCloseable {
 			return;
 		}
 
-		UnderpricedScan ordinary = new UnderpricedScan(model, config.minDiscount(), config.maxPrice());
+		UnderpricedScan ordinary = new UnderpricedScan(model, config.minDiscount(),
+				config.exactMinDiscount(), config.maxPrice());
 		RecoveryListingScan recovery = new RecoveryListingScan(data.recoveryValues(), data.bazaar(),
 				new Fees(config.bazaarFlipperLevel(), data.mayor().isDerpy()),
 				RecoveryScanPolicy.from(config.recovery()), Instant.now());

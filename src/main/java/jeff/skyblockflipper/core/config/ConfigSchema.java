@@ -348,6 +348,12 @@ public final class ConfigSchema {
 							+ "fewer but better finds and a faster search.",
 					0.01d, 0.95d, 0.01d,
 					c -> c.snipeMinDiscount, (c, v) -> c.snipeMinDiscount = v),
+			new Entry.Ratio("exactMinDiscount", "Minimum discount on an exact match",
+					"A smaller discount that only applies once an auction is matched to its exact "
+							+ "item, with a confident price behind it; usually set below the minimum "
+							+ "auction discount to catch closely-priced finds the wider one skips.",
+					0.01d, 0.50d, 0.01d,
+					c -> c.exactMinDiscount, (c, v) -> c.exactMinDiscount = v),
 			new Entry.IntRange("valuationWindowDays", "Judge prices on the last (days)",
 					"How many days of completed sales an item's usual price is worked out from.",
 					1, 30, 1,

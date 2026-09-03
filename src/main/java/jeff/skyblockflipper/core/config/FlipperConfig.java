@@ -135,6 +135,22 @@ public final class FlipperConfig {
 	public double snipeMinDiscount = 0.15d;
 
 	/**
+	 * The exact gate's own, smaller discount (0-1), applied only after a listing is matched to its
+	 * full decoded signature and only when that estimate is well-backed. {@link #snipeMinDiscount}
+	 * has to be wide because name-and-rarity mixes every configuration together; an exact-signature
+	 * match with high confidence and enough samples is priced against the same configuration, so it
+	 * does not need that width. Set this equal to {@code snipeMinDiscount} to hold the exact gate at
+	 * the coarse margin.
+	 *
+	 * <p>Default 0.12, not lower, and the reason is measured. The model's own median carries about
+	 * 10% error (median absolute log error 0.106, {@code ValuationWindowBacktestTest}), so a discount
+	 * has to clear that error to be a real bargain rather than pricing noise. On a 36,106-sale
+	 * holdout ({@code ExactMarginBacktestTest}) a 5% exact margin flagged 48% more listings but they
+	 * lost to fees 57% of the time; a 12% margin matched the 15% baseline's ~26% false-positive rate.
+	 */
+	public double exactMinDiscount = 0.12d;
+
+	/**
 	 * How many days of realized sales to value items from. Longer means more samples per item;
 	 * shorter means a price move last week is not still being averaged into today's estimate.
 	 *
@@ -619,9 +635,9 @@ public final class FlipperConfig {
 
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
-		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll,
-				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds,
-				bazaarFlipperLevel, recoverySettings());
+		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, exactMinDiscount,
+				bankroll, bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours,
+				bazaarPollSeconds, bazaarFlipperLevel, recoverySettings());
 	}
 
 	public RecoverySettings recoverySettings() {
@@ -675,6 +691,9 @@ public final class FlipperConfig {
 		// A zero or negative discount would call every listing at fair value a bargain and hand
 		// the sweep tens of thousands of blobs to decode.
 		snipeMinDiscount = Math.clamp(snipeMinDiscount, 0.01d, 0.95d);
+		// The exact gate can safely sit below the coarse margin, but never at zero (every listing
+		// looks cheap) and never above 0.50 (nothing on the tape qualifies).
+		exactMinDiscount = Math.clamp(exactMinDiscount, 0.01d, 0.50d);
 		valuationWindowDays = Math.clamp(valuationWindowDays, 1, 30);
 		tapeRetentionDays = Math.clamp(tapeRetentionDays, 1, 60);
 		bazaarTapeRetentionDays = Math.clamp(bazaarTapeRetentionDays, 1, 60);
