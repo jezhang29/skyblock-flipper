@@ -42,11 +42,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * wrong in a direction nothing else would reveal.
  */
 class BazaarTapeTest {
+	/**
+	 * The recorded sample book, restamped to now.
+	 *
+	 * <p>The captured JSON carries the {@code lastUpdated} of the minute it was taped, and every
+	 * caller here records it and reads it straight back through {@link #readBack}'s recent-days
+	 * window. Left at its own stamp the fixture ages out of that window: {@link BazaarTape#record}
+	 * files each sample under Hypixel's day, so a months-old capture lands in a day file
+	 * {@code forEachRecent} no longer visits and every count assertion reads zero. Restamping is what
+	 * the callers already mean by the fixture - a book just polled - and it keeps the file's own
+	 * frozen stamp from being a dated time bomb. Tests wanting a second, newer book restamp off this.
+	 */
 	private static BazaarSnapshot fixture() throws Exception {
 		try (InputStream in = BazaarTapeTest.class.getResourceAsStream("/bazaar-sample.json")) {
 			BazaarDto dto = new Gson().fromJson(
 					new InputStreamReader(in, StandardCharsets.UTF_8), BazaarDto.class);
-			return dto.toSnapshot();
+			return restamped(dto.toSnapshot(), Instant.now());
 		}
 	}
 
