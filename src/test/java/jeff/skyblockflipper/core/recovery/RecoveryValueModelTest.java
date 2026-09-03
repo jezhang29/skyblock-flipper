@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -130,6 +131,24 @@ class RecoveryValueModelTest {
 
 		assertTrue(model.mightHaveRecovery(host.displayName(), host.rarity()));
 		assertTrue(model.cleanHostValue(new DetailedDecodedItem(host, metadata(
+				new RecoveryAttachment(RecoveryComponentKind.GEMSTONE, "COMBAT_0",
+						"FINE_RUBY_GEM", 1L)))).isEmpty());
+	}
+
+	@Test
+	void knownHostNameAtAnotherRarityIsDecodedWithoutInventingAHostValue() {
+		DecodedItem legendary = item("DIVAN_HELMET", 0, List.of());
+		DecodedItem mythic = new DecodedItem(legendary.skyblockId(), legendary.displayName(), 1,
+				Rarity.MYTHIC, "", 0, true, 0, Map.of(), List.of("RUBY=FINE"), Map.of(),
+				Map.of(), null, null, null, "", false, 0L);
+		RecoveryValueModel.Builder builder = new RecoveryValueModel.Builder(Duration.ofDays(2));
+		add(builder, new DetailedDecodedItem(legendary, RecoveryMetadata.EMPTY), 1_000.0d, 6);
+
+		RecoveryValueModel model = builder.build();
+
+		assertFalse(model.hasCleanHostFamily(mythic.displayName(), mythic.rarity()));
+		assertTrue(model.mightHaveRecovery(mythic.displayName(), mythic.rarity()));
+		assertTrue(model.cleanHostValue(new DetailedDecodedItem(mythic, metadata(
 				new RecoveryAttachment(RecoveryComponentKind.GEMSTONE, "COMBAT_0",
 						"FINE_RUBY_GEM", 1L)))).isEmpty());
 	}

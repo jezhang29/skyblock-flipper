@@ -1,4 +1,4 @@
-# Roadmap
+/c# Roadmap
 
 The single on-disk record of what is done, what is next, and what is settled and must not be
 re-opened. A lost conversation loses everything not on disk, so this file is where the plan lives.
@@ -121,10 +121,70 @@ play-verification queue below.
 
 ## What is next
 
+**Auction/recovery discovery audit (2026-09-02).** A six-hour holdout from the current local sales
+tape exposed a false-negative in the auction sniper's cheap gate. Discounting every priceable exact
+configuration by 20%, the display-family median admitted 28,115 of 30,670 (91.7%); 2,555 synthetic
+exact-value bargains never reached the decoder because upgraded configurations can be worth far
+more than their family median. Recovery was already decoding most of those families. The composed
+sweep now runs ordinary exact valuation whenever recovery has already earned the decode, and sends
+ordinary-decoded blobs to recovery even when recovery's family gate missed them. This changes no
+signature, value, confidence, fee, profit, or liquidity rule and starts no second sweep.
+
+The same holdout contained 699 sales with recovery metadata. The rarity-specific prefilter admitted
+620 (88.7%); admitting a known display name across rarity changes raises that to 670 (95.9%). Exact
+clean-host and component gates still fail closed after decoding. Only 112 of 699 (16.0%) had an
+exact clean-host comparison. That is the remaining large coverage limit, but a coarse host fallback
+would violate the recovery floor's evidence rule and was not added. The existing capture contains
+no drill/rod removal menu, so those parts remain zero-credit. Focused compile checks, 18 targeted
+JUnit tests, and all 735 non-socket core tests pass in the sandbox. The full Gradle build could not
+start because the sandbox denies Gradle's cache locks and lock-coordination socket; 13 sync tests
+were excluded because their local HTTP servers cannot bind in the same sandbox.
+
 The urgent valuation-safety item — decode and key Wither-blade `ability_scroll` state — is done and
 moved to the closed list below.
 
-Two items stand, both the same shape: work finished offline that has never been seen in play.
+**Auction sniper profit improvements (2026-09-02 plan, not started).** Three steps, each
+independent, each measurable against the holdout before shipping. The analysis, fee math, validator
+corrections and rejected alternatives are in the conversation that produced this plan (session
+`01FUETCQupia61S987thhXAV`); only the decisions survive here.
+
+3. **Lower the exact-gate discount threshold.** The shipped `snipeMinDiscount` (15%) applies
+   identically to the coarse gate and the exact gate. The coarse gate needs that margin because
+   name-and-rarity mixes configurations. The exact gate does not: a listing matched against its full
+   decoded signature with confidence > 0.8, samples >= 15 and dispersion < 0.20 is safely priced to
+   within a few percent, so a 5% discount on that estimate is a real opportunity the current 15%
+   threshold walks past. Add `exactMinDiscount` (default 0.05) that fires only after the exact gate
+   passes and only when all three guards hold. The coarse gate keeps its own threshold unchanged.
+   Backtest against a 6-hour holdout before shipping: count opportunities found, false-positive rate
+   at the tighter threshold, and net profit after `Fees.binRoundTripProfit`.
+
+4. **Supply counting from the existing sweep.** Every listing already flows through
+   `ActiveAuctionScan.offer()`. Add a `Map<String, List<Long>>` that accumulates listing prices per
+   coarse key (`itemName|rarity`) at zero additional API cost. Log items where: multiple listings sit
+   below fair value, `salesPerHour >= 0.2`, and the gap between the cheap cluster and the next tier
+   exceeds fees. This is data-gathering only — no strategy, no UI, no action. Study the distribution
+   before building anything around it. The validator noted that coarse-keyed counts mix
+   configurations (bare vs. 5-star), so the signal is approximate; exact-signature grouping requires
+   decoding every listing, which defeats the coarse gate. Accept the approximation for logging;
+   decode only when the coarse distribution shows a gap worth investigating.
+
+5. **Floor-sweep strategy (build only after step 4 data justifies it).** A new
+   `AuctionFloorStrategy` beside `AuctionValueStrategy`. For items where step 4 shows 2-3 listings
+   clustered below a gap to fair value, with fast turnover (`salesPerHour >= 0.2`, inventory days
+   < 3) and tight market (dispersion < 0.20): present them as "buy these N listings, relist at X"
+   rather than one-at-a-time snipes. Requires: multi-item position sizing against the capital cap,
+   fee math for N relists, and a relist price set just under the next listing above the cheap
+   cluster (not at the median). Guard: Derpy quadruples fees to ~12% round-trip, so floor sweeping
+   is disabled while Derpy holds office. Guard: the player selects BIN listing duration (1h-48h) and
+   the API does not expose it, so assume 24h for sell-probability estimates. Risk: new cheap listings
+   appear while capital is parked; the listing fee is non-refundable.
+
+   The "buy everything and relist higher" (true market cornering) was rejected: new supply appears
+   constantly, manual clicking is too slow to corner, capital gets trapped, and the economics only
+   work on items so illiquid that the capital is parked for days. Floor sweeping on 2-3 items is the
+   viable subset.
+
+Two older items stand, both the same shape: work finished offline that has never been seen in play.
 
 1. **Play a craft flip, a combine flip, and a fusion flip.** Nothing in the three transformation
    strategies has been made and sold on Hypixel. What only play can answer for craft: whether a

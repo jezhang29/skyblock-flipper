@@ -31,10 +31,12 @@ import java.util.function.Supplier;
 /**
  * Finds live listings priced below what their configuration actually sells for.
  *
- * <p>Two stages, because the expensive step has to be earned. Every listing is first checked
- * against the coarse name-and-rarity value, which needs no decoding; almost everything fails there
- * and its blob is dropped immediately. Only survivors get decoded, and then they have to clear the
- * bar a second time against the value of their exact signature.
+ * <p>Two stages, because the expensive step has to be earned. A listing is first checked against
+ * the coarse name-and-rarity value, which needs no decoding; almost everything fails there and its
+ * blob is dropped immediately. The exception is a composed sweep where recovery already needs the
+ * same blob. In that case the exact check is free and the coarse median is not allowed to hide an
+ * upgraded configuration. Every decoded listing still has to clear the bar against the value of
+ * its exact signature.
  *
  * <p>That second check is the one that matters. The coarse value mixes every version of an item
  * together, so a bare helmet looks like a bargain next to sales of five-star recombobulated ones -
@@ -77,6 +79,19 @@ public final class UnderpricedScan implements ListingSink {
 	 */
 	public void offerDecoded(ActiveListing listing,
 			Supplier<Optional<DecodedItem>> decodedItem) {
+		offerDecoded(listing, decodedItem, false);
+	}
+
+	/**
+	 * Runs the exact check when another consumer has already decided this blob must be decoded.
+	 *
+	 * <p>The family median is only a cost-control gate. It can sit far below an upgraded exact
+	 * configuration, so it is allowed to reject that configuration only while doing so actually
+	 * saves a decode. A composed scan passes {@code decodeAlreadyRequired} when recovery needs the
+	 * same blob; exact valuation then gets the missing coverage at no additional parsing cost.
+	 */
+	public void offerDecoded(ActiveListing listing,
+			Supplier<Optional<DecodedItem>> decodedItem, boolean decodeAlreadyRequired) {
 		listingsSeen++;
 
 		if (listing.price() > maxPrice || found.size() >= MAX_RESULTS) {
@@ -86,7 +101,8 @@ public final class UnderpricedScan implements ListingSink {
 		Optional<ValueEstimate> rough = model.roughValueOf(listing.itemName(), listing.rarity());
 
 		// Never sold in the window: there is nothing to call it cheap against.
-		if (rough.isEmpty() || !isDiscounted(listing.price(), rough.get())) {
+		if (rough.isEmpty()
+				|| (!decodeAlreadyRequired && !isDiscounted(listing.price(), rough.get()))) {
 			return;
 		}
 

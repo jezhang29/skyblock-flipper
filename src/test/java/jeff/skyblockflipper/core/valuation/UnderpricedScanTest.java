@@ -21,6 +21,7 @@ import com.google.gson.Gson;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
 import jeff.skyblockflipper.core.item.ItemDecoder;
+import jeff.skyblockflipper.core.item.Rarity;
 import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
@@ -35,6 +36,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -162,5 +165,34 @@ class UnderpricedScanTest {
 
 		assertEquals(List.of(900_000L, 2_000_000L, 2_400_000L),
 				scan.results().stream().map(found -> found.listing().price()).toList());
+	}
+
+	@Test
+	void exactCheckUsesADecodeAnotherConsumerAlreadyNeeds() {
+		DecodedItem plain = new DecodedItem("HOST", "Host", 1, Rarity.LEGENDARY, "", 0,
+				false, 0, Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "",
+				false, 0L);
+		DecodedItem upgraded = new DecodedItem("HOST", "Host", 1, Rarity.LEGENDARY, "", 0,
+				false, 0, Map.of("ultimate_wise", 5), List.of(), Map.of(), Map.of(), null,
+				null, null, "", false, 0L);
+		FairValueModel.Builder builder = FairValueModel.builder(NOW, WINDOW);
+		for (int i = 0; i < 20; i++) {
+			builder.add(plain, 10_000_000.0d, NOW.minusSeconds(i).toEpochMilli());
+		}
+		for (int i = 0; i < 8; i++) {
+			builder.add(upgraded, 100_000_000.0d, NOW.minusSeconds(i).toEpochMilli());
+		}
+		ActiveListing listing = new ActiveListing("upgraded", "Host", Rarity.LEGENDARY,
+				80_000_000L, "unused");
+
+		UnderpricedScan pruned = new UnderpricedScan(builder.build(), 0.15d, 100_000_000L);
+		pruned.offerDecoded(listing, () -> Optional.of(upgraded));
+		assertTrue(pruned.results().isEmpty());
+		assertEquals(0, pruned.decoded());
+
+		UnderpricedScan shared = new UnderpricedScan(builder.build(), 0.15d, 100_000_000L);
+		shared.offerDecoded(listing, () -> Optional.of(upgraded), true);
+		assertEquals(80_000_000L, shared.results().getFirst().listing().price());
+		assertEquals(1, shared.decoded());
 	}
 }

@@ -54,12 +54,31 @@ public final class ActiveAuctionScan implements ListingSink {
 	@Override
 	public void offer(ActiveListing listing) {
 		MemoizedDecode decoded = new MemoizedDecode(listing.itemBytes());
+		boolean recoveryMightUse = false;
+		boolean failed = false;
 		try {
-			ordinary.offerDecoded(listing, () -> decoded.get().map(DetailedDecodedItem::item));
-			if (recovery.mightUse(listing)) {
-				decoded.get().ifPresent(value -> recovery.offerDecoded(listing, value));
-			}
+			recoveryMightUse = recovery.mightUse(listing);
 		} catch (RuntimeException failure) {
+			failed = true;
+		}
+		try {
+			// The family-wide median can hide an upgraded exact configuration. When recovery
+			// already needs this blob, let ordinary valuation inspect it at no extra decode cost.
+			ordinary.offerDecoded(listing, () -> decoded.get().map(DetailedDecodedItem::item),
+					recoveryMightUse);
+		} catch (RuntimeException failure) {
+			failed = true;
+		}
+		try {
+			// Likewise, a decoded ordinary candidate may carry a recoverable attachment even when
+			// no recent attached sale put its display family into recovery's cheap prefilter.
+			Optional<DetailedDecodedItem> value = recoveryMightUse
+					? decoded.get() : decoded.resolvedValue();
+			value.ifPresent(item -> recovery.offerDecoded(listing, item));
+		} catch (RuntimeException failure) {
+			failed = true;
+		}
+		if (failed) {
 			failures++;
 		}
 	}
@@ -90,18 +109,24 @@ public final class ActiveAuctionScan implements ListingSink {
 
 	private final class MemoizedDecode {
 		private final String blob;
-		private Optional<DetailedDecodedItem> value;
+		private Optional<DetailedDecodedItem> value = Optional.empty();
+		private boolean resolved;
 
 		private MemoizedDecode(String blob) {
 			this.blob = blob;
 		}
 
 		private Optional<DetailedDecodedItem> get() {
-			if (value == null) {
+			if (!resolved) {
+				resolved = true;
 				decodedBlobs++;
-				value = decoder.apply(blob);
+				value = Optional.ofNullable(decoder.apply(blob)).orElse(Optional.empty());
 			}
 			return value;
+		}
+
+		private Optional<DetailedDecodedItem> resolvedValue() {
+			return resolved ? value : Optional.empty();
 		}
 	}
 }

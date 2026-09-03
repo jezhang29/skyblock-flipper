@@ -44,22 +44,26 @@ public final class RecoveryValueModel {
 	private final Map<String, ValueEstimate> cleanHosts;
 	private final Map<String, ValueEstimate> cleanHostFamilies;
 	private final Set<String> recoveryFamilies;
+	private final Set<String> knownHostNames;
 	private final Map<String, ValueEstimate> bareComponents;
 	private final Duration window;
 
 	private RecoveryValueModel(Map<String, ValueEstimate> cleanHosts,
 			Map<String, ValueEstimate> cleanHostFamilies,
-			Set<String> recoveryFamilies, Map<String, ValueEstimate> bareComponents,
+			Set<String> recoveryFamilies, Set<String> knownHostNames,
+			Map<String, ValueEstimate> bareComponents,
 			Duration window) {
 		this.cleanHosts = Map.copyOf(cleanHosts);
 		this.cleanHostFamilies = Map.copyOf(cleanHostFamilies);
 		this.recoveryFamilies = Set.copyOf(recoveryFamilies);
+		this.knownHostNames = Set.copyOf(knownHostNames);
 		this.bareComponents = Map.copyOf(bareComponents);
 		this.window = window;
 	}
 
 	public static RecoveryValueModel empty() {
-		return new RecoveryValueModel(Map.of(), Map.of(), Set.of(), Map.of(), Duration.ZERO);
+		return new RecoveryValueModel(Map.of(), Map.of(), Set.of(), Set.of(), Map.of(),
+				Duration.ZERO);
 	}
 
 	public Optional<ValueEstimate> cleanHostValue(DetailedDecodedItem detailed) {
@@ -86,16 +90,18 @@ public final class RecoveryValueModel {
 	}
 
 	/**
-	 * Whether realized sales prove this display family can supply either a clean host comparison or
-	 * removable metadata. One attached sale is enough for the cheap active-sweep prefilter; the
-	 * value legs still require their independent sample and liquidity gates.
+	 * Whether realized sales prove this display name can supply either a clean host comparison or
+	 * removable metadata. The exact name-and-rarity family is preferred, while a known name at a
+	 * different rarity is still worth decoding: recombobulation changes rarity, and this method is
+	 * only a cost gate. Value legs still require exact keys, samples, and liquidity.
 	 */
 	public boolean mightHaveRecovery(String itemName, Rarity rarity) {
 		if (itemName == null || rarity == null) {
 			return false;
 		}
 		String key = ActiveListing.coarseKey(itemName, rarity);
-		return cleanHostFamilies.containsKey(key) || recoveryFamilies.contains(key);
+		return cleanHostFamilies.containsKey(key) || recoveryFamilies.contains(key)
+				|| knownHostNames.contains(itemName);
 	}
 
 	public int cleanHostConfigurations() {
@@ -130,6 +136,7 @@ public final class RecoveryValueModel {
 		private final Map<String, List<Double>> cleanHosts = new HashMap<>();
 		private final Map<String, List<Double>> cleanHostFamilies = new HashMap<>();
 		private final java.util.HashSet<String> recoveryFamilies = new java.util.HashSet<>();
+		private final java.util.HashSet<String> knownHostNames = new java.util.HashSet<>();
 		private final Map<String, List<Double>> bareComponents = new HashMap<>();
 		private final Duration window;
 
@@ -144,6 +151,7 @@ public final class RecoveryValueModel {
 			}
 
 			DecodedItem item = detailed.item();
+			knownHostNames.add(item.displayName());
 			if (detailed.recovery().hasRecoverableParts()) {
 				recoveryFamilies.add(ActiveListing.coarseKey(item.displayName(), item.rarity()));
 			}
@@ -161,7 +169,7 @@ public final class RecoveryValueModel {
 			double hours = window.toMillis() / 3_600_000.0d;
 			return new RecoveryValueModel(estimates(cleanHosts, hours),
 					estimates(cleanHostFamilies, hours),
-					recoveryFamilies, estimates(bareComponents, hours), window);
+					recoveryFamilies, knownHostNames, estimates(bareComponents, hours), window);
 		}
 
 		private static void record(Map<String, List<Double>> index, String key, double price) {
