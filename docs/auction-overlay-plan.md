@@ -1,7 +1,19 @@
 # Auction sniper overlay plan
 
-Status: **planned, not started.** Design settled 2026-09-02. Passive-list variant chosen; the
-listing-box variant is deferred (see the last section).
+Status: **built 2026-09-03** (branch `auction-overlay-build`, `client/hud/AuctionOverlay`), passive
+variant only; **unverified in play**, like the bazaar overlay. Design settled 2026-09-02. The
+listing-box variant is still deferred (see the last section).
+
+**One deviation from the plan below, decided on the session's live capture.** Menu recognition did
+*not* use `BazaarMenu`'s tight rendered-width census. `AuctionMenu.isAuction` matches one loose rule
+— the title contains `"auction"` — which every captured auction title carries and no bazaar title
+does. That is safe here where it would not be for the bazaar highlighter: this panel points at no
+slot and sends no click, so a false match costs a stray panel, never a misclick, and the substring
+catches the un-captured search-results grid (`<name>'s Auctions`) for free — which is what lets the
+panel show anywhere in the house. Two things only live play can settle are labelled, not assumed:
+whether the search sign is an `AbstractSignEditScreen`, and whether auction search prefix-matches
+like the bazaar. Because the second is unknown the name is copied **in full** (not a fitted prefix)
+and the sign hint reads `(match unconfirmed)`.
 
 ## Goal
 

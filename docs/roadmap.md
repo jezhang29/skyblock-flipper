@@ -176,6 +176,22 @@ and the opt-in tape backtests pass offline. **Neither `auction-sniper-merge` nor
 `main`** — the merge to `main` is the user's call and nothing is pushed. The old
 `auction-sniper-audit` and `auction-overlay` branches are kept until that lands.
 
+**The auction-house snipe overlay is now built** (branch `auction-overlay-build` off
+`auction-sniper-merge`, 2026-09-03, `client/hud/AuctionOverlay`). It was specced in
+`docs/auction-overlay-plan.md` but never written — the roadmap's "overlay rework done" is the
+*bazaar* overlay, a different file, which was the source of the "it looked done" confusion. The new
+panel lists the `AUCTION_VALUE` snipes beside Hypixel's live auction menu: a row click copies the
+item's display name to search, the `[+]` caret expands buy / resale / confidence / a standing
+"may be gone" risk. It copies the bazaar overlay's attach/scale/side/sign-follow scaffolding and
+drops the type strip, worked-job list and green box (a snipe is one bid on an ephemeral BIN, and
+`FlipCandidate` carries no listing uuid — the box variant stays deferred). Menu recognition is a new
+`core/track/AuctionMenu` with one loose rule (`title` contains `"auction"`), acceptable because the
+panel points at no slot; `AuctionMenuTest` pins it. Config `auctionOverlayEnabled` (default true,
+`ConfigSchema` entry, reuses `bazaarOverlaySide`). `build` and the full offline suite pass.
+**Unverified in play** (no dev client) — it joins the play-verification queue below, and the two
+sign-search facts it cannot settle offline are labelled `(match unconfirmed)` rather than assumed.
+Not on `main`; not pushed.
+
 ## What is next
 
 **Auction/recovery discovery audit (2026-09-02).** A six-hour holdout from the current local sales
