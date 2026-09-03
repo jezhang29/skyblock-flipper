@@ -79,17 +79,17 @@ public final class FlipperConfig {
 	 * Also the prune that keeps a sweep affordable: almost every listing fails it before its
 	 * item data is ever parsed.
 	 *
-	 * <p>0.25, not 0.15, measured on the realized-P&L backtest ({@code SnipeProfitBacktestTest} on
-	 * the user's tape). Resold at the concurrent market median rather than at the model's own quote,
-	 * the 0.15-0.25 discount band was the worst of the book - about a quarter of its flags resold at
-	 * a loss and barely half the quoted profit survived - while the 0.25-0.60 band is where the edge
-	 * actually lives. That shallow band is volume the sniper cannot execute anyway, since a real 15%
-	 * underprice is gone before a human clicks, so lifting the floor drops the losing tail without
-	 * costing a flip worth taking. The deep end past ~0.60 is handled the other way, by
-	 * {@code AuctionValueStrategy}'s hidden-upgrade guard: a discount that deep on a valuable item is
-	 * more often a signature the model cannot fully read than a bargain.
+	 * <p>0.15, kept deliberately rather than raised. A blanket floor was measured to be the wrong
+	 * instrument: {@code SnipeGateReconcileBacktestTest} resold every held-out flag at the concurrent
+	 * market median and found the losing 0.15-0.25 band splits by trust, not by depth. A trusted quote
+	 * there - EXACT signature, enough samples, a tight book - resells at a profit about four times in
+	 * five, while the untrusted half is a coin toss. Raising this floor to 0.25 throws the good trusted
+	 * flags out with the junk, ~2.2B of realized profit on the tape. The right lever is a tighter margin
+	 * gated on the quote's trust, not a higher floor here. The deep end past ~0.60 is handled the other
+	 * way, by {@code AuctionValueStrategy}'s hidden-upgrade guard: a discount that deep on a valuable
+	 * item is more often a signature the model cannot fully read than a bargain.
 	 */
-	public double snipeMinDiscount = 0.25d;
+	public double snipeMinDiscount = 0.15d;
 
 	/**
 	 * How many days of realized sales to value items from. Longer means more samples per item;

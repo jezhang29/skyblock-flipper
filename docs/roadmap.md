@@ -27,10 +27,15 @@ running client is still the largest unverified-work risk in the project.
 
 ## What is next
 
-One item stands: getting the shipped valuation work seen in a running client. The three NPC-branch
-items above it are done or measured shut.
-
-1. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
+1. **Reconcile this branch with `auction-overlay`.** The two forked at 2026-08-17 and have disjoint
+   work. This branch (`auction-sniper-audit`) has the gemstone `slots` bit, the suspect guard, and the
+   P&L + reconciliation backtests; `auction-overlay` (codex) has craft/combine/fusion, the overlay
+   rework, recovery alerts, the LGPLv3 license, and the validated `exactMinDiscount` 0.12. Neither is on
+   `main`. The merge is **deferred, not skipped** — it is a real conflict surface (this roadmap, the
+   `signature-findings` skill, `DecodedItem.signature()`, `BazaarTapeTest`, `AuctionValueStrategy`) and
+   was not worth rushing at a session's end. Full plan and a resume prompt in
+   `docs/handoff-auction-sniper.md`.
+2. **Get the shipped valuation work seen in a running client.** Pet levels, the fill model, the four
    signature splits and the Midas ratio quote are all offline-only. This is a long queue of
    unverified-in-game work, and it needs the built jar played on live Hypixel — the user's job, no
    dev client exists.
@@ -55,25 +60,33 @@ Done and closed since the last write:
   that ever unlock a slot, error flat, 102 valuations) and ties the exact count while keeping more
   coverage, so it ships as a bit. Both probes un-blinded to the nested key. See
   `docs/gemstone-slot-valuation.md`, `GemstoneSlotBacktestTest`, and the `signature-findings` skill.
-- **Harden the auction sniper against signature-miss mirages** (audit 2026-09-03). A realized-P&L
-  backtest (`SnipeProfitBacktestTest`) closed the loop the accuracy tests never did: it resells each
-  held-out snipe at the concurrent market median, not at the model's own quote. The within-signature
-  edge is real but the quote runs ~2x optimistic — 53% of it survives, 19% of flags resell at a loss —
-  and the losing tail is the shallow 0.15–0.25 discount band (25.6% loss-rate). Two mitigations
-  shipped. (1) `snipeMinDiscount` default 0.15 → 0.25, dropping that band; it is volume the sniper
-  cannot execute anyway, since a real 15% underprice is gone before a human clicks. (2) A runtime
-  hidden-upgrade guard in `AuctionValueStrategy`: a discount past 0.60 on an item worth 25M+ is
-  quarantined — flagged `FlipCandidate.suspect`, sorted below every trusted flip by `compareTo`, and
-  stamped with a verify-every-attribute risk — so a signature miss (the gemstone slot, the live
-  Hyperion-scroll alarm) can no longer rank as the top snipe. It is the general backstop the
-  per-attribute probes are not: it fires on the shape every shared-id miss shares (a wrong-high quote
-  reads as a very deep discount), not on a named key. See `AuctionValueStrategyTest`. Open from the
-  audit, both methodology not code: `UnreadAttributeProbeTest` is RED on the live tape (`ability_scroll`
-  8.88B on Hyperion), and the 24h-holdout adjudication cannot see the rare catastrophic misses on
-  illiquid high-value items — which is exactly the case the runtime guard now covers instead.
+- **Harden the auction sniper, and reconcile the discount gate across branches** (audit + reconcile
+  2026-09-03). A realized-P&L backtest (`SnipeProfitBacktestTest`) closed the loop the accuracy tests
+  never did: it resells each held-out snipe at the concurrent market median, not the model's own quote.
+  The within-signature edge is real but the quote runs ~2x optimistic — ~58% survives, ~15% of flags
+  resell at a loss, and the losing tail is the shallow 0.15–0.25 discount band (25.6% loss-rate). Two
+  things shipped and **stay**: a runtime **hidden-upgrade guard** in `AuctionValueStrategy` (a discount
+  past 0.60 on a 25M+ item is flagged `FlipCandidate.suspect`, sorted below every trusted flip, stamped
+  with a verify-every-attribute risk, so a signature miss cannot rank as the top snipe — the general
+  backstop the per-attribute probes are not), and the gemstone `slots` bit above.
 
-Nothing else is queued. The signature-gap seam is closed for top-level attributes, and now for a
-nested one too: the harm probe ranked only top-level `ExtraAttributes` keys, so it was blind to
+  A first mitigation — raising `snipeMinDiscount` 0.15 → 0.25 to drop that band — was **built then
+  reverted**, because a parallel branch (`auction-overlay`, codex) had tuned the same knob the *other*
+  way: keep the 0.15 coarse floor and add a tighter `exactMinDiscount` (0.12) firing only for a trusted
+  EXACT quote (confidence > 0.80, samples ≥ 15, dispersion < 0.20). `SnipeGateReconcileBacktestTest`
+  settled it on one 24h holdout — both gates resold at the same realized median, so the premise that
+  they used different resale truths was wrong: the 25.6% band splits by **trust, not depth**. Trusted
+  EXACT flags in [0.12, 0.25) resell at 19.8% loss / 0.37M per flag / +2.23B realized, ~80% profitable;
+  the untrusted half (33.1% loss) is junk either gate drops. Codex's trusted-exact gate books MORE
+  realized profit than the 0.25 floor (4,332M vs 4,197M) with fewer flags. **Verdict: the blanket floor
+  is the wrong instrument; the trust-gated exact margin is right.** So the floor is back at 0.15 here,
+  and codex's 0.12 is the validated winner to carry forward at merge. The audit's old open #3 —
+  `UnreadAttributeProbeTest` RED on `ability_scroll` (Hyperion) — is **done on `auction-overlay`**
+  (`ability_scroll` decoded and keyed; `docs/auction-sniper-scroll-safety.md`), so it is no longer open.
+  See `SnipeGateReconcileBacktestTest`, `AuctionValueStrategyTest`, and `docs/handoff-auction-sniper.md`.
+
+Beyond the branch merge above, nothing else is queued. The signature-gap seam is closed for top-level
+attributes, and now for a nested one too: the harm probe ranked only top-level `ExtraAttributes` keys, so it was blind to
 `unlocked_slots` hidden inside the `gems` compound — a real ~60M gemstone-slot gap that surfaced in
 play 2026-09-02, not on the probe. Both probes now split that nested key out, and the gemstone slot
 bit shipped (below). With it read the harm probe's top entry is again `eman_kills` at 45.5M coins, a
