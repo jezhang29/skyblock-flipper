@@ -121,7 +121,7 @@ public final class RecoveryValueModel {
 				item.rarity(), item.reforge(), item.stars(), item.recombobulated(),
 				item.hotPotatoBooks(), item.enchantments(), List.of(), Map.of(), item.runes(),
 				item.pet(), item.potion(), item.quality(), item.abilityScrolls(), item.dye(),
-				item.ethermerged(), item.winningBid());
+				item.ethermerged(), item.winningBid(), item.unlockedSlots());
 		return stripped.signature() + "|recovery=clean";
 	}
 

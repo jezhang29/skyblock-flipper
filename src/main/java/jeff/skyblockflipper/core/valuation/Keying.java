@@ -117,6 +117,13 @@ public interface Keying {
 		 * drop's tier reaches its display name, so a maxed tier-10 {@code SKELETON_MASTER_CHESTPLATE}
 		 * with no enchantments on it would read as bare and price off a pool whose median is a tier-7
 		 * at 2,000,000 coins - against the 113,000,000 the tier-10s actually fetch.
+		 *
+		 * <p>An unlocked gemstone slot is the ethermerge case once more. A slot paid open costs real
+		 * coins and the display name never mentions it, so an otherwise-bare Divan's piece with slots
+		 * open reads as bare without this clause and joins the coarse pool of gemmed and unlocked ones -
+		 * which is the second half of the ~60M locked-Divan snipe found in play. The count is the
+		 * {@code slots} term in the signature; this clause is the guard that stops the coarse fallback
+		 * undoing it. See {@code GemstoneSlotBacktestTest}.
 		 */
 		@Override
 		public boolean isBare(DecodedItem item) {
@@ -132,6 +139,7 @@ public interface Keying {
 					&& item.hotPotatoBooks() == 0
 					&& item.enchantments().isEmpty()
 					&& item.gemstones().isEmpty()
+					&& item.unlockedSlots() == 0
 					&& item.attributes().isEmpty()
 					&& item.runes().isEmpty();
 		}

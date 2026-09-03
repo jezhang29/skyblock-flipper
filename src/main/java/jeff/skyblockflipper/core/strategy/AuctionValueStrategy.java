@@ -49,6 +49,27 @@ public final class AuctionValueStrategy implements FlipStrategy {
 	/** Above this share of the price coming from star ingredients, it is essence you are buying. */
 	private static final double ESSENCE_HEAVY = 0.3d;
 
+	/**
+	 * Past this discount on a {@link #SUSPECT_MIN_VALUE high-value} item, a flag is quarantined rather
+	 * than ranked: a bargain that deep is likelier a hidden upgrade the signature does not read than a
+	 * seller's mistake.
+	 *
+	 * <p>0.60 is the knee measured on the realized-P&L backtest ({@code SnipeProfitBacktestTest}).
+	 * Resold at the concurrent market median, the 0.25-0.60 band is where the sniper's edge lives;
+	 * past 0.60 the "discount" stops being one the resale median can vouch for, which is exactly where
+	 * a signature miss hides - the gemstone slot found in play, and the live Hyperion-scroll alarm,
+	 * both surface here. Ranking on profit floats them to the very top, because a wrong-high quote is
+	 * the largest quote on the book, so the deep end has to be demoted by shape rather than by number.
+	 */
+	private static final double SUSPECT_MIN_DISCOUNT = 0.60d;
+
+	/**
+	 * The value above which a {@link #SUSPECT_MIN_DISCOUNT deep} discount is worth demoting over. Below
+	 * it a hidden upgrade is cheap to verify and cheap to be wrong about; the confirmed misses - a
+	 * locked Divan's piece around 60M, a plain Hyperion at 500M+ - clear it with room to spare.
+	 */
+	private static final long SUSPECT_MIN_VALUE = 25_000_000L;
+
 	@Override
 	public StrategyKind kind() {
 		return StrategyKind.AUCTION_VALUE;
@@ -104,7 +125,12 @@ public final class AuctionValueStrategy implements FlipStrategy {
 		// everything else on this candidate is a median of past sales.
 		Optional<UpgradePricing.StarQuote> stars = quoteStars(priced, context);
 
-		return Optional.of(new FlipCandidate(
+		// The runtime backstop for the whole shared-id bug class. The estimate cannot say which
+		// attribute it missed, only that a discount this deep on an item this dear is a bet against
+		// the model, not a gift - so the candidate is kept but quarantined rather than ranked.
+		boolean suspect = isSuspectDeepDiscount(priced);
+
+		FlipCandidate candidate = new FlipCandidate(
 				priced.item().skyblockId(),
 				priced.item().displayName(),
 				kind(),
@@ -116,8 +142,26 @@ public final class AuctionValueStrategy implements FlipStrategy {
 				net / hours,
 				confidence,
 				steps(priced, resale),
-				risks(priced, hours, stars, price),
-				notes(stars, price)));
+				risks(priced, hours, stars, price, suspect),
+				notes(stars, price));
+
+		return Optional.of(suspect ? candidate.asSuspect() : candidate);
+	}
+
+	/**
+	 * A discount so deep on so valuable an item that the likeliest explanation is an investment the
+	 * signature does not read, not a seller's mistake.
+	 *
+	 * <p>This is the general form of the {@code COARSE} "verify nothing was added" warning, and it
+	 * fires on every basis - a signature miss produces an {@code EXACT}-basis mirage, which is how the
+	 * gemstone-slot bug reached the tape. The pricing pools the item with a costlier configuration, so
+	 * its quote sits far above what the item is worth and it flags as a very deep snipe; the shape is
+	 * the same whatever attribute leaked, which is why the guard keys on the shape and not on a named
+	 * key the way the per-attribute probes do.
+	 */
+	private static boolean isSuspectDeepDiscount(PricedListing priced) {
+		return priced.discount() >= SUSPECT_MIN_DISCOUNT
+				&& priced.value().median() >= SUSPECT_MIN_VALUE;
 	}
 
 	/** The essence and materials bill for the stars this item already carries, if it has any. */
@@ -177,8 +221,16 @@ public final class AuctionValueStrategy implements FlipStrategy {
 	}
 
 	private static List<String> risks(PricedListing priced, double hours,
-			Optional<UpgradePricing.StarQuote> stars, long price) {
+			Optional<UpgradePricing.StarQuote> stars, long price, boolean suspect) {
 		List<String> risks = new ArrayList<>();
+
+		// First, because on a suspect flag it is the one that decides whether to click at all.
+		if (suspect) {
+			risks.add(String.format("A %.0f%% discount on an item worth %s is more often a hidden "
+					+ "upgrade the pricing cannot see than a bargain - check every gemstone slot, "
+					+ "scroll and attribute before buying",
+					priced.discount() * 100.0d, Coins.format(Math.round(priced.value().median()))));
+		}
 
 		if (stars.isPresent() && price > 0L && stars.get().coins() > ESSENCE_HEAVY * price) {
 			risks.add("Most of this price is star ingredients, so it revalues with the essence "
