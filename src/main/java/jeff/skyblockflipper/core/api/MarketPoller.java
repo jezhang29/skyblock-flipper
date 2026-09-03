@@ -28,6 +28,8 @@ import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.NpcEdgeHistory;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PriceHistory;
+import jeff.skyblockflipper.core.valuation.SupplyCounter;
+import jeff.skyblockflipper.core.valuation.SupplySignal;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
 import jeff.skyblockflipper.core.recovery.RecoveryValuationModels;
 import jeff.skyblockflipper.core.recovery.RecoveryListingScan;
@@ -105,6 +107,9 @@ public final class MarketPoller implements AutoCloseable {
 	 */
 	private static final Duration NPC_EDGE_WINDOW = Duration.ofDays(3);
 	private static final Duration NPC_EDGE_INTERVAL = Duration.ofHours(2);
+
+	/** A supply log is for studying a distribution, not scrolling one; the rest is a count. */
+	private static final int MAX_SUPPLY_SIGNALS_LOGGED = 20;
 
 	private final HypixelApi api;
 	private final MarketData data;
@@ -365,10 +370,11 @@ public final class MarketPoller implements AutoCloseable {
 
 		UnderpricedScan ordinary = new UnderpricedScan(model, config.minDiscount(),
 				config.exactMinDiscount(), config.maxPrice());
+		Fees fees = new Fees(config.bazaarFlipperLevel(), data.mayor().isDerpy());
 		RecoveryListingScan recovery = new RecoveryListingScan(data.recoveryValues(), data.bazaar(),
-				new Fees(config.bazaarFlipperLevel(), data.mayor().isDerpy()),
-				RecoveryScanPolicy.from(config.recovery()), Instant.now());
-		ActiveAuctionScan scan = new ActiveAuctionScan(ordinary, recovery);
+				fees, RecoveryScanPolicy.from(config.recovery()), Instant.now());
+		SupplyCounter supply = new SupplyCounter(model, fees);
+		ActiveAuctionScan scan = new ActiveAuctionScan(ordinary, recovery, supply);
 		OptionalLong updated = api.sweepActiveBins(data.auctionsLastUpdated(), scan);
 
 		if (updated.isEmpty()) {
@@ -376,12 +382,39 @@ public final class MarketPoller implements AutoCloseable {
 			return;
 		}
 
+		logSupplySignals(scan.supplySignals());
+
 		data.setAuctionScan(updated.getAsLong(), scan.ordinaryResults(), scan.recoveryResults(),
 				scan.ordinary().listingsSeen() + " listings, " + scan.decodedBlobs() + " decoded, "
 						+ scan.ordinary().rejectedOnExactValue() + " rejected on exact match, "
 						+ scan.ordinaryResults().size() + " under fair value, "
 						+ scan.recoveryResults().size() + " recovery, "
 						+ scan.failures() + " isolated failures");
+	}
+
+	/**
+	 * Data-gathering only (roadmap step 4). Records the floor-sweep candidates a sweep saw, so their
+	 * frequency can be studied before step 5 decides whether a strategy is worth building. Nothing
+	 * acts on these; the counts are keyed coarsely and mix configurations, so they only say which
+	 * keys are worth decoding.
+	 */
+	private void logSupplySignals(List<SupplySignal> signals) {
+		if (signals.isEmpty()) {
+			return;
+		}
+
+		int shown = Math.min(signals.size(), MAX_SUPPLY_SIGNALS_LOGGED);
+		StringBuilder message = new StringBuilder("Supply signals: " + signals.size()
+				+ " coarse key(s) with a floor to sweep");
+
+		for (SupplySignal signal : signals.subList(0, shown)) {
+			message.append("\n  ").append(signal.describe());
+		}
+		if (signals.size() > shown) {
+			message.append("\n  ...").append(signals.size() - shown).append(" more");
+		}
+
+		log.accept(message.toString());
 	}
 
 	/**

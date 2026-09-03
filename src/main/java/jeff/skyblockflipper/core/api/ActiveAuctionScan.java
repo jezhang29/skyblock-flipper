@@ -23,6 +23,8 @@ import jeff.skyblockflipper.core.model.ActiveListing;
 import jeff.skyblockflipper.core.recovery.RecoveryListingScan;
 import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 import jeff.skyblockflipper.core.valuation.PricedListing;
+import jeff.skyblockflipper.core.valuation.SupplyCounter;
+import jeff.skyblockflipper.core.valuation.SupplySignal;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
 
 import java.util.List;
@@ -36,23 +38,39 @@ import java.util.function.Function;
 public final class ActiveAuctionScan implements ListingSink {
 	private final UnderpricedScan ordinary;
 	private final RecoveryListingScan recovery;
+	private final SupplyCounter supply;
 	private final Function<String, Optional<DetailedDecodedItem>> decoder;
 	private int failures;
 	private int decodedBlobs;
 
 	public ActiveAuctionScan(UnderpricedScan ordinary, RecoveryListingScan recovery) {
-		this(ordinary, recovery, ItemDecoder::decodeDetailed);
+		this(ordinary, recovery, null, ItemDecoder::decodeDetailed);
+	}
+
+	public ActiveAuctionScan(UnderpricedScan ordinary, RecoveryListingScan recovery,
+			SupplyCounter supply) {
+		this(ordinary, recovery, supply, ItemDecoder::decodeDetailed);
 	}
 
 	public ActiveAuctionScan(UnderpricedScan ordinary, RecoveryListingScan recovery,
 			Function<String, Optional<DetailedDecodedItem>> decoder) {
+		this(ordinary, recovery, null, decoder);
+	}
+
+	public ActiveAuctionScan(UnderpricedScan ordinary, RecoveryListingScan recovery,
+			SupplyCounter supply, Function<String, Optional<DetailedDecodedItem>> decoder) {
 		this.ordinary = ordinary;
 		this.recovery = recovery;
+		this.supply = supply;
 		this.decoder = decoder;
 	}
 
 	@Override
 	public void offer(ActiveListing listing) {
+		if (supply != null) {
+			// Free: reads the name, rarity and price already present, decodes nothing.
+			supply.observe(listing);
+		}
 		MemoizedDecode decoded = new MemoizedDecode(listing.itemBytes());
 		boolean recoveryMightUse = false;
 		boolean failed = false;
@@ -97,6 +115,11 @@ public final class ActiveAuctionScan implements ListingSink {
 
 	public RecoveryListingScan recovery() {
 		return recovery;
+	}
+
+	/** The floor-sweep candidates this sweep saw, or empty when no counter was attached. */
+	public List<SupplySignal> supplySignals() {
+		return supply == null ? List.of() : supply.signals();
 	}
 
 	public int failures() {
