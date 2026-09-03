@@ -31,11 +31,16 @@ class SignatureGapProbeTest {
 	private static final int WELL_TRADED = 20;
 	private static final double POOLED = 10.0d;
 
-	/** Attributes the decoder reads, plus the per-item identity that could never be a key. */
+	/**
+	 * Attributes the decoder reads, plus the per-item identity that could never be a key.
+	 *
+	 * <p>{@code unlocked_slots} is nested inside {@code gems} and ships as the {@code slots} bit, so it
+	 * is consumed; the split-out below is guarded by that membership and kept for the next nested gap.
+	 */
 	private static final Set<String> CONSUMED = Set.of(
 			"id", "modifier", "upgrade_level", "dungeon_item_level", "rarity_upgrades",
-			"hot_potato_count", "enchantments", "gems", "attributes", "petInfo", "runes",
-			"potion", "potion_level", "splash", "enhanced", "extended",
+			"hot_potato_count", "enchantments", "gems", "unlocked_slots", "attributes", "petInfo",
+			"runes", "potion", "potion_level", "splash", "enhanced", "extended",
 			"baseStatBoostPercentage", "item_tier", "dye_item", "ethermerge", "winning_bid",
 			"uuid", "timestamp", "originTag", "donated_museum");
 
@@ -131,8 +136,17 @@ class SignatureGapProbeTest {
 				return Set.of();
 			}
 
-			Set<String> keys = new HashSet<>(item.child("tag").child("ExtraAttributes").keys());
+			NbtCompound extra = item.child("tag").child("ExtraAttributes");
+			Set<String> keys = new HashSet<>(extra.keys());
 			keys.removeAll(CONSUMED);
+
+			// unlocked_slots is nested inside the gems compound, so the top-level walk never surfaced
+			// it. It now ships as the slots bit and is CONSUMED, so this split-out is guarded off; drop
+			// it from CONSUMED to surface it again. See docs/gemstone-slot-valuation.md.
+			if (!CONSUMED.contains("unlocked_slots") && extra.child("gems").contains("unlocked_slots")) {
+				keys.add("unlocked_slots");
+			}
+
 			return keys;
 		} catch (Exception e) {
 			return Set.of();
