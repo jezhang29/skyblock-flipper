@@ -20,6 +20,7 @@ package jeff.skyblockflipper.client;
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.command.FlipCommand;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
+import jeff.skyblockflipper.client.hud.AuctionOverlay;
 import jeff.skyblockflipper.client.hud.BazaarOverlay;
 import jeff.skyblockflipper.client.hud.FlipHud;
 import jeff.skyblockflipper.client.track.CaptureService;
@@ -79,6 +80,7 @@ public class SkyblockFlipperClient implements ClientModInitializer {
 		RecoveryAlertService.register();
 		FlipHud.register();
 		BazaarOverlay.register();
+		AuctionOverlay.register();
 		FlipKeybinds.register();
 		CaptureService.register();
 		MenuMemory.register();

@@ -384,6 +384,10 @@ public final class ConfigSchema {
 					"Draw your to-do list beside Hypixel's bazaar menu; click a row or number to copy "
 							+ "it, and nothing is clicked or typed for you.",
 					c -> c.bazaarOverlayEnabled, (c, v) -> c.bazaarOverlayEnabled = v),
+			new Entry.Flag("auctionOverlayEnabled", "Show snipes at the auction house",
+					"Draw the auction snipes worth buying beside Hypixel's auction menu; click a row to "
+							+ "copy its name to search, and nothing is clicked or bought for you.",
+					c -> c.auctionOverlayEnabled, (c, v) -> c.auctionOverlayEnabled = v),
 			new Entry.Flag("bazaarHighlightEnabled", "Highlight the slot to click",
 					"Put a green box behind the next slot to click while placing an order, and nothing "
 							+ "where the mod cannot tell which slot that is.",
