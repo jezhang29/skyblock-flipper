@@ -166,6 +166,16 @@ clear, 43 single-step**, top ~1.30M net per output (Queen Snake). Read `docs/fus
 before touching it. Every figure is offline; nothing fused and sold in play yet, so it joins the
 play-verification queue below.
 
+**The auction-sniper audit is reconciled onto the overlay line** (branch `auction-sniper-merge`,
+2026-09-03). It merges `auction-sniper-audit` (the gemstone `slots` bit, the runtime suspect guard,
+the realized-P&L and gate-reconciliation backtests) into `auction-overlay`, so one line now carries
+craft/combine/fusion, the overlay rework, recovery alerts, the LGPLv3 license, `exactMinDiscount`
+0.12, the Wither-blade `ability_scroll` key, **and** the gemstone bit + suspect guard. Both signature
+terms are in `DecodedItem.signature()`; `UnreadAttributeProbeTest` is GREEN with both read. `build`
+and the opt-in tape backtests pass offline. **Neither `auction-sniper-merge` nor its sources are on
+`main`** — the merge to `main` is the user's call and nothing is pushed. The old
+`auction-sniper-audit` and `auction-overlay` branches are kept until that lands.
+
 ## What is next
 
 **Auction/recovery discovery audit (2026-09-02).** A six-hour holdout from the current local sales
