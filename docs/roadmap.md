@@ -1,8 +1,55 @@
-/c# Roadmap
+# Roadmap
 
 The single on-disk record of what is done, what is next, and what is settled and must not be
 re-opened. A lost conversation loses everything not on disk, so this file is where the plan lives.
 Update it when a checkpoint lands or a decision is made.
+
+## How future chats must use this file
+
+**When you read this file to do work, always apply this discipline:**
+
+> Before modifying code, inspect the relevant implementation and callers. Prefer minimal changes
+> over rewrites. Do not guess Minecraft/Fabric API behavior; verify it from the existing
+> codebase or available documentation/source when uncertain. After implementation, run the
+> appropriate Gradle compile/build/tests. Then inspect git diff for unintended changes. Do not claim
+> a fix is complete if compilation or relevant verification has not succeeded.
+
+**When you write a new work item to this file, use this format** so the item is actionable by a
+future chat that lacks this conversation's context:
+
+```markdown
+# Goal
+Exact desired behavior.
+
+# Current behavior
+What the code currently does.
+
+# Root cause / architecture
+Why the bug occurs or how the relevant system works.
+
+# Relevant code
+- File A — why it matters
+- File B — why it matters
+- Method X — important behavior
+
+# Invariants / constraints
+Things implementation MUST preserve.
+
+# Implementation plan
+1. ...
+2. ...
+3. ...
+
+# Edge cases
+- ...
+- ...
+
+# Verification
+Exact Gradle commands/tests/manual checks that should pass.
+
+# Things NOT to change
+...
+```
 
 Deep records live elsewhere and are linked from here:
 
@@ -18,7 +65,7 @@ Deep records live elsewhere and are linked from here:
 - `docs/recovery-value-alerts.md` — the shipped read-only recovery floor, alert safety gates,
   and the exact legacy/removal evidence still deferred.
 
-## Current state (2026-08-20)
+## Current state (2026-09-02)
 
 **Read-only recovery values are implemented offline** on `recovery-value-alerts` (2026-08-28).
 The special Recovery tab and `/flip recovery` explain clean-host plus removable-component floors
