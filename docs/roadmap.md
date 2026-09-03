@@ -55,6 +55,22 @@ Done and closed since the last write:
   that ever unlock a slot, error flat, 102 valuations) and ties the exact count while keeping more
   coverage, so it ships as a bit. Both probes un-blinded to the nested key. See
   `docs/gemstone-slot-valuation.md`, `GemstoneSlotBacktestTest`, and the `signature-findings` skill.
+- **Harden the auction sniper against signature-miss mirages** (audit 2026-09-03). A realized-P&L
+  backtest (`SnipeProfitBacktestTest`) closed the loop the accuracy tests never did: it resells each
+  held-out snipe at the concurrent market median, not at the model's own quote. The within-signature
+  edge is real but the quote runs ~2x optimistic — 53% of it survives, 19% of flags resell at a loss —
+  and the losing tail is the shallow 0.15–0.25 discount band (25.6% loss-rate). Two mitigations
+  shipped. (1) `snipeMinDiscount` default 0.15 → 0.25, dropping that band; it is volume the sniper
+  cannot execute anyway, since a real 15% underprice is gone before a human clicks. (2) A runtime
+  hidden-upgrade guard in `AuctionValueStrategy`: a discount past 0.60 on an item worth 25M+ is
+  quarantined — flagged `FlipCandidate.suspect`, sorted below every trusted flip by `compareTo`, and
+  stamped with a verify-every-attribute risk — so a signature miss (the gemstone slot, the live
+  Hyperion-scroll alarm) can no longer rank as the top snipe. It is the general backstop the
+  per-attribute probes are not: it fires on the shape every shared-id miss shares (a wrong-high quote
+  reads as a very deep discount), not on a named key. See `AuctionValueStrategyTest`. Open from the
+  audit, both methodology not code: `UnreadAttributeProbeTest` is RED on the live tape (`ability_scroll`
+  8.88B on Hyperion), and the 24h-holdout adjudication cannot see the rare catastrophic misses on
+  illiquid high-value items — which is exactly the case the runtime guard now covers instead.
 
 Nothing else is queued. The signature-gap seam is closed for top-level attributes, and now for a
 nested one too: the harm probe ranked only top-level `ExtraAttributes` keys, so it was blind to

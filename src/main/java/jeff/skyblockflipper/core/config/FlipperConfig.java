@@ -78,8 +78,18 @@ public final class FlipperConfig {
 	 * How far under fair value a listing has to be listed before it is worth looking at (0-1).
 	 * Also the prune that keeps a sweep affordable: almost every listing fails it before its
 	 * item data is ever parsed.
+	 *
+	 * <p>0.25, not 0.15, measured on the realized-P&L backtest ({@code SnipeProfitBacktestTest} on
+	 * the user's tape). Resold at the concurrent market median rather than at the model's own quote,
+	 * the 0.15-0.25 discount band was the worst of the book - about a quarter of its flags resold at
+	 * a loss and barely half the quoted profit survived - while the 0.25-0.60 band is where the edge
+	 * actually lives. That shallow band is volume the sniper cannot execute anyway, since a real 15%
+	 * underprice is gone before a human clicks, so lifting the floor drops the losing tail without
+	 * costing a flip worth taking. The deep end past ~0.60 is handled the other way, by
+	 * {@code AuctionValueStrategy}'s hidden-upgrade guard: a discount that deep on a valuable item is
+	 * more often a signature the model cannot fully read than a bargain.
 	 */
-	public double snipeMinDiscount = 0.15d;
+	public double snipeMinDiscount = 0.25d;
 
 	/**
 	 * How many days of realized sales to value items from. Longer means more samples per item;
