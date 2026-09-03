@@ -9,9 +9,11 @@ import jeff.skyblockflipper.core.nbt.NbtReader;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turns an {@code item_bytes} blob into the handful of attributes that decide what an item is worth.
@@ -133,7 +135,8 @@ public final class ItemDecoder {
 				quality(extra),
 				extra.string("dye_item").orElse(""),
 				extra.flag("ethermerge"),
-				(long) extra.number("winning_bid").orElse(0.0d)));
+				(long) extra.number("winning_bid").orElse(0.0d),
+				unlockedSlots(extra.child("gems"))));
 	}
 
 	/** Strips the section-sign colour and format codes Minecraft embeds in names and lore. */
@@ -215,6 +218,34 @@ public final class ItemDecoder {
 		}
 
 		return out.stream().sorted().toList();
+	}
+
+	/**
+	 * How many gemstone slots have been paid open. The union of the {@code unlocked_slots} array and
+	 * the slots holding a placed gem: a gemmed slot is an unlocked one, and Hypixel does not always
+	 * repeat a gemmed slot in {@code unlocked_slots}, so counting the array alone would read a
+	 * fully-gemmed item as having no slots open.
+	 *
+	 * <p>The count, not which holes - {@code JASPER_0} against {@code JASPER_1} does not move the
+	 * price, the same reason the placed-gem index is dropped above. A slot key ends in
+	 * {@code _<index>}; {@link #GEM_SLOT_INDEX} and the {@code _gem} companion keys newer universal
+	 * slots carry do not, so the union counts each slot once and never a companion. See
+	 * {@code docs/gemstone-slot-valuation.md}.
+	 */
+	private static int unlockedSlots(NbtCompound gems) {
+		if (gems.isEmpty()) {
+			return 0;
+		}
+
+		Set<String> slots = new HashSet<>(gems.strings(GEM_SLOT_INDEX));
+
+		for (String slot : gems.keys()) {
+			if (slot.matches(".*_\\d+$")) {
+				slots.add(slot);
+			}
+		}
+
+		return slots.size();
 	}
 
 	/**

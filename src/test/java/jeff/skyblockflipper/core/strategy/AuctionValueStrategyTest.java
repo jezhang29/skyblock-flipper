@@ -30,7 +30,7 @@ class AuctionValueStrategyTest {
 
 	private static DecodedItem item() {
 		return new DecodedItem("MIDAS_SWORD", "Midas Sword", 1, Rarity.LEGENDARY, "", 0, false, 0,
-				Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L);
+				Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L, 0);
 	}
 
 	private static PricedListing priced(long price, double median, int samples, double salesPerHour,
@@ -54,7 +54,7 @@ class AuctionValueStrategyTest {
 	/** Arack's real ladder against a spider-essence book asking 1510: 15+25+35 = 113250 coins. */
 	private static StrategyContext starContext(long price, long median) {
 		DecodedItem starred = new DecodedItem("ARACK", "Arack", 1, Rarity.EPIC, "", 3, false, 0,
-				Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L);
+				Map.of(), List.of(), Map.of(), Map.of(), null, null, null, "", false, 0L, 0);
 
 		PricedListing listing = new PricedListing(
 				new ActiveListing("uuid", "Arack ✪✪✪", Rarity.EPIC, price, ""),
