@@ -34,6 +34,10 @@ package jeff.skyblockflipper.core.config;
  * @param maxPrice                listings above this cannot be acted on, so they are not examined
  * @param bazaarTapeEnabled       whether to record bazaar top-of-book to disk
  * @param bazaarTapeRetentionDays how many days of bazaar tape to keep
+ * @param timedAuctionTapeEnabled whether to record active timed listings ending soon (Phase 0b
+ *                                reachability collection); needs {@code scanAuctions} on
+ * @param timedAuctionSampleWindowHours only timed listings ending within this many hours are taped
+ * @param timedAuctionTapeRetentionDays how many days of the timed-auction tape to keep
  * @param trendWindowHours        how far back the in-memory trend indicators look
  * @param bazaarPollSeconds       how often to refetch the bazaar book. Read once when the poller
  *                                starts rather than per sweep, like {@code trendWindowHours}: it is
@@ -47,6 +51,9 @@ public record ScanSettings(
 		long maxPrice,
 		boolean bazaarTapeEnabled,
 		int bazaarTapeRetentionDays,
+		boolean timedAuctionTapeEnabled,
+		int timedAuctionSampleWindowHours,
+		int timedAuctionTapeRetentionDays,
 		int trendWindowHours,
 		int bazaarPollSeconds,
 		int bazaarFlipperLevel,
@@ -54,13 +61,14 @@ public record ScanSettings(
 ) {
 	/**
 	 * Source compatibility for callers that predate recovery's fee-aware active scan. The exact gate
-	 * defaults to the coarse margin, so these callers see the pre-exact-gate behaviour unchanged.
+	 * defaults to the coarse margin and the timed-auction collection is off, so these callers see
+	 * the pre-exact-gate behaviour unchanged.
 	 */
 	public ScanSettings(boolean scanAuctions, int valuationWindowDays, double minDiscount,
 			long maxPrice, boolean bazaarTapeEnabled, int bazaarTapeRetentionDays,
 			int trendWindowHours, int bazaarPollSeconds) {
 		this(scanAuctions, valuationWindowDays, minDiscount, minDiscount, maxPrice, bazaarTapeEnabled,
-				bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds, 0,
+				bazaarTapeRetentionDays, false, 3, 7, trendWindowHours, bazaarPollSeconds, 0,
 				new FlipperConfig().recoverySettings());
 	}
 }

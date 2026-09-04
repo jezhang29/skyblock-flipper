@@ -198,6 +198,27 @@ public final class FlipperConfig {
 	public int bazaarTapeRetentionDays = 14;
 
 	/**
+	 * Record active timed (non-BIN) listings ending soon, for the Phase 0b reachability measurement
+	 * (docs/auction-bidding-plan.md). Off by default: it is a data-gathering experiment that needs
+	 * {@link #scanAuctions} on, so it belongs on the 24/7 collector VM, not on a player's client.
+	 */
+	public boolean timedAuctionTapeEnabled = false;
+
+	/**
+	 * Only timed listings ending within this many hours are sampled and taped. The disk control and
+	 * the analytic focus at once: the bid strategy only ever acts on auctions about to end, and a
+	 * 14-day listing sampled every minute would be waste. At ~3,000 timed auctions ending a day,
+	 * this is roughly a few tens of MB a day per hour of window.
+	 */
+	public int timedAuctionSampleWindowHours = 3;
+
+	/**
+	 * How many days of the timed-auction tape to keep. Long enough to join a trajectory to its
+	 * realized sale on the sales tape and to span a mayor term for the across-mayors re-run.
+	 */
+	public int timedAuctionTapeRetentionDays = 7;
+
+	/**
 	 * Pull the collector's tape from the server on startup and merge it into the local one.
 	 *
 	 * <p>The collector records the hours this client is closed for, and {@code auctions_ended}
@@ -657,7 +678,8 @@ public final class FlipperConfig {
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
 		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, exactMinDiscount,
-				bankroll, bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours,
+				bankroll, bazaarTapeEnabled, bazaarTapeRetentionDays, timedAuctionTapeEnabled,
+				timedAuctionSampleWindowHours, timedAuctionTapeRetentionDays, trendWindowHours,
 				bazaarPollSeconds, bazaarFlipperLevel, recoverySettings());
 	}
 
@@ -718,6 +740,10 @@ public final class FlipperConfig {
 		valuationWindowDays = Math.clamp(valuationWindowDays, 1, 30);
 		tapeRetentionDays = Math.clamp(tapeRetentionDays, 1, 60);
 		bazaarTapeRetentionDays = Math.clamp(bazaarTapeRetentionDays, 1, 60);
+		// A zero window would tape nothing; 24h is already far past the ending-soon band the bid
+		// strategy acts in, and taping more is disk for no analytic gain.
+		timedAuctionSampleWindowHours = Math.clamp(timedAuctionSampleWindowHours, 1, 24);
+		timedAuctionTapeRetentionDays = Math.clamp(timedAuctionTapeRetentionDays, 1, 60);
 		// A key present in the file but null parses to null rather than to the default, and every
 		// reader of these treats them as strings.
 		tapeSyncUrl = tapeSyncUrl == null ? "" : tapeSyncUrl.trim();

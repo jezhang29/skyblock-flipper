@@ -371,6 +371,20 @@ public final class ConfigSchema {
 					"How many days of bazaar price history to keep, at roughly 40MB a day.",
 					1, 60, 1,
 					c -> c.bazaarTapeRetentionDays, (c, v) -> c.bazaarTapeRetentionDays = v),
+			new Entry.Flag("timedAuctionTapeEnabled", "Record ending-soon bid auctions",
+					"Keep a history of timed (bid) auctions as they end, for the research into whether "
+							+ "bidding is winnable; it needs the auction search on and is meant for a "
+							+ "collector, not a player's client.",
+					c -> c.timedAuctionTapeEnabled, (c, v) -> c.timedAuctionTapeEnabled = v),
+			new Entry.IntRange("timedAuctionSampleWindowHours", "Record bid auctions ending within (hours)",
+					"Only bid auctions ending within this many hours are recorded, which keeps the "
+							+ "history small and focused on the auctions worth bidding on.",
+					1, 24, 1,
+					c -> c.timedAuctionSampleWindowHours, (c, v) -> c.timedAuctionSampleWindowHours = v),
+			new Entry.IntRange("timedAuctionTapeRetentionDays", "Keep bid auctions for (days)",
+					"How many days of recorded bid-auction history to keep on disk.",
+					1, 60, 1,
+					c -> c.timedAuctionTapeRetentionDays, (c, v) -> c.timedAuctionTapeRetentionDays = v),
 			new Entry.IntRange("trendWindowHours", "Trend window (hours)",
 					"How far back the rising and falling arrows look.",
 					3, 72, 1,

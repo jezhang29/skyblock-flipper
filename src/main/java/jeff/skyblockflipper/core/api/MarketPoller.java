@@ -24,6 +24,7 @@ import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.SaleDailyStat;
 import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.tape.TimedAuctionTape;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.NpcEdgeHistory;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
@@ -115,6 +116,12 @@ public final class MarketPoller implements AutoCloseable {
 	private final MarketData data;
 	private final SalesTape tape;
 	private final BazaarTape bazaarTape;
+	/**
+	 * The Phase 0b reachability tape (docs/auction-bidding-plan.md), or null where the collection is
+	 * not wired. Written only when {@code timedAuctionTapeEnabled} is set, off the same sweep the
+	 * snipe scan already pays for.
+	 */
+	private final TimedAuctionTape timedAuctionTape;
 	private final Supplier<ScanSettings> settings;
 	private final Consumer<String> log;
 
@@ -140,10 +147,16 @@ public final class MarketPoller implements AutoCloseable {
 
 	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape, BazaarTape bazaarTape,
 			Supplier<ScanSettings> settings, Consumer<String> log) {
+		this(api, data, tape, bazaarTape, null, settings, log);
+	}
+
+	public MarketPoller(HypixelApi api, MarketData data, SalesTape tape, BazaarTape bazaarTape,
+			TimedAuctionTape timedAuctionTape, Supplier<ScanSettings> settings, Consumer<String> log) {
 		this.api = api;
 		this.data = data;
 		this.tape = tape;
 		this.bazaarTape = bazaarTape;
+		this.timedAuctionTape = timedAuctionTape;
 		// A supplier rather than a copy: /flip reload then changes what the next sweep does.
 		this.settings = settings;
 		this.log = log;
@@ -182,6 +195,7 @@ public final class MarketPoller implements AutoCloseable {
 		// bazaar's stays with the poller, which is the only thread allowed to touch the price ring.
 		scheduleMaintenance(this::maintainSalesTape, Duration.ofMinutes(1), PRUNE_INTERVAL);
 		schedule(this::maintainBazaarTape, Duration.ofMinutes(2), PRUNE_INTERVAL);
+		schedule(this::maintainTimedAuctionTape, Duration.ofMinutes(3), PRUNE_INTERVAL);
 		// Also on the maintenance thread, and for the same reason: this re-reads three days of the
 		// bazaar tape, which is far too long to hold up a 45-second sales poll. It touches neither
 		// the price ring nor anything the poller writes - the tape is read-only from here.
@@ -375,7 +389,15 @@ public final class MarketPoller implements AutoCloseable {
 				fees, RecoveryScanPolicy.from(config.recovery()), Instant.now());
 		SupplyCounter supply = new SupplyCounter(model, fees);
 		ActiveAuctionScan scan = new ActiveAuctionScan(ordinary, recovery, supply);
-		OptionalLong updated = api.sweepActiveBins(data.auctionsLastUpdated(), scan);
+
+		// The reachability collection rides on this same sweep, so it costs no extra request. Built
+		// only when enabled and wired; a null tape or the off switch leaves the sweep BIN-only.
+		TimedAuctionCollector timed = (config.timedAuctionTapeEnabled() && timedAuctionTape != null)
+				? new TimedAuctionCollector(Instant.now(),
+						Duration.ofHours(config.timedAuctionSampleWindowHours()))
+				: null;
+
+		OptionalLong updated = api.sweepActiveAuctions(data.auctionsLastUpdated(), scan, timed);
 
 		if (updated.isEmpty()) {
 			// The house has not changed since the last sweep; that cost one page, not fifty.
@@ -383,6 +405,10 @@ public final class MarketPoller implements AutoCloseable {
 		}
 
 		logSupplySignals(scan.supplySignals());
+
+		if (timed != null) {
+			recordTimedAuctions(timed);
+		}
 
 		data.setAuctionScan(updated.getAsLong(), scan.ordinaryResults(), scan.recoveryResults(),
 				scan.ordinary().listingsSeen() + " listings, " + scan.decodedBlobs() + " decoded, "
@@ -415,6 +441,21 @@ public final class MarketPoller implements AutoCloseable {
 		}
 
 		log.accept(message.toString());
+	}
+
+	/**
+	 * Writes the ending-soon timed listings this sweep saw to the reachability tape (Phase 0b,
+	 * docs/auction-bidding-plan.md). One append per sweep of a few hundred small rows - no blobs,
+	 * signatures already decoded during the sweep - on the poll thread, like the sales append.
+	 */
+	private void recordTimedAuctions(TimedAuctionCollector collector) {
+		try {
+			timedAuctionTape.record(collector.samples());
+			log.accept("Timed auctions: " + collector.describe());
+		} catch (IOException e) {
+			data.recordFailure("could not write timed-auction tape: " + e.getMessage());
+			log.accept("Failed writing timed-auction tape: " + e);
+		}
 	}
 
 	/**
@@ -469,6 +510,22 @@ public final class MarketPoller implements AutoCloseable {
 			}
 		} catch (IOException e) {
 			log.accept("Failed maintaining sales tape: " + e);
+		}
+	}
+
+	private void maintainTimedAuctionTape() {
+		if (timedAuctionTape == null) {
+			return;
+		}
+
+		try {
+			int removed = timedAuctionTape.prune();
+
+			if (removed > 0) {
+				log.accept("Timed-auction tape: pruned " + removed + " expired file(s)");
+			}
+		} catch (IOException e) {
+			log.accept("Failed maintaining timed-auction tape: " + e);
 		}
 	}
 
