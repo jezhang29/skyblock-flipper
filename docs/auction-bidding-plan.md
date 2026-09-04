@@ -1,8 +1,62 @@
 # Auction-house bidding (timed auctions)
 
-Status: **Phase 0a measured (2026-09-03). Surplus is real and robust out-of-sample. Reachability is
-the one open question, and it gates the build.** This is the "wait for the auction to end" play — real
-bids on timed listings, not buy-it-now.
+Status: **Phase 0b built (2026-09-04): the reachability collection and its measurement ship, off by
+default. The reachability *number* is now a wait for data — the collector must run for days before
+the measurement can answer.** Phase 0a is measured and reproduced (surplus real, robust
+out-of-sample). Reachability still gates the Phase 1 build. This is the "wait for the auction to end"
+play — real bids on timed listings, not buy-it-now.
+
+## Phase 0b build state (2026-09-04)
+
+Built on branch `auction-bidding-investigation`. Three parts of the plan's Phase 0b:
+
+- **A. Re-run 0a on the deep tape — reproduced locally, VM run pending.** 0a re-ran on the current
+  local tape (08-27 → 09-04, one day fresher than the original) and reproduced: trustworthy **161
+  flags/day** (was 164), **91%** of quote survives (was 90%), loss **6.2%**, median **245k/flip**;
+  shipped-gate 683/day (was 703). Market size 1.90% (was 1.89%); suspect-deep 65% (was 66%). The
+  local tape is only ~9 days, so this confirms reproducibility, **not** the 60-day / across-mayors
+  question — that needs the collector VM's deep tape and is a user run (command below).
+- **B. Active timed-listing collection — built, off by default.** `TimedAuctionCollector` +
+  `TimedAuctionTape`, fed off the existing 60s sweep (`sweepActiveAuctions`, a second sink beside the
+  BIN one, so it costs no extra request). It samples only **non-BIN listings ending within
+  `timedAuctionSampleWindowHours`** (default 3h) — the disk control and the right population at once —
+  decodes each to a signature, and drops the blob. Row: `uuid, signature, count, end, starting_bid,
+  highest_bid_amount, sampledAt` (`TimedAuctionSample`, compact JSON keys), append-only JSONL, its
+  own `timed-auction-tape/` directory, its own retention (`timedAuctionTapeRetentionDays`, 7d).
+  Enabled by `timedAuctionTapeEnabled` (needs `scanAuctions` on); belongs on the VM, not a client.
+- **C. Reachability measurement — built, awaits data.** `AuctionReachabilityBacktestTest` (opt-in,
+  `-PtapeBacktest -PtimedTapeDir=…`) joins the trajectory tape to the ended-sales tape. Validated
+  end-to-end on synthetic tapes; on an empty tape it prints "deploy and wait" and stays green.
+
+**The `uuid` join key:** the active listing's `uuid` is taken to equal `auctions_ended`'s
+`auction_id`. The measurement reports an id-sanity count (joined finals at or above the last top bid
+seen) as its own check; confirm it reads sane on the first real VM run.
+
+**The zero-bid subtlety (why reachability is read from the trajectory, not the join):** a timed
+auction that gets **no bid** returns to the seller and leaves **no `auctions_ended` record**. Those
+are the purest reachable flips (show up, bid the start, win), so requiring an ended-sale join would
+silently drop exactly them. So "reachable" is read from the trajectory (top bid never rose off the
+starting bid through the last sample before `end`), split into **sold-at-start** (one bidder — a real
+competed sale) and **no-bid** (returned unsold — reachable ceiling, but maybe nobody wanted it). The
+join supplies the contested final price and the id sanity check only.
+
+### How to run Phase 0b (on the collector VM)
+
+```bash
+# 1. Turn the collection on in the VM's config, then restart the collector:
+#    "scanAuctions": true, "timedAuctionTapeEnabled": true
+# 2. Let it run for several days (a mayor term is better). Then, on the VM:
+./gradlew test -PtapeBacktest \
+    -PtapeDir=<vm sales tape> -PtimedTapeDir=<vm timed-auction-tape> \
+    --tests '*AuctionReachabilityBacktestTest'
+# And the deep 0a re-run (part A), on the same deep tape:
+./gradlew test -PtapeBacktest -PtapeDir=<vm sales tape> \
+    --tests '*AuctionBidProfitBacktestTest'
+```
+
+**Decision gate (unchanged):** build Phase 1 only if ≥20–30% of flagged timed auctions end reachably
+cheap, at a per-day rate and per-flip value worth the clicks. If the surplus is always bid away
+before `end`, stop with a number — the way the drift premium was stopped.
 
 ## Verdict
 
@@ -182,7 +236,7 @@ Grouped by the question each factor answers. Each notes whether the mod can see 
 
 ## The plan
 
-### Phase 0b — measure reachability (build next; needs new collection)
+### Phase 0b — measure reachability (BUILT 2026-09-04, see "Phase 0b build state" above; awaits data)
 
 Active auctions are **not taped** today (only bazaar and ended-auctions are). Add a *lightweight* tape
 of active **non-BIN** listings, sampled on the existing 60s auction sweep, and put it in the headless

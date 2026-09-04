@@ -78,6 +78,44 @@ four days became a 5.5MB index), so long-horizon price history costs a few megab
 sales rollup runs on its own thread and does one day per pass — it decodes every blob in the day,
 which must never be allowed to delay the 60-second `auctions_ended` window.
 
+## The timed-auction reachability collection (Phase 0b)
+
+One collection deliberately breaks the "turn `scanAuctions` off" rule above:
+`docs/auction-bidding-plan.md`'s Phase 0b, which measures whether cheap timed (bid) auctions are
+actually *winnable* rather than just cheap at the end. Answering that needs the trajectory of active
+bid listings towards their close, which only the auction sweep sees — so this collection needs the
+sweep **on** and pays the ~3TB/month it costs. It is off by default and is for a collector VM that
+can carry the sweep, not a player's client.
+
+```json
+{
+  "scanAuctions": true,
+  "timedAuctionTapeEnabled": true,
+  "timedAuctionSampleWindowHours": 3,
+  "timedAuctionTapeRetentionDays": 7
+}
+```
+
+What it writes: for each non-BIN listing **ending within `timedAuctionSampleWindowHours`**, once per
+sweep, a small row — `uuid, signature, count, end, starting_bid, highest_bid_amount, sampledAt` —
+into its own `timed-auction-tape/` directory, append-only JSONL one file per UTC day. It decodes only
+those ending-soon non-BIN blobs (a small fraction of the house) to a signature and drops the blob, so
+a row is ~150 bytes, not the ~1.5KB a sales blob costs. It **rides on the sweep the snipe scan
+already runs**, so it adds no request and no extra download — only the disk for the rows. At ~3,000
+timed auctions ending a day and a 3h window that is roughly a few tens of MB a day; budget with
+`timedAuctionTapeRetentionDays`.
+
+The measurement reads this tape:
+
+```bash
+./gradlew test -PtapeBacktest \
+    -PtapeDir=<sales tape> -PtimedTapeDir=<timed-auction-tape> \
+    --tests '*AuctionReachabilityBacktestTest'
+```
+
+It needs the collection to have run for **several days** first — a single afternoon says nothing, and
+a full mayor term is better. Until then the measurement prints "deploy and wait" and does nothing.
+
 ## Run it under systemd
 
 `/etc/systemd/system/skyblock-flipper.service`:

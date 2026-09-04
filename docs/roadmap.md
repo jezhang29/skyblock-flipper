@@ -192,6 +192,29 @@ panel points at no slot; `AuctionMenuTest` pins it. Config `auctionOverlayEnable
 sign-search facts it cannot settle offline are labelled `(match unconfirmed)` rather than assumed.
 Not on `main`; not pushed.
 
+**Timed-auction (bid) flipping: Phase 0b is built** (branch `auction-bidding-investigation`,
+2026-09-04). Phase 0a proved timed auctions clear below BIN value and resell well out-of-sample, but
+its data was only *final* prices, so it could not say whether a cheap end was *winnable* —
+reachability, which gates the whole build. Phase 0b adds the two pieces that can answer it:
+
+- A **lightweight active-listing collection** on the headless collector. A second sink beside the
+  BIN sweep (`sweepActiveAuctions`) tapes only non-BIN listings **ending within
+  `timedAuctionSampleWindowHours`** (3h default), decoded to a signature with the blob dropped, into
+  its own append-only `timed-auction-tape/`. Off by default (`timedAuctionTapeEnabled`, needs
+  `scanAuctions`); it rides on the existing sweep, so no extra request. `TimedAuctionCollector`,
+  `TimedAuctionTape`, `TimedAuctionSample`.
+- The **reachability measurement** `AuctionReachabilityBacktestTest` (opt-in, `-PtimedTapeDir=…`),
+  which joins the trajectory tape to the ended-sales tape and reports, of auctions the model flags
+  ≥15% under the BIN median, the share that stay uncontested to the last sample before `end`
+  (split sold-at-start vs no-bid), the contested-war step counts, and the reachable flags/day vs 0a's
+  paper 164–703/day. Reachability is read from the trajectory, never resold at the model's own quote.
+
+0a **reproduced** on the current local tape (161 trustworthy flags/day vs the original 164, 91%
+survival, 245k median). The deep 60-day / across-mayors 0a re-run (plan part A) and the real
+reachability number both need the collector VM running for days — **a wait after the user enables the
+collection**, not something offline data can produce now. Do **not** build Phase 1 until 0b's number
+clears the ≥20–30%-reachable gate. Full record: `docs/auction-bidding-plan.md`. Not on `main`.
+
 ## What is next
 
 **Auction/recovery discovery audit (2026-09-02).** A six-hour holdout from the current local sales
