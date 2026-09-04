@@ -23,6 +23,7 @@ import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.api.MarketPoller;
 import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.tape.TimedAuctionTape;
 
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -41,6 +42,7 @@ public final class MarketDataService {
 	private static MarketPoller poller;
 	private static SalesTape tape;
 	private static BazaarTape bazaarTape;
+	private static TimedAuctionTape timedAuctionTape;
 	private static TapeSyncService sync;
 
 	private MarketDataService() {
@@ -85,6 +87,13 @@ public final class MarketDataService {
 				.resolve("bazaar-tape");
 	}
 
+	/** Its own sibling directory, so its retention and prune never touch the sales or bazaar tapes. */
+	public static Path timedAuctionTapeDirectory() {
+		return FabricLoader.getInstance().getConfigDir()
+				.resolve(SkyblockFlipper.MOD_ID)
+				.resolve("timed-auction-tape");
+	}
+
 	public static synchronized void start() {
 		if (poller != null) {
 			return;
@@ -98,9 +107,11 @@ public final class MarketDataService {
 		tape = new SalesTape(tapeDirectory(), SkyblockFlipperClient.config().tapeRetentionDays);
 		bazaarTape = new BazaarTape(bazaarTapeDirectory(),
 				SkyblockFlipperClient.config().bazaarTapeRetentionDays);
+		timedAuctionTape = new TimedAuctionTape(timedAuctionTapeDirectory(),
+				SkyblockFlipperClient.config().timedAuctionTapeRetentionDays);
 		// The settings are read through a supplier so /flip reload reaches the next sweep without
 		// restarting the poller.
-		poller = new MarketPoller(API, DATA, tape, bazaarTape,
+		poller = new MarketPoller(API, DATA, tape, bazaarTape, timedAuctionTape,
 				() -> SkyblockFlipperClient.config().scanSettings(), SkyblockFlipper.LOGGER::info);
 		poller.start();
 

@@ -21,6 +21,7 @@ import com.google.gson.annotations.SerializedName;
 
 import jeff.skyblockflipper.core.item.Rarity;
 import jeff.skyblockflipper.core.model.ActiveListing;
+import jeff.skyblockflipper.core.model.TimedListing;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +48,10 @@ public final class AuctionsDto {
 		@SerializedName("starting_bid") public long startingBid;
 		public boolean bin;
 		@SerializedName("item_bytes") public String itemBytes;
+		/** Scheduled end, epoch millis. Pushed +2 minutes by a late bid (anti-snipe). Timed only. */
+		public long end;
+		/** Current top bid, or 0 with no bids. Timed only; a BIN never accumulates bids. */
+		@SerializedName("highest_bid_amount") public long highestBidAmount;
 	}
 
 	/** Buy-it-now listings only; a running bid auction has no price to compare against yet. */
@@ -67,6 +72,39 @@ public final class AuctionsDto {
 					auction.itemName,
 					Rarity.fromName(auction.tier),
 					auction.startingBid,
+					auction.itemBytes));
+		}
+
+		return out;
+	}
+
+	/**
+	 * Active timed (non-BIN) listings only, for the Phase 0b reachability collection
+	 * (docs/auction-bidding-plan.md). The complement of {@link #binListings()} within one page: a
+	 * listing is BIN or it is timed, never both.
+	 *
+	 * <p>Unlike {@code binListings()} this keeps the blob, because a timed listing has no name-and-
+	 * rarity cheap prune to run first - the collector decodes each one to a signature and then drops
+	 * the blob. That is affordable because timed listings are a small fraction of the house (~1.9%
+	 * of sales), and the collector narrows further to only those ending soon before it decodes.
+	 */
+	public List<TimedListing> timedListings() {
+		if (auctions == null) {
+			return List.of();
+		}
+
+		List<TimedListing> out = new ArrayList<>();
+
+		for (Auction auction : auctions) {
+			if (auction.bin || auction.uuid == null || auction.itemBytes == null) {
+				continue;
+			}
+
+			out.add(new TimedListing(
+					auction.uuid,
+					auction.startingBid,
+					auction.highestBidAmount,
+					auction.end,
 					auction.itemBytes));
 		}
 

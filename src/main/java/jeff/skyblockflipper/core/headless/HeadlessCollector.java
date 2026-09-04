@@ -24,6 +24,7 @@ import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.config.ScanSettings;
 import jeff.skyblockflipper.core.tape.BazaarTape;
 import jeff.skyblockflipper.core.tape.SalesTape;
+import jeff.skyblockflipper.core.tape.TimedAuctionTape;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -117,12 +118,14 @@ public final class HeadlessCollector {
 		MarketData data = new MarketData();
 		SalesTape tape = new SalesTape(options.tapeDir(), config.tapeRetentionDays);
 		BazaarTape bazaarTape = new BazaarTape(options.bazaarTapeDir(), config.bazaarTapeRetentionDays);
+		TimedAuctionTape timedTape = new TimedAuctionTape(options.timedAuctionTapeDir(),
+				config.timedAuctionTapeRetentionDays);
 
 		// A fixed snapshot, not a re-reading supplier: there is no /flip reload here, and a supplier
 		// that always returned the same value would only imply otherwise. Restarting the service is
 		// how a config change takes effect.
 		ScanSettings settings = config.scanSettings();
-		MarketPoller poller = new MarketPoller(new HypixelApi(), data, tape, bazaarTape,
+		MarketPoller poller = new MarketPoller(new HypixelApi(), data, tape, bazaarTape, timedTape,
 				() -> settings, HeadlessCollector::log);
 
 		CountDownLatch stopped = new CountDownLatch(1);
@@ -168,10 +171,24 @@ public final class HeadlessCollector {
 			total += sweeps;
 			log("Auction sweep every " + AUCTION_INTERVAL.toSeconds() + "s (~" + gib(sweeps)
 					+ "/month)");
-			log("NOTE: the sweep finds live listings to act on, which nothing here can act on. "
-					+ "Set scanAuctions to false unless this box is also serving a client.");
+
+			if (config.timedAuctionTapeEnabled) {
+				log("Timed-auction reachability collection ON: sampling non-BIN listings ending "
+						+ "within " + config.timedAuctionSampleWindowHours + "h, kept "
+						+ config.timedAuctionTapeRetentionDays + "d (Phase 0b, "
+						+ "docs/auction-bidding-plan.md). Download is unchanged - it rides on the sweep.");
+			} else {
+				log("NOTE: the sweep finds live listings to act on, which nothing here can act on. "
+						+ "Set scanAuctions to false unless this box is serving a client or "
+						+ "timedAuctionTapeEnabled is on.");
+			}
 		} else {
 			log("Auction sweep off. The tapes do not need it.");
+
+			if (config.timedAuctionTapeEnabled) {
+				log("WARNING: timedAuctionTapeEnabled is on but scanAuctions is off, so no timed "
+						+ "listings are ever seen. Turn scanAuctions on to collect them.");
+			}
 		}
 
 		log("Estimated download: ~" + gib(total) + "/month. Upload is request headers only.");
@@ -270,6 +287,10 @@ public final class HeadlessCollector {
 
 		Path bazaarTapeDir() {
 			return dataDir.resolve("bazaar-tape");
+		}
+
+		Path timedAuctionTapeDir() {
+			return dataDir.resolve("timed-auction-tape");
 		}
 
 		static String usage() {

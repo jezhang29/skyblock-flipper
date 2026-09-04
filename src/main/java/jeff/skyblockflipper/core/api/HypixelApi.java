@@ -103,23 +103,44 @@ public final class HypixelApi {
 	 * @return the new {@code lastUpdated}, or empty if the house has not changed since
 	 */
 	public OptionalLong sweepActiveBins(long knownLastUpdated, ListingSink sink) throws ApiException {
+		return sweepActiveAuctions(knownLastUpdated, sink, null);
+	}
+
+	/**
+	 * As {@link #sweepActiveBins}, but also hands each active timed (non-BIN) listing to
+	 * {@code timedSink} off the same page fetches, so the Phase 0b reachability collection
+	 * (docs/auction-bidding-plan.md) costs no request the BIN sweep did not already make. A null
+	 * {@code timedSink} skips the timed side entirely, which is the plain BIN sweep.
+	 *
+	 * @return the new {@code lastUpdated}, or empty if the house has not changed since
+	 */
+	public OptionalLong sweepActiveAuctions(long knownLastUpdated, ListingSink binSink,
+			TimedListingSink timedSink) throws ApiException {
 		AuctionsDto first = fetchAuctionPage(0);
 
 		if (first.lastUpdated == knownLastUpdated) {
 			return OptionalLong.empty();
 		}
 
-		first.binListings().forEach(sink::offer);
+		offerPage(first, binSink, timedSink);
 
 		// A page count this far out of range means the response is not what we think it is;
 		// walking it anyway would be tens of thousands of requests.
 		int pages = Math.min(first.totalPages, MAX_AUCTION_PAGES);
 
 		for (int page = 1; page < pages; page++) {
-			fetchAuctionPage(page).binListings().forEach(sink::offer);
+			offerPage(fetchAuctionPage(page), binSink, timedSink);
 		}
 
 		return OptionalLong.of(first.lastUpdated);
+	}
+
+	private static void offerPage(AuctionsDto page, ListingSink binSink, TimedListingSink timedSink) {
+		page.binListings().forEach(binSink::offer);
+
+		if (timedSink != null) {
+			page.timedListings().forEach(timedSink::offer);
+		}
 	}
 
 	/** One page of the auction house. Exposed so the shape can be contract-tested for one request. */
