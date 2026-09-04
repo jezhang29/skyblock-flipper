@@ -64,6 +64,9 @@ Deep records live elsewhere and are linked from here:
 - `docs/headless-collector.md`, `docs/trade-capture.md` — the collector and the capture protocol.
 - `docs/recovery-value-alerts.md` — the shipped read-only recovery floor, alert safety gates,
   and the exact legacy/removal evidence still deferred.
+- `docs/auction-flipper-improvement-plan.md` — the measured gap between auction valuation and
+  realized player income, exact-listing/funnel fixes, impacted components, staged implementation,
+  and the counterarguments and release gates for BIN, timed-bid, and floor-sweep work.
 
 ## Current state (2026-09-02)
 
