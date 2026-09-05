@@ -116,3 +116,33 @@ Two behaviours are the whole point of the class:
    extra request" claim the same as "no extra decode," and does it matter?
 8. **Suspect-guard thresholds** (0.60 / 25M) are copied from `AuctionValueStrategy` — are they right
    for a *bid* where the whole point is winning uncontested deep discounts?
+
+## Review fixes applied (2026-09-05)
+
+The review of the baseline above confirmed one price bug and three capital/liveness gaps. The fixes
+below landed as follow-up commits on the same branch. The strategy stays **off by default**; these
+make it correct while it waits for the Phase 0b gate.
+
+- **The "drops contested" claim above is imprecise.** "Only auctions still at their opening price
+  survive" reads `highest_bid_amount == starting_bid` as no bids. It is not: `hb == starting_bid`
+  means **one rival has already bid at the floor** (any second bid pushes it above). The reviewed
+  build read that state as uncontested and advised a **tying bid Hypixel rejects**. Now `Bids.nextBid`
+  splits three cases: `hb == 0` → bid `startingBid`; `hb == startingBid` → bid `ceil(start × 1.025)`
+  (surfaced, winnable one step up); `hb > startingBid` → dropped as contested **at the scan**
+  (`UnderpricedTimedScan`), so the ending-soon window and the `MAX_RESULTS` cap hold only winnable
+  rows. `AuctionBidStrategy.contested()` is now a defensive double-check, not the primary gate.
+- **The bid ceiling is now capped at `maxCapitalPerFlip`.** It is
+  `min(binNetProceeds(resale) − minProfitPerFlip, maxCapitalPerFlip)`, so the mod never advises
+  bidding past the player's own per-flip limit if a war starts.
+- **Already-ended listings are dropped at the scan.** `end <= now` is un-biddable noise. Final-2-min
+  listings still surface, with the live-check warning (the anti-snipe timer makes that band
+  human-playable).
+- **The per-hour figure is documented as optimistic.** It keeps `net / hoursToSell` — the resale
+  liquidity after the auction ends — and does not fold in the wait until `end`. Folding the wait in
+  would float about-to-expire rows to the top of the Bid view; the optimism is stated on the
+  candidate instead.
+- **Test counts.** `AuctionBidStrategyTest` is now 9 tests (adds one-bidder-at-floor surfaces at
+  `ceil(start × 1.025)`; ceiling capped at `maxCapitalPerFlip`; ceiling with a non-zero profit floor
+  equals `binNetProceeds − floor`). `UnderpricedTimedScanTest` is now 6 tests (adds `hb > startingBid`
+  dropped by the scan; already-ended dropped; the `nextBid(6M, 6M)` assertion now expects
+  `6_150_000`, not `6M`).

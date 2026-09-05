@@ -16,7 +16,8 @@ healthy:
   2026-09-04 07:03 UTC (the restart that enabled it). Jar rebuilt at the same time, so it is current.
 - `timed-auction-tape/` is filling: `2026-09-04.jsonl` = 466,537 rows (~72 MB, first partial day);
   `2026-09-05.jsonl` filling. Rows decode sanely (`{"u","sig","c","e","sb","hb","t"}`), e.g.
-  `GLACITE_BOOTS|EPIC` sb=hb=6750 (a no-bid/uncontested sample) and `FROG_MASK|EPIC` sb=500 hb=5.79M
+  `GLACITE_BOOTS|EPIC` sb=hb=6750 (a lone bid at the opening price — one rival, not a no-bid sample)
+  and `FROG_MASK|EPIC` sb=500 hb=5.79M
   (a contested war).
 - Latest sweep log: "2574 timed listings, 449 ending soon, 449 taped, 0 undecodable" — full capture
   of the ending-soon window, no decode failures. Disk 32% used.
@@ -93,8 +94,9 @@ to X, no higher, then walk away."
 - **`StrategyKind.AUCTION_BID`** — `("Bid", "valuation", atBazaar=false)`; an AH play, not a bazaar
   one, so it is not in `bazaarKinds()`.
 - **`PricedBid(TimedListing, DecodedItem, ValueEstimate)`** (core/valuation) — the timed twin of
-  `PricedListing`. Derived: `bidToWin()` = `startingBid` when uncontested (`highestBid == 0` or
-  `== startingBid`), else `ceil(highestBid × 1.025)` (`Bids.nextIncrement`); `contested()`;
+  `PricedListing`. Derived: `bidToWin()` = `startingBid` only when `highestBid == 0` (no bids);
+  `highestBid == startingBid` is one rival at the floor, so it steps to `ceil(highestBid × 1.025)`;
+  any `highestBid > startingBid` is contested and dropped (`Bids.nextIncrement`); `contested()`;
   `hoursLeft(now)`; `discount()` = 1 − bidToWin / BIN median.
 - **`UnderpricedTimedScan implements TimedListingSink`** — the timed twin of `UnderpricedScan`. For
   each timed listing within `bidWindowHours` of `end`, price the *bid to win* against the **BIN**
@@ -241,7 +243,8 @@ Grouped by the question each factor answers. Each notes whether the mod can see 
 
 - `end`, `starting_bid`, `highest_bid_amount`: exposed (view up to 60s stale; the 2-min timer makes
   that survivable).
-- Contested-or-not: cheap proxy — `highest_bid_amount == 0` or `== starting_bid`.
+- Contested-or-not: cheap proxy — uncontested is `highest_bid_amount == 0` only. `== starting_bid` is
+  one bidder at the floor (bid one increment up); `> starting_bid` is contested.
 - Bid count (`bids[]`): exposed but expensive (the 1.5 MB-per-page bulk `AuctionsDto` drops). The proxy
   avoids needing it.
 - The final seconds are not the problem they are without an anti-snipe timer; the final *minute band*
@@ -364,7 +367,8 @@ Advise the player which timed auctions to bid on, up to an exact ceiling, and wi
   measurement. Keep `binListings()` and the BIN-only valuation training untouched.
 
 # Edge cases
-- Uncontested = `highest_bid_amount` 0 or == `starting_bid` → bid to win is `starting_bid`.
+- Uncontested = `highest_bid_amount` 0 → bid to win is `starting_bid`. `== starting_bid` is one bidder
+  at the floor → step to `ceil(highest_bid_amount × 1.025)`; `> starting_bid` → contested, dropped.
 - Ending beyond the band, or a 14-day auction → suppress.
 - Stack sales → per-unit.
 - Derpy → disable.

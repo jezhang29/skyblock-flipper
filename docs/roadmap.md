@@ -199,8 +199,11 @@ Not on `main`; not pushed.
 `auction-bidding-investigation`, 2026-09-04/05). The Phase 1 bid strategy now exists
 (`AuctionBidStrategy`, the sniper's twin on timed listings; states an exact "bid up to X" ceiling,
 drops contested auctions, ships behind `auctionBidEnabled` = false) — built ahead of the reachability
-verdict at the user's request, so the switch simply stays off if 0b comes back below the gate. Full
-record in `docs/auction-bidding-plan.md` ("Phase 1 build"). Phase 0b context below. Phase 0a proved timed auctions clear below BIN value and resell well out-of-sample, but
+verdict at the user's request, so the switch simply stays off if 0b comes back below the gate. Review
+fixes landed 2026-09-05 — the one-bidder-at-floor price bug (a tying bid Hypixel rejects; now bids
+one increment up), the bid-ceiling cap at `maxCapitalPerFlip`, and the scan-side already-ended and
+contested drops — still off by default, gated behind the Phase 0b reachability number. Full record in
+`docs/auction-bidding-plan.md` ("Phase 1 build") and `docs/auction-bidding-phase1-changes.md`. Phase 0b context below. Phase 0a proved timed auctions clear below BIN value and resell well out-of-sample, but
 its data was only *final* prices, so it could not say whether a cheap end was *winnable* —
 reachability, which gates the whole build. Phase 0b adds the two pieces that can answer it:
 
