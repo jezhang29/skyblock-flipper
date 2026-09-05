@@ -195,8 +195,12 @@ panel points at no slot; `AuctionMenuTest` pins it. Config `auctionOverlayEnable
 sign-search facts it cannot settle offline are labelled `(match unconfirmed)` rather than assumed.
 Not on `main`; not pushed.
 
-**Timed-auction (bid) flipping: Phase 0b is built** (branch `auction-bidding-investigation`,
-2026-09-04). Phase 0a proved timed auctions clear below BIN value and resell well out-of-sample, but
+**Timed-auction (bid) flipping: Phase 0b built, Phase 1 built off-by-default** (branch
+`auction-bidding-investigation`, 2026-09-04/05). The Phase 1 bid strategy now exists
+(`AuctionBidStrategy`, the sniper's twin on timed listings; states an exact "bid up to X" ceiling,
+drops contested auctions, ships behind `auctionBidEnabled` = false) — built ahead of the reachability
+verdict at the user's request, so the switch simply stays off if 0b comes back below the gate. Full
+record in `docs/auction-bidding-plan.md` ("Phase 1 build"). Phase 0b context below. Phase 0a proved timed auctions clear below BIN value and resell well out-of-sample, but
 its data was only *final* prices, so it could not say whether a cheap end was *winnable* —
 reachability, which gates the whole build. Phase 0b adds the two pieces that can answer it:
 
