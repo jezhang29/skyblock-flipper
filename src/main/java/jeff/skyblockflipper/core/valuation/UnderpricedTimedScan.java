@@ -55,6 +55,7 @@ public final class UnderpricedTimedScan implements TimedListingSink {
 	private final FairValueModel model;
 	private final double minDiscount;
 	private final double exactMinDiscount;
+	private final long nowMillis;
 	private final long windowEnd;
 	private final Function<String, Optional<DecodedItem>> decoder;
 
@@ -75,6 +76,7 @@ public final class UnderpricedTimedScan implements TimedListingSink {
 		this.model = model;
 		this.minDiscount = minDiscount;
 		this.exactMinDiscount = exactMinDiscount;
+		this.nowMillis = now.toEpochMilli();
 		this.windowEnd = now.plus(window).toEpochMilli();
 		this.decoder = decoder;
 	}
@@ -83,12 +85,21 @@ public final class UnderpricedTimedScan implements TimedListingSink {
 	public void offer(TimedListing listing) {
 		seen++;
 
-		// Only auctions actually ending soon are flips; a 14-day listing is not.
-		if (listing.end() > windowEnd || found.size() >= MAX_RESULTS) {
+		// Only auctions still open and actually ending soon are flips: an already-ended auction is
+		// un-biddable noise, and a 14-day listing is not ending soon.
+		if (listing.end() <= nowMillis || listing.end() > windowEnd || found.size() >= MAX_RESULTS) {
 			return;
 		}
 
 		withinWindow++;
+
+		// A contested listing - any bid above the starting bid - is dropped at the scan: its surplus is
+		// already gone to the anti-snipe ratchet and cannot be told from a bidding war, so dropping it
+		// keeps the MAX_RESULTS cap holding only winnable rows. The strategy's contested() stays as a
+		// defensive double-check.
+		if (listing.highestBidAmount() > listing.startingBid()) {
+			return;
+		}
 
 		Optional<DecodedItem> item = decode(listing.itemBytes());
 

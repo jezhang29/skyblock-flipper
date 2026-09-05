@@ -137,4 +137,47 @@ class AuctionBidStrategyTest {
 		assertTrue(candidates(context(List.of(cheap), confidence + 0.01d, 0L)).isEmpty(),
 				"a floor above the estimate's confidence should reject it");
 	}
+
+	@Test
+	void surfacesAOneBidderAtFloorAtOneIncrementOverIt() {
+		// highest_bid == starting_bid means exactly one rival has bid at the floor - not contested
+		// (contested() is hb>start), so it surfaces, but the winning bid steps one increment over it.
+		PricedBid loneBid = bid(6_000_000L, 6_000_000L, endIn(30), 10_000_000L,
+				ValueEstimate.Basis.EXACT);
+
+		List<FlipCandidate> candidates = candidates(context(List.of(loneBid), 0.0d, 0L));
+
+		assertFalse(candidates.isEmpty(), "a lone bid at the floor is winnable one step up, not dropped");
+		// ceil(6,000,000 x 1.025) = 6,150,000, never the tying bid Hypixel rejects.
+		assertEquals(6_150_000.0d, candidates.getFirst().unitBuyPrice());
+	}
+
+	@Test
+	void capsTheBidCeilingAtMaxCapitalPerFlip() {
+		// A 60M bid against a 110M median: discount ~45% (not the >=60% suspect gate), and
+		// binNetProceeds(110M) clears 100M, so the uncapped ceiling would exceed the per-flip limit.
+		PricedBid dear = bid(60_000_000L, 0L, endIn(30), 110_000_000L, ValueEstimate.Basis.EXACT);
+
+		FlipCandidate candidate = candidates(context(List.of(dear), 0.0d, 0L)).getFirst();
+
+		long resaleNet = new Fees(0, false).binNetProceeds(110_000_000L);
+		// Document that the cap actually bites: without it the ceiling would be this larger value.
+		assertTrue(resaleNet > BANKROLL, "test only exercises the cap if net proceeds exceed the limit");
+		assertTrue(candidate.steps().stream().anyMatch(s ->
+						s.contains("Bid up to " + Coins.format(BANKROLL))),
+				"the ceiling must be capped at maxCapitalPerFlip, got " + candidate.steps());
+	}
+
+	@Test
+	void subtractsANonZeroProfitFloorExactlyWhenUncapped() {
+		PricedBid cheap = bid(6_000_000L, 0L, endIn(30), 10_000_000L, ValueEstimate.Basis.EXACT);
+
+		FlipCandidate candidate = candidates(context(List.of(cheap), 0.0d, 1_000_000L)).getFirst();
+
+		// Well under maxCapitalPerFlip, so the ceiling is binNetProceeds(resale) minus the floor exactly.
+		long ceiling = new Fees(0, false).binNetProceeds(10_000_000L) - 1_000_000L;
+		assertTrue(candidate.steps().stream().anyMatch(s ->
+						s.contains("Bid up to " + Coins.format(ceiling))),
+				"the ceiling must subtract the profit floor exactly, got " + candidate.steps());
+	}
 }

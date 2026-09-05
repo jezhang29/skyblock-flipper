@@ -37,9 +37,15 @@ class UnderpricedTimedScanTest {
 	private static final Instant NOW = Instant.parse("2026-09-05T00:00:00Z");
 
 	@Test
-	void nextBidIsTheStartingBidWhenUncontested() {
+	void nextBidIsTheStartingBidWhenNoOneHasBid() {
 		assertEquals(6_000_000L, Bids.nextBid(6_000_000L, 0L));
-		assertEquals(6_000_000L, Bids.nextBid(6_000_000L, 6_000_000L));
+	}
+
+	@Test
+	void nextBidStepsOverALoneBidAtTheOpeningPrice() {
+		// highest == starting is one rival at the floor, not an empty auction: the tying starting
+		// bid loses, so the lead needs ceil(6_000_000 * 1.025) = 6_150_000.
+		assertEquals(6_150_000L, Bids.nextBid(6_000_000L, 6_000_000L));
 	}
 
 	@Test
@@ -62,6 +68,30 @@ class UnderpricedTimedScanTest {
 		List<PricedBid> results = scan.results();
 		assertEquals(1, results.size(), "only the ending-soon listing is a flip");
 		assertEquals("a", results.getFirst().listing().uuid());
+	}
+
+	@Test
+	void dropsAnAlreadyEndedListing() {
+		TimedListing ended = new TimedListing("a", 6_000_000L, 0L,
+				NOW.minusSeconds(1).toEpochMilli(), "cheap");
+
+		UnderpricedTimedScan scan = scanPricing(10_000_000L);
+		scan.offer(ended);
+
+		assertTrue(scan.results().isEmpty(), "an already-ended auction is un-biddable noise");
+	}
+
+	@Test
+	void dropsAContestedListingAtTheScan() {
+		// startingBid 6M, top bid 7M, value 10M: the bid to win (7_175_000) clears the discount gate,
+		// so an empty result proves the contested drop fired, not the gate.
+		TimedListing contested = new TimedListing("a", 6_000_000L, 7_000_000L,
+				NOW.plusSeconds(1800).toEpochMilli(), "cheap");
+
+		UnderpricedTimedScan scan = scanPricing(10_000_000L);
+		scan.offer(contested);
+
+		assertTrue(scan.results().isEmpty(), "a bid above the floor is dropped as contested");
 	}
 
 	/** A scan whose model prices the one item at {@code median}, over a 3h window from NOW. */

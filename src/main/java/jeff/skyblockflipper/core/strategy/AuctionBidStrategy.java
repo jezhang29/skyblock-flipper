@@ -114,8 +114,11 @@ public final class AuctionBidStrategy implements FlipStrategy {
 		}
 
 		// The bid ceiling: fees land only on the resale leg and the bid is paid exactly, so the
-		// highest bid that still clears the floor is an exact number, not a fitted one.
-		long ceiling = context.fees().binNetProceeds(resale) - context.minProfitPerFlip();
+		// highest bid that still clears the floor is an exact number, not a fitted one. Cap it at the
+		// player's per-flip limit so a bidding war can never walk the advice past their own bankroll.
+		long ceiling = Math.min(
+				context.fees().binNetProceeds(resale) - context.minProfitPerFlip(),
+				context.maxCapitalPerFlip());
 
 		double hours = value.hoursToSell();
 		boolean suspect = bid.discount() >= SUSPECT_MIN_DISCOUNT && value.median() >= SUSPECT_MIN_VALUE;
@@ -129,7 +132,7 @@ public final class AuctionBidStrategy implements FlipStrategy {
 				net,
 				1L,
 				toWin,
-				net / Math.max(hours, 0.05d),
+				net / hours,
 				value.confidence(),
 				steps(bid, ceiling, resale, now),
 				risks(bid, hours, suspect, now),
@@ -172,7 +175,8 @@ public final class AuctionBidStrategy implements FlipStrategy {
 		// Always true, and the honest reason a cheap auction is still open: someone may bid it up,
 		// or take it, before a human reading a line reaches the menu.
 		risks.add("The mod does not bid for you; another bidder may lift this past your ceiling, and "
-				+ "your coins are escrowed while you lead");
+				+ "your coins are escrowed while you lead. The per-hour figure counts only the "
+				+ "resale wait, not the hours until this auction ends");
 
 		switch (bid.value().basis()) {
 			case COARSE -> risks.add(

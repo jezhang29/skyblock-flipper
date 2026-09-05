@@ -32,14 +32,17 @@ public final class Bids {
 	/**
 	 * The smallest legal bid that takes the lead, given the opening bid and the current top bid.
 	 *
-	 * <p>With no bids yet (top bid 0, or still equal to the opening bid) the lead is taken at the
-	 * starting bid itself. Once a rival leads, the next bid is {@code ceil(top * 1.025)}.
+	 * <p>With no bids yet (top bid 0) the lead is taken at the starting bid itself. Once any bid
+	 * stands - including a lone bid at the opening price, which is a real rival and not an empty
+	 * auction - the next legal bid is {@code ceil(top * 1.025)}, never a tying bid.
 	 */
 	public static long nextBid(long startingBid, long highestBidAmount) {
-		if (highestBidAmount <= startingBid) {
+		if (highestBidAmount <= 0L) {
 			return startingBid;
 		}
 
-		return (long) Math.ceil(highestBidAmount * (1.0d + MIN_INCREMENT));
+		// A standing bid is always >= startingBid, so the lead needs 2.5% over the top bid. The
+		// max() guards a malformed top bid below the floor from producing an under-floor "winner".
+		return Math.max(startingBid, (long) Math.ceil(highestBidAmount * (1.0d + MIN_INCREMENT)));
 	}
 }
