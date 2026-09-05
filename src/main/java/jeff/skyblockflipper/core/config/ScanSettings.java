@@ -54,6 +54,8 @@ public record ScanSettings(
 		boolean timedAuctionTapeEnabled,
 		int timedAuctionSampleWindowHours,
 		int timedAuctionTapeRetentionDays,
+		boolean auctionBidEnabled,
+		int bidWindowHours,
 		int trendWindowHours,
 		int bazaarPollSeconds,
 		int bazaarFlipperLevel,
@@ -68,7 +70,7 @@ public record ScanSettings(
 			long maxPrice, boolean bazaarTapeEnabled, int bazaarTapeRetentionDays,
 			int trendWindowHours, int bazaarPollSeconds) {
 		this(scanAuctions, valuationWindowDays, minDiscount, minDiscount, maxPrice, bazaarTapeEnabled,
-				bazaarTapeRetentionDays, false, 3, 7, trendWindowHours, bazaarPollSeconds, 0,
+				bazaarTapeRetentionDays, false, 3, 7, false, 3, trendWindowHours, bazaarPollSeconds, 0,
 				new FlipperConfig().recoverySettings());
 	}
 }

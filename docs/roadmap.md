@@ -214,9 +214,15 @@ reachability, which gates the whole build. Phase 0b adds the two pieces that can
 
 0a **reproduced** on the current local tape (161 trustworthy flags/day vs the original 164, 91%
 survival, 245k median). The deep 60-day / across-mayors 0a re-run (plan part A) and the real
-reachability number both need the collector VM running for days — **a wait after the user enables the
-collection**, not something offline data can produce now. Do **not** build Phase 1 until 0b's number
-clears the ≥20–30%-reachable gate. Full record: `docs/auction-bidding-plan.md`. Not on `main`.
+reachability number both need the collector VM running for days.
+
+**The VM collection is now LIVE** (enabled 2026-09-04 07:03 UTC, verified running 2026-09-05):
+`scanAuctions` and `timedAuctionTapeEnabled` are both on, the jar is current, and
+`timed-auction-tape/` is filling (466k rows the first partial day, 0 undecodable, full ending-soon
+capture). So this item is now a **timed wait for data**, not a to-do — let it run several days (a
+mayor term is better), then run `AuctionReachabilityBacktestTest` + the deep 0a
+`AuctionBidProfitBacktestTest` on the VM tape. Do **not** build Phase 1 until 0b's number clears the
+≥20–30%-reachable gate. Full record: `docs/auction-bidding-plan.md`. Not on `main`.
 
 ## What is next
 

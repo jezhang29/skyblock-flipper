@@ -219,6 +219,21 @@ public final class FlipperConfig {
 	public int timedAuctionTapeRetentionDays = 7;
 
 	/**
+	 * Advise bidding on timed (non-BIN) auctions ending soon that price below their BIN value
+	 * (docs/auction-bidding-plan.md, Phase 1). Off by default: the reachability of that surplus is
+	 * still unproven (Phase 0b), so no bid advice ships until the measurement clears its gate. Needs
+	 * {@link #scanAuctions} on, since it rides the same sweep.
+	 */
+	public boolean auctionBidEnabled = false;
+
+	/**
+	 * Only timed listings ending within this many hours are considered for a bid. The bid play only
+	 * acts on auctions about to end, and the anti-snipe timer makes 60-second-stale data survivable
+	 * within that window.
+	 */
+	public int bidWindowHours = 3;
+
+	/**
 	 * Pull the collector's tape from the server on startup and merge it into the local one.
 	 *
 	 * <p>The collector records the hours this client is closed for, and {@code auctions_ended}
@@ -679,7 +694,8 @@ public final class FlipperConfig {
 	public ScanSettings scanSettings() {
 		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, exactMinDiscount,
 				bankroll, bazaarTapeEnabled, bazaarTapeRetentionDays, timedAuctionTapeEnabled,
-				timedAuctionSampleWindowHours, timedAuctionTapeRetentionDays, trendWindowHours,
+				timedAuctionSampleWindowHours, timedAuctionTapeRetentionDays, auctionBidEnabled,
+				bidWindowHours, trendWindowHours,
 				bazaarPollSeconds, bazaarFlipperLevel, recoverySettings());
 	}
 
@@ -743,6 +759,7 @@ public final class FlipperConfig {
 		// A zero window would tape nothing; 24h is already far past the ending-soon band the bid
 		// strategy acts in, and taping more is disk for no analytic gain.
 		timedAuctionSampleWindowHours = Math.clamp(timedAuctionSampleWindowHours, 1, 24);
+		bidWindowHours = Math.clamp(bidWindowHours, 1, 48);
 		timedAuctionTapeRetentionDays = Math.clamp(timedAuctionTapeRetentionDays, 1, 60);
 		// A key present in the file but null parses to null rather than to the default, and every
 		// reader of these treats them as strings.

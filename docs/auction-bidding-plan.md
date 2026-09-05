@@ -1,10 +1,29 @@
 # Auction-house bidding (timed auctions)
 
-Status: **Phase 0b built (2026-09-04): the reachability collection and its measurement ship, off by
-default. The reachability *number* is now a wait for data — the collector must run for days before
-the measurement can answer.** Phase 0a is measured and reproduced (surplus real, robust
-out-of-sample). Reachability still gates the Phase 1 build. This is the "wait for the auction to end"
-play — real bids on timed listings, not buy-it-now.
+Status: **Phase 0b collection is LIVE on the VM (enabled 2026-09-04 07:03 UTC) — now waiting for
+days of trajectory data to accumulate before the reachability measurement can answer.** The
+reachability collection and its measurement ship, off by default; they are switched on only on the
+collector. Phase 0a is measured and reproduced (surplus real, robust out-of-sample). Reachability
+still gates the Phase 1 build. This is the "wait for the auction to end" play — real bids on timed
+listings, not buy-it-now.
+
+### Collection running (checked 2026-09-05)
+
+The collector VM (`ubuntu@161.153.82.226`, systemd `skyblock-flipper`) has the collection on and
+healthy:
+
+- `scanAuctions: true`, `timedAuctionTapeEnabled: true` in the VM config; service active since
+  2026-09-04 07:03 UTC (the restart that enabled it). Jar rebuilt at the same time, so it is current.
+- `timed-auction-tape/` is filling: `2026-09-04.jsonl` = 466,537 rows (~72 MB, first partial day);
+  `2026-09-05.jsonl` filling. Rows decode sanely (`{"u","sig","c","e","sb","hb","t"}`), e.g.
+  `GLACITE_BOOTS|EPIC` sb=hb=6750 (a no-bid/uncontested sample) and `FROG_MASK|EPIC` sb=500 hb=5.79M
+  (a contested war).
+- Latest sweep log: "2574 timed listings, 449 ending soon, 449 taped, 0 undecodable" — full capture
+  of the ending-soon window, no decode failures. Disk 32% used.
+
+**Next action: let it run several days (a mayor term is better), then run the two backtests below on
+the VM tape.** Nothing to do until then. No Phase 1 work until the reachability number clears the
+≥20–30% gate.
 
 ## Phase 0b build state (2026-09-04)
 
@@ -57,6 +76,58 @@ join supplies the contested final price and the id sanity check only.
 **Decision gate (unchanged):** build Phase 1 only if ≥20–30% of flagged timed auctions end reachably
 cheap, at a per-day rate and per-flip value worth the clicks. If the surplus is always bid away
 before `end`, stop with a number — the way the drift premium was stopped.
+
+## Phase 1 build (the bid advisor)
+
+Built ahead of the reachability verdict at the user's request (2026-09-05): the strategy exists but
+**ships off by default** (`auctionBidEnabled`) so no unproven advice reaches the HUD until the 0b
+number clears the gate. If 0b comes back below the gate, the switch simply stays off — the code is a
+sunk plan, not a shipped default.
+
+The strategy is `AuctionValueStrategy`'s twin, on timed listings ending soon instead of BINs. Its one
+job the BIN sniper cannot do: state an exact **bid ceiling** from the 2.5% increment rule — "bid up
+to X, no higher, then walk away."
+
+### Pieces
+
+- **`StrategyKind.AUCTION_BID`** — `("Bid", "valuation", atBazaar=false)`; an AH play, not a bazaar
+  one, so it is not in `bazaarKinds()`.
+- **`PricedBid(TimedListing, DecodedItem, ValueEstimate)`** (core/valuation) — the timed twin of
+  `PricedListing`. Derived: `bidToWin()` = `startingBid` when uncontested (`highestBid == 0` or
+  `== startingBid`), else `ceil(highestBid × 1.025)` (`Bids.nextIncrement`); `contested()`;
+  `hoursLeft(now)`; `discount()` = 1 − bidToWin / BIN median.
+- **`UnderpricedTimedScan implements TimedListingSink`** — the timed twin of `UnderpricedScan`. For
+  each timed listing within `bidWindowHours` of `end`, price the *bid to win* against the **BIN**
+  median (never the timed-sale price — the same out-of-sample rule as 0a), keep it if it clears the
+  same coarse/exact discount gates. Reuses `FairValueModel` unchanged.
+- **`AuctionBidStrategy implements FlipStrategy`** — gates on `minConfidence` and `minProfitPerFlip`;
+  resale at the BIN median; `net = Fees.binRoundTripProfit(bidToWin, resale)`. The **bid ceiling** is
+  `Fees.binNetProceeds(resale) − minProfitPerFlip` (exact: fees are linear in the buy leg). Carries
+  `AuctionValueStrategy`'s suspect deep-discount guard verbatim. **Drops contested auctions** (the
+  anti-snipe timer bids those to fair value — surplus lives only in uncontested/under-known ones) and
+  attaches a final-minute-band risk. Ranked on profit/hour like every candidate.
+
+### Wiring
+
+- Config: `auctionBidEnabled` (default **false**), `bidWindowHours` (default 3, clamped 0.25–48 in
+  `validated()`); one `ConfigSchema` entry each.
+- `MarketData.pricedBids()`, `StrategyContext.pricedBids`, and the sweep feeds an
+  `UnderpricedTimedScan` beside the existing collector through a composite `TimedListingSink` (so the
+  reachability tape and the strategy share the one decode). `CandidateFeed` passes the bids into the
+  context. Client sweep runs the timed scan only when `auctionBidEnabled`.
+
+### Guards (all carried from the plan above)
+
+Never automate a bid; only uncontested/under-known listings surface; Derpy disables it (×4 fees);
+every candidate states "the listing may already be bid past your ceiling by the time you look." The
+bid ceiling is the enforced core value — the player never types more than the mod's X.
+
+### Not yet built (follow-ups)
+
+- The **`AuctionOverlay` does not yet list `AUCTION_BID`** rows beside Hypixel's auction menu — the
+  bid strategy reaches `/flip`, the HUD and the flip screen, but the in-menu overlay is a follow-up.
+- **Escrow / simultaneous-bid capital tracking** across several live leads is not modelled; each bid
+  is judged as one indivisible position, as the BIN sniper judges one buy.
 
 ## Verdict
 
