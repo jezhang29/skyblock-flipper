@@ -32,6 +32,7 @@ import jeff.skyblockflipper.core.valuation.PriceHistory;
 import jeff.skyblockflipper.core.valuation.SupplyCounter;
 import jeff.skyblockflipper.core.valuation.SupplySignal;
 import jeff.skyblockflipper.core.valuation.UnderpricedScan;
+import jeff.skyblockflipper.core.valuation.UnderpricedTimedScan;
 import jeff.skyblockflipper.core.recovery.RecoveryValuationModels;
 import jeff.skyblockflipper.core.recovery.RecoveryListingScan;
 import jeff.skyblockflipper.core.recovery.RecoveryScanPolicy;
@@ -397,7 +398,15 @@ public final class MarketPoller implements AutoCloseable {
 						Duration.ofHours(config.timedAuctionSampleWindowHours()))
 				: null;
 
-		OptionalLong updated = api.sweepActiveAuctions(data.auctionsLastUpdated(), scan, timed);
+		// The live bid strategy rides the same sweep as the tape, decoding the same ending-soon
+		// listings. Built only when enabled; off, the sweep stays BIN-only for candidates.
+		UnderpricedTimedScan bidScan = config.auctionBidEnabled()
+				? new UnderpricedTimedScan(model, config.minDiscount(), config.exactMinDiscount(),
+						Instant.now(), Duration.ofHours(config.bidWindowHours()))
+				: null;
+
+		OptionalLong updated = api.sweepActiveAuctions(data.auctionsLastUpdated(), scan,
+				composeTimed(timed, bidScan));
 
 		if (updated.isEmpty()) {
 			// The house has not changed since the last sweep; that cost one page, not fifty.
@@ -408,6 +417,11 @@ public final class MarketPoller implements AutoCloseable {
 
 		if (timed != null) {
 			recordTimedAuctions(timed);
+		}
+
+		data.setPricedBids(bidScan == null ? List.of() : bidScan.results());
+		if (bidScan != null) {
+			log.accept("Bid auctions: " + bidScan.describe());
 		}
 
 		data.setAuctionScan(updated.getAsLong(), scan.ordinaryResults(), scan.recoveryResults(),
@@ -448,6 +462,25 @@ public final class MarketPoller implements AutoCloseable {
 	 * docs/auction-bidding-plan.md). One append per sweep of a few hundred small rows - no blobs,
 	 * signatures already decoded during the sweep - on the poll thread, like the sales append.
 	 */
+	/**
+	 * One timed sink from the tape collector and the bid scan, either of which may be off, so the one
+	 * sweep feeds both without a second auction-house request. Returns null when both are off, which
+	 * the sweep reads as BIN-only.
+	 */
+	private static TimedListingSink composeTimed(TimedAuctionCollector collector,
+			UnderpricedTimedScan bidScan) {
+		if (collector != null && bidScan != null) {
+			return listing -> {
+				collector.offer(listing);
+				bidScan.offer(listing);
+			};
+		}
+		if (collector != null) {
+			return collector;
+		}
+		return bidScan;
+	}
+
 	private void recordTimedAuctions(TimedAuctionCollector collector) {
 		try {
 			timedAuctionTape.record(collector.samples());

@@ -369,7 +369,8 @@ public final class Ledger {
 		return switch (kind) {
 			// NPCs pay their fixed price flat; there is no tax on the counter.
 			case NPC_FLIP -> unitSellPrice;
-			case AUCTION_VALUE -> fees.binNetProceeds(Math.round(unitSellPrice));
+			// A won bid resells on a BIN, the same exit as an auction-value snipe.
+			case AUCTION_VALUE, AUCTION_BID -> fees.binNetProceeds(Math.round(unitSellPrice));
 			// Craft, combine and fusion outputs all leave on a bazaar sell offer, so they carry the
 			// bazaar sales tax exactly as a spread does.
 			case BAZAAR_SPREAD, CRAFT, COMBINE, FUSION -> fees.bazaarSaleProceeds(unitSellPrice);

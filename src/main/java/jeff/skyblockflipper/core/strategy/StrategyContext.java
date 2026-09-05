@@ -20,6 +20,7 @@ package jeff.skyblockflipper.core.strategy;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.valuation.PricedBid;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 
@@ -76,7 +77,8 @@ public record StrategyContext(
 		NpcContext npc,
 		CraftContext craft,
 		CombineContext combine,
-		FusionContext fusion
+		FusionContext fusion,
+		List<PricedBid> pricedBids
 ) {
 	/** What an unstated horizon means: an hour, matching {@code FlipperConfig.fillHorizonMinutes}. */
 	public static final Duration DEFAULT_FILL_HORIZON = Duration.ofHours(1);
@@ -96,6 +98,28 @@ public record StrategyContext(
 		craft = craft == null ? CraftContext.defaults() : craft;
 		combine = combine == null ? CombineContext.defaults() : combine;
 		fusion = fusion == null ? FusionContext.defaults() : fusion;
+		pricedBids = pricedBids == null ? List.of() : List.copyOf(pricedBids);
+	}
+
+	/**
+	 * The same context with the timed-auction bids the last sweep flagged (Phase 1). A wither rather
+	 * than a constructor argument so the many existing callers stay untouched: only the auction feed
+	 * has bids to supply, and only {@code AuctionBidStrategy} reads them.
+	 */
+	public StrategyContext withPricedBids(List<PricedBid> bids) {
+		return new StrategyContext(bazaar, catalog, underpriced, trends, fees, bankroll,
+				minProfitPerFlip, minConfidence, maxAdverseDrift, fillHorizon, maxCapitalShare, npc,
+				craft, combine, fusion, bids);
+	}
+
+	/** The shape before timed-auction bids were carried, for callers that state up to fusion. */
+	public StrategyContext(BazaarSnapshot bazaar, ItemCatalog catalog, List<PricedListing> underpriced,
+			TrendSnapshot trends, Fees fees, long bankroll, long minProfitPerFlip,
+			double minConfidence, double maxAdverseDrift, Duration fillHorizon,
+			double maxCapitalShare, NpcContext npc, CraftContext craft, CombineContext combine,
+			FusionContext fusion) {
+		this(bazaar, catalog, underpriced, trends, fees, bankroll, minProfitPerFlip, minConfidence,
+				maxAdverseDrift, fillHorizon, maxCapitalShare, npc, craft, combine, fusion, List.of());
 	}
 
 	/** The shape before fusion had settings of its own, for callers that state up to combine. */

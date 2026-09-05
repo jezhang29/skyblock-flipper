@@ -203,7 +203,8 @@ public final class CandidateFeed {
 						config.npcRanking()),
 				new CraftContext(config.craftFlipsEnabled, config.craftMaxOrderSlots),
 				new CombineContext(config.combineFlipsEnabled),
-				new FusionContext(config.fusionFlipsEnabled, config.fusionCrocodileLevel));
+				new FusionContext(config.fusionFlipsEnabled, config.fusionCrocodileLevel))
+				.withPricedBids(data.pricedBids());
 	}
 
 	/**

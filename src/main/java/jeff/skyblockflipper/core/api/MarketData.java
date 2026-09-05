@@ -22,6 +22,7 @@ import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
+import jeff.skyblockflipper.core.valuation.PricedBid;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
 import jeff.skyblockflipper.core.recovery.RecoveryValueModel;
@@ -53,6 +54,7 @@ public final class MarketData {
 			new AtomicReference<>(NpcEdgeSnapshot.empty());
 	private final AtomicReference<AuctionScanSnapshot> auctionScan =
 			new AtomicReference<>(AuctionScanSnapshot.empty());
+	private final AtomicReference<List<PricedBid>> pricedBids = new AtomicReference<>(List.of());
 	private final AtomicReference<String> lastError = new AtomicReference<>("");
 	private final AtomicLong salesRecorded = new AtomicLong();
 
@@ -153,6 +155,16 @@ public final class MarketData {
 	/** Live listings found below fair value by the last sweep. */
 	public List<PricedListing> underpriced() {
 		return auctionScan.get().ordinary();
+	}
+
+	/** Timed auctions ending soon that the last sweep flagged as biddable below BIN value. */
+	public List<PricedBid> pricedBids() {
+		return pricedBids.get();
+	}
+
+	/** Replaces the biddable timed auctions after a sweep. Empty when the bid strategy is off. */
+	public void setPricedBids(List<PricedBid> bids) {
+		pricedBids.set(List.copyOf(bids));
 	}
 
 	public List<RecoveryOpportunity> recoveryOpportunities() {

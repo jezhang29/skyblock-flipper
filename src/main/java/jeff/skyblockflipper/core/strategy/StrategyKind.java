@@ -38,7 +38,10 @@ public enum StrategyKind {
 	FUSION("Fusion", "transformation", true),
 
 	/** Knowing what a specific item configuration is worth when the market does not. */
-	AUCTION_VALUE("Auction", "valuation", false);
+	AUCTION_VALUE("Auction", "valuation", false),
+
+	/** Bidding on a timed auction ending soon, to win it below its BIN value. */
+	AUCTION_BID("Bid", "valuation", false);
 
 	private final String label;
 	private final String edge;

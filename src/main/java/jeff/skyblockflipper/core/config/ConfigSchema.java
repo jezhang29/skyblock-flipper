@@ -381,6 +381,16 @@ public final class ConfigSchema {
 							+ "history small and focused on the auctions worth bidding on.",
 					1, 24, 1,
 					c -> c.timedAuctionSampleWindowHours, (c, v) -> c.timedAuctionSampleWindowHours = v),
+			new Entry.Flag("auctionBidEnabled", "Advise bidding on timed auctions",
+					"Advise bidding on timed (non-BIN) auctions ending soon that price below their "
+							+ "buy-it-now value, with an exact 'bid up to X' ceiling. Off by default "
+							+ "because whether that surplus is winnable is still being measured; it "
+							+ "needs the auction search on.",
+					c -> c.auctionBidEnabled, (c, v) -> c.auctionBidEnabled = v),
+			new Entry.IntRange("bidWindowHours", "Consider bid auctions ending within (hours)",
+					"Only timed auctions ending within this many hours are surfaced to bid on.",
+					1, 48, 1,
+					c -> c.bidWindowHours, (c, v) -> c.bidWindowHours = v),
 			new Entry.IntRange("timedAuctionTapeRetentionDays", "Keep bid auctions for (days)",
 					"How many days of recorded bid-auction history to keep on disk.",
 					1, 60, 1,
