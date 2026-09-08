@@ -17,6 +17,10 @@
  */
 package jeff.skyblockflipper.core.track;
 
+import jeff.skyblockflipper.core.evidence.NumericEvidence;
+
+import java.util.OptionalLong;
+
 /**
  * One bazaar order as {@link TradeTracker} currently understands it.
  *
@@ -38,7 +42,10 @@ public final class TrackedOrder {
 	private String itemId;
 	private long total;
 	private long filled;
+	private boolean filledExact;
 	private long claimed;
+	private long observedClaimItems;
+	private double observedClaimCoins;
 	private double unitPrice;
 	private Status status = Status.RESTING;
 	private long finishedAt;
@@ -53,6 +60,7 @@ public final class TrackedOrder {
 		this.total = total;
 		this.setupCoins = setupCoins;
 		this.unitPrice = unitPrice;
+		filledExact = !adopted;
 	}
 
 	public enum Status {
@@ -111,8 +119,27 @@ public final class TrackedOrder {
 		return filled;
 	}
 
+	/** Whether {@link #filled()} is exact rather than only a supported lower bound. */
+	public boolean filledKnownExactly() {
+		return filledExact;
+	}
+
 	public long claimed() {
 		return claimed;
+	}
+
+	/** Exact item count currently printed as claimable, retained independently of fill parsing. */
+	public long observedClaimItems() {
+		return observedClaimItems;
+	}
+
+	/** Exact displayed coin amount currently printed as claimable, independent of fill parsing. */
+	public double observedClaimCoins() {
+		return observedClaimCoins;
+	}
+
+	public boolean hasSomethingToClaim() {
+		return observedClaimItems > 0L || observedClaimCoins > 0.0d || unclaimed() > 0L;
 	}
 
 	/** Per-unit price the order rests at, gross of tax, or 0 until a menu or a claim reported one. */
@@ -160,7 +187,8 @@ public final class TrackedOrder {
 	 * line was missed lands there too and reading that as a fill would drop a live row.
 	 */
 	public boolean finishedByFilling() {
-		return status == Status.CLAIMED || (status == Status.VANISHED && remaining() <= 0L);
+		return status == Status.CLAIMED
+				|| (status == Status.VANISHED && filledExact && remaining() <= 0L);
 	}
 
 	/** Units still on the book. */
@@ -168,8 +196,16 @@ public final class TrackedOrder {
 		return Math.max(0L, total - filled);
 	}
 
+	/** Exact remaining quantity for actions that cannot safely operate on a bound. */
+	public OptionalLong exactRemaining() {
+		return filledExact ? OptionalLong.of(remaining()) : OptionalLong.empty();
+	}
+
 	/** Filled units not yet collected, which is what a claim line is about to be for. */
 	public long unclaimed() {
+		if (side == TradeEvent.Side.BUY && observedClaimItems > 0L) {
+			return observedClaimItems;
+		}
 		return Math.max(0L, filled - claimed);
 	}
 
@@ -208,15 +244,81 @@ public final class TrackedOrder {
 		}
 	}
 
+	void applyObservation(ObservedOrderRow observation, MenuCoverage coverage) {
+		total = observation.total();
+		switch (observation.filled()) {
+			case NumericEvidence.Exact<Long> exact -> {
+				if (exact.value() >= filled) {
+					filled = exact.value();
+					filledExact = true;
+				} else if (!filledExact) {
+					// A later exact row below an independently supported lower bound conflicts.
+					filledExact = false;
+				}
+			}
+			case NumericEvidence.Bounded<Long> bounded -> {
+				long supportedLower = bounded.lower();
+				if (!bounded.endpointSemantics().lowerInclusive()) {
+					supportedLower = Math.addExact(supportedLower, 1L);
+				}
+				filled = Math.max(filled, supportedLower);
+				filledExact = false;
+			}
+			case NumericEvidence.Approximate<Long> ignored -> filledExact = false;
+			case NumericEvidence.Unknown<Long> ignored -> filledExact = false;
+			case NumericEvidence.Conflict<Long> ignored -> filledExact = false;
+		}
+
+		observation.unitPrice().ifPresent(price -> unitPrice = price.doubleValue());
+		if (observation.claimItems().isPresent()) {
+			observedClaimItems = observation.claimItems().getAsLong();
+		} else if (coverage == MenuCoverage.COMPLETE) {
+			observedClaimItems = 0L;
+		}
+		if (observation.claimCoins().isPresent()) {
+			observedClaimCoins = observation.claimCoins().orElseThrow().doubleValue();
+		} else if (coverage == MenuCoverage.COMPLETE) {
+			observedClaimCoins = 0.0d;
+		}
+		if (side == TradeEvent.Side.BUY && observation.claimItems().isPresent()) {
+			long waiting = observation.claimItems().getAsLong();
+			filled = Math.max(filled, waiting);
+			if (filledExact) {
+				claimed = Math.clamp(Math.max(claimed, filled - waiting), 0L, total);
+			}
+		} else if (coverage == MenuCoverage.COMPLETE && filledExact
+				&& side == TradeEvent.Side.BUY) {
+			claimed = Math.max(claimed, filled);
+		}
+		if (side == TradeEvent.Side.SELL && coverage == MenuCoverage.COMPLETE && filledExact
+				&& observation.claimCoins().isEmpty()) {
+			claimed = Math.max(claimed, filled);
+		}
+
+		if (itemId.isEmpty()) {
+			itemId = observation.itemId();
+		}
+	}
+
 	void fill(long units) {
 		filled = Math.clamp(Math.max(filled, units), 0L, total);
+		filledExact = true;
 	}
 
 	void claim(long at, long units, double claimUnitPrice) {
 		// A claim is proof of a fill even when no notification announced one, which is the only
 		// evidence a partial fill leaves in chat.
-		filled = Math.clamp(Math.max(filled, claimed + units), 0L, total);
-		claimed = Math.clamp(claimed + units, 0L, total);
+		long claimedAfter = Math.clamp(Math.addExact(claimed, units), 0L, total);
+		if (claimedAfter > filled) {
+			filled = claimedAfter;
+			filledExact = claimedAfter >= total;
+		}
+		claimed = claimedAfter;
+		observedClaimItems = 0L;
+		observedClaimCoins = 0.0d;
+		if (claimed >= total) {
+			filledExact = true;
+		}
 
 		if (claimUnitPrice > 0.0d) {
 			unitPrice = claimUnitPrice;

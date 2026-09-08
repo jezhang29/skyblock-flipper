@@ -126,6 +126,9 @@ public final class CaptureSession {
 					slot.get("customData").getAsString()));
 		}
 
-		return new CapturedMenu(at, json.get("title").getAsString(), slots);
+		MenuCoverage coverage = json.has("coverage")
+				? MenuCoverage.valueOf(json.get("coverage").getAsString())
+				: MenuCoverage.COMPLETE;
+		return new CapturedMenu(at, json.get("title").getAsString(), slots, coverage);
 	}
 }

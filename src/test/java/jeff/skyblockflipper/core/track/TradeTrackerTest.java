@@ -310,6 +310,46 @@ class TradeTrackerTest {
 		assertEquals(2_724.0d, order(tracker, "Bronze Bowl").unitPrice(), 0.01d);
 	}
 
+	@Test
+	void approximateFillDisablesExactRemainingActionsWithoutErasingTheOrder() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 1,091x Null Sphere for 21,820 coins."));
+		tracker.accept(orders(1_000L, "BUY Null Sphere", "NULL_SPHERE",
+				"Order amount: 1,091x", "Filled: 1.1k/1.1k 100%!",
+				"Price per unit: 20.0 coins"));
+
+		TrackedOrder order = order(tracker, "Null Sphere");
+		assertFalse(order.filledKnownExactly());
+		assertTrue(order.exactRemaining().isEmpty());
+		assertEquals(TrackedOrder.Status.RESTING, order.status());
+	}
+
+	@Test
+	void unknownSellFillStillRetainsItsIndependentCoinClaim() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(orders(1_000L, "SELL Null Sphere", "NULL_SPHERE",
+				"Offer amount: 1,091x", "Filled: 1.1k/1.1k 100%!",
+				"Price per unit: 20.0 coins", "You have 21,500.5 coins to claim!"));
+
+		TrackedOrder order = order(tracker, "Null Sphere");
+		assertFalse(order.filledKnownExactly());
+		assertEquals(21_500.5d, order.observedClaimCoins());
+		assertEquals(List.of(order), tracker.awaitingClaim());
+	}
+
+	@Test
+	void partialMenuDoesNotMakeAnUnseenOrderVanish() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 10x Slimeball for 200 coins."));
+		tracker.accept(new CapturedMenu(1_000L, "Co-op Bazaar Orders", List.of(),
+				MenuCoverage.PARTIAL));
+
+		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Slimeball").status());
+	}
+
 	/** An amount matching no resting order cancels nothing, rather than cancelling the nearest. */
 	@Test
 	void ignoresACoinRefundThatMatchesNoOrder() {

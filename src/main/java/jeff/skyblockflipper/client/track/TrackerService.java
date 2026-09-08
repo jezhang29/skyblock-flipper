@@ -152,6 +152,7 @@ public final class TrackerService {
 
 		for (TrackedOrder order : tracker.resting()) {
 			if (order.side() != TradeEvent.Side.BUY || order.unitPrice() <= 0.0d
+					|| order.exactRemaining().isEmpty()
 					|| (order.remaining() <= 0L && order.unclaimed() <= 0L)) {
 				continue;
 			}
@@ -210,7 +211,7 @@ public final class TrackerService {
 	public static boolean hasUnpricedBuyOrders() {
 		return tracker().resting().stream()
 				.anyMatch(order -> order.side() == TradeEvent.Side.BUY && order.unitPrice() <= 0.0d
-						&& order.remaining() > 0L);
+						&& order.exactRemaining().orElse(0L) > 0L);
 	}
 
 	private static void drain() {

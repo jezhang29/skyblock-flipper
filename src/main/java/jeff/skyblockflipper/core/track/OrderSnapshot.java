@@ -38,13 +38,19 @@ import java.util.OptionalLong;
  * @param total         units the order was placed for, from {@code Offer amount:} / {@code Order
  *                      amount:}. Never from the {@code Filled:} denominator, which is abbreviated -
  *                      a 1,344 unit offer prints {@code 903/1.3k}
- * @param filled        units filled so far, exact
+ * @param filled        units filled so far, exact; uncertain rows never enter this legacy adapter
  * @param unitPrice     the per-unit price the order rests at, gross of bazaar tax
  * @param claimCoins    coins waiting to be collected from a filled sell offer, net of tax, or 0
  * @param claimItems    items waiting to be collected from a filled buy order, or 0
  */
 public record OrderSnapshot(long at, TradeEvent.Side side, String itemId, String displayName,
 		String owner, long total, long filled, double unitPrice, double claimCoins, long claimItems) {
+	public OrderSnapshot {
+		if (total <= 0L || filled < 0L || filled > total) {
+			throw new IllegalArgumentException("legacy snapshots require an exact valid fill count");
+		}
+	}
+
 	/** Filled but not yet collected, which is the state a tracker has to notice and act on. */
 	public boolean hasSomethingToClaim() {
 		return claimCoins > 0.0d || claimItems > 0L;

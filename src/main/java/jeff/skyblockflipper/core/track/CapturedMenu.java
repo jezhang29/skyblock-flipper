@@ -28,10 +28,20 @@ import java.util.List;
  *
  * @param title  menu title with formatting stripped, the only handle there is on which menu this is
  * @param slots  non-empty slots only; a menu is mostly filler glass
+ * @param coverage whether absent slots and claim lines came from a complete captured container
  */
-public record CapturedMenu(long at, String title, List<CapturedSlot> slots) implements CaptureRecord {
+public record CapturedMenu(long at, String title, List<CapturedSlot> slots, MenuCoverage coverage)
+		implements CaptureRecord {
 	public CapturedMenu {
 		slots = List.copyOf(slots);
+		if (coverage == null) {
+			throw new IllegalArgumentException("menu coverage must be stated");
+		}
+	}
+
+	/** Existing captures were emitted only after a full container was available. */
+	public CapturedMenu(long at, String title, List<CapturedSlot> slots) {
+		this(at, title, slots, MenuCoverage.COMPLETE);
 	}
 
 	/**
@@ -42,6 +52,6 @@ public record CapturedMenu(long at, String title, List<CapturedSlot> slots) impl
 	 * {@link #at}.
 	 */
 	public int contentsHash() {
-		return title.hashCode() * 31 + slots.hashCode();
+		return (title.hashCode() * 31 + slots.hashCode()) * 31 + coverage.hashCode();
 	}
 }

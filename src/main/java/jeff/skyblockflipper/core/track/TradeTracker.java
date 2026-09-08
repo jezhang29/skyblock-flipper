@@ -98,9 +98,9 @@ public final class TradeTracker {
 		// purchase's id comes from, and nothing else in the session carries it.
 		names.learn(menu);
 
-		if (OrderMenuParser.isOrdersMenu(menu)) {
-			reconcile(menu.at(), OrderMenuParser.ownedBy(OrderMenuParser.parse(menu), player));
-		}
+		OrderMenuParser.parseObservation(menu)
+				.ifPresent(observation -> reconcile(observation,
+						observation.ownedBy(player)));
 	}
 
 	/** Coins that moved, oldest first, with ids resolved from every menu seen so far. */
@@ -120,7 +120,7 @@ public final class TradeTracker {
 
 	/** Filled units nobody has collected yet, which is the state worth telling a player about. */
 	public List<TrackedOrder> awaitingClaim() {
-		return orders.stream().filter(o -> o.isResting() && o.unclaimed() > 0L).toList();
+		return orders.stream().filter(o -> o.isResting() && o.hasSomethingToClaim()).toList();
 	}
 
 	/**
@@ -213,7 +213,8 @@ public final class TradeTracker {
 			case ORDER_CANCELLED -> {
 				if (event.displayName().isEmpty()) {
 					matchForCoinRefund(event)
-								.ifPresent(order -> order.cancel(event.at(), order.remaining()));
+							.ifPresent(order -> order.exactRemaining()
+									.ifPresent(remaining -> order.cancel(event.at(), remaining)));
 				} else {
 					matchForCancel(event).ifPresent(order -> order.cancel(event.at(), event.units()));
 				}
@@ -267,10 +268,10 @@ public final class TradeTracker {
 	 * The menu is the truth about what is on the book, so this is where an order the chat stream
 	 * never saw gets adopted and where one it thinks is still resting gets buried.
 	 */
-	private void reconcile(long at, List<OrderSnapshot> mine) {
+	private void reconcile(OrderMenuObservation observation, List<ObservedOrderRow> mine) {
 		List<TrackedOrder> matched = new ArrayList<>();
 
-		for (OrderSnapshot snapshot : mine) {
+		for (ObservedOrderRow snapshot : mine) {
 			TrackedOrder order = orders.stream()
 					.filter(TrackedOrder::isResting)
 					.filter(o -> !matched.contains(o))
@@ -280,7 +281,7 @@ public final class TradeTracker {
 					.findFirst()
 					.orElseGet(() -> adopt(snapshot));
 
-			order.applySnapshot(snapshot);
+			order.applyObservation(snapshot, observation.coverage());
 			matched.add(order);
 		}
 
@@ -296,8 +297,9 @@ public final class TradeTracker {
 			// buried early. It comes back the next time the menu draws it, because an unrecognised
 			// row is adopted, so the cost of being wrong here is a duplicated order rather than a
 			// lost one.
-			if (order.isResting() && order.placedAt() < at && !matched.contains(order)) {
-				order.vanish(at);
+			if (observation.coverage() == MenuCoverage.COMPLETE && order.isResting()
+					&& order.placedAt() < observation.at() && !matched.contains(order)) {
+				order.vanish(observation.at());
 			}
 		}
 	}
@@ -308,10 +310,10 @@ public final class TradeTracker {
 	 * <p>Marked adopted, because that date is a lower bound and nothing more: the row may have been
 	 * resting since yesterday. Every rule that reasons about age has to know which of the two it has.
 	 */
-	private TrackedOrder adopt(OrderSnapshot snapshot) {
+	private TrackedOrder adopt(ObservedOrderRow snapshot) {
 		TrackedOrder order = new TrackedOrder(snapshot.at(), true, snapshot.side(),
 				snapshot.displayName(), snapshot.itemId(), snapshot.total(), 0.0d,
-				snapshot.unitPrice());
+				snapshot.unitPrice().map(java.math.BigDecimal::doubleValue).orElse(0.0d));
 		orders.add(order);
 		return order;
 	}
@@ -356,12 +358,13 @@ public final class TradeTracker {
 	/** A refund is in units left on the book, so the order it came off is the one that size fits. */
 	private Optional<TrackedOrder> matchForCancel(TradeEvent event) {
 		Optional<TrackedOrder> exact = candidates(event)
-				.filter(o -> o.remaining() == event.units())
+				.filter(o -> o.exactRemaining().orElse(-1L) == event.units())
 				.findFirst();
 
 		return exact.isPresent()
 				? exact
-				: candidates(event).filter(o -> o.remaining() >= event.units()).findFirst();
+				: candidates(event)
+						.filter(o -> o.exactRemaining().orElse(-1L) >= event.units()).findFirst();
 	}
 
 	/**
@@ -381,19 +384,21 @@ public final class TradeTracker {
 		return orders.stream()
 				.filter(TrackedOrder::isResting)
 				.filter(o -> o.side() == event.side())
+				.filter(o -> o.exactRemaining().isPresent())
 				.filter(o -> Math.abs(escrow(o) - event.coins()) <= event.coins() * REFUND_TOLERANCE)
 				.min(Comparator.comparingDouble(o -> Math.abs(escrow(o) - event.coins())));
 	}
 
 	/** Coins an order still has tied up, from a menu price when there is one and the setup line otherwise. */
 	private static double escrow(TrackedOrder order) {
+		long remaining = order.exactRemaining().orElseThrow();
 		if (order.unitPrice() > 0.0d) {
-			return order.remaining() * order.unitPrice();
+			return remaining * order.unitPrice();
 		}
 
 		return order.total() == 0L
 				? 0.0d
-				: order.setupCoins() * order.remaining() / order.total();
+				: order.setupCoins() * remaining / order.total();
 	}
 
 	private Stream<TrackedOrder> candidates(TradeEvent event) {

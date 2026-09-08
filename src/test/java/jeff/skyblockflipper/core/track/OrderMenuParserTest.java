@@ -17,6 +17,8 @@
  */
 package jeff.skyblockflipper.core.track;
 
+import jeff.skyblockflipper.core.evidence.NumericEvidence;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +31,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -56,9 +59,10 @@ class OrderMenuParserTest {
 		int mine = 0;
 
 		for (CapturedMenu menu : MENUS) {
-			List<OrderSnapshot> parsed = OrderMenuParser.parse(menu);
+			List<ObservedOrderRow> parsed = OrderMenuParser.parseObservation(menu)
+					.map(OrderMenuObservation::rows).orElse(List.of());
 			orders += parsed.size();
-			mine += OrderMenuParser.ownedBy(parsed, ME).size();
+			mine += parsed.stream().filter(row -> row.owner().equals(ME)).count();
 		}
 
 		// 17 snapshots of the orders menu, taken as orders were placed, filled and cancelled.
@@ -107,24 +111,84 @@ class OrderMenuParserTest {
 		// The co-op menu shows every member's orders in the same rows with the same lore. Only the
 		// "By:" line separates them, and taking the whole menu as yours would book LunarV4's
 		// 811,618 coin sell as your position.
-		List<OrderSnapshot> all = parseFirstContaining("GIANT_FRAGMENT_DIAMOND");
+		List<ObservedOrderRow> all = parseFirstContaining("GIANT_FRAGMENT_DIAMOND");
 
 		assertTrue(all.stream().anyMatch(o -> o.owner().equals("LunarV4")));
-		assertTrue(OrderMenuParser.ownedBy(all, ME).stream().allMatch(o -> o.owner().equals(ME)));
-		assertTrue(OrderMenuParser.ownedBy(all, "").isEmpty());
+		OrderMenuObservation observation = new OrderMenuObservation(0L, "Co-op Bazaar Orders",
+				MenuCoverage.COMPLETE, all, OrderMenuParser.PARSER_VERSION);
+		assertTrue(observation.ownedBy(ME).stream().allMatch(o -> o.owner().equals(ME)));
+		assertTrue(observation.ownedBy("").isEmpty());
 	}
 
 	@Test
 	void keepsAnOrderThatCarriesNoItemId() {
 		// Enchantment-book orders send no custom data at all, so there is no id to read. Dropping
 		// them would lose a real position; the name is what is left to resolve them by.
-		OrderSnapshot book = allOrders().stream()
+		ObservedOrderRow book = allObservedRows().stream()
 				.filter(o -> o.displayName().equals("Ultimate Wise I"))
 				.findFirst()
 				.orElseThrow();
 
 		assertEquals("", book.itemId());
 		assertEquals(1L, book.total());
+	}
+
+	@Test
+	void abbreviatedAndRoundedNumeratorRemainsApproximate() {
+		ObservedOrderRow row = observed(MenuCoverage.COMPLETE, "SELL Null Sphere", "NULL_SPHERE",
+				"Offer amount: 1,091x", "Filled: 1.1k/1.1k 100%!",
+				"Price per unit: 20.5 coins", "By: " + ME);
+
+		NumericEvidence.Approximate<?> approximate = assertInstanceOf(
+				NumericEvidence.Approximate.class, row.filled());
+		assertEquals("1.1k", approximate.rawText());
+		assertFalse(row.supportsExactQuantityActions());
+		assertTrue(OrderMenuParser.parse(menu(MenuCoverage.COMPLETE, "SELL Null Sphere",
+				"NULL_SPHERE", "Offer amount: 1,091x", "Filled: 1.1k/1.1k 100%!",
+				"Price per unit: 20.5 coins", "By: " + ME)).isEmpty());
+	}
+
+	@Test
+	void exactClaimCanTightenWithoutDefiningAnAbbreviationRule() {
+		ObservedOrderRow row = observed(MenuCoverage.COMPLETE, "BUY Enchanted Nether Wart",
+				"ENCHANTED_NETHER_STALK", "Order amount: 1,024x", "Filled: 1k/1k 100%!",
+				"You have 1,024 items to claim!", "By: " + ME);
+
+		NumericEvidence.Exact<?> exact = assertInstanceOf(NumericEvidence.Exact.class,
+				row.filled());
+		assertEquals(1_024L, exact.value());
+		assertTrue(row.supportsExactQuantityActions());
+	}
+
+	@Test
+	void claimOnlyAndMalformedRowsKeepIndependentEvidence() {
+		ObservedOrderRow claimOnly = observed(MenuCoverage.COMPLETE, "BUY Slimeball", "SLIME_BALL",
+				"Order amount: 10x", "You have 3 items to claim!", "By: " + ME);
+		ObservedOrderRow malformed = observed(MenuCoverage.COMPLETE, "SELL Slimeball", "SLIME_BALL",
+				"Offer amount: 10x", "Filled: ???", "You have 20.5 coins to claim!",
+				"By: " + ME);
+
+		assertInstanceOf(NumericEvidence.Bounded.class, claimOnly.filled());
+		assertEquals(3L, claimOnly.claimItems().orElseThrow());
+		assertInstanceOf(NumericEvidence.Unknown.class, malformed.filled());
+		assertEquals("20.5", malformed.claimCoins().orElseThrow().toPlainString());
+	}
+
+	@Test
+	void missingPricePartialCoverageAndDuplicateRowsStayExplicit() {
+		CapturedSlot first = new CapturedSlot(11, "BUY Slimeball",
+				List.of("Order amount: 10x", "Filled: 0/10 (0.0%)", "By: " + ME),
+				"SLIME_BALL", 1, "");
+		CapturedSlot second = new CapturedSlot(12, "BUY Slimeball",
+				List.of("Order amount: 10x", "Filled: 0/10 (0.0%)", "By: LunarV4"),
+				"SLIME_BALL", 1, "");
+		OrderMenuObservation observation = OrderMenuParser.parseObservation(new CapturedMenu(1L,
+				"Co-op Bazaar Orders", List.of(first, second), MenuCoverage.PARTIAL)).orElseThrow();
+
+		assertEquals(MenuCoverage.PARTIAL, observation.coverage());
+		assertEquals(2, observation.rows().size());
+		assertTrue(observation.rows().getFirst().unitPrice().isEmpty());
+		assertEquals(1, observation.ownedBy(ME).size());
 	}
 
 	@Test
@@ -183,9 +247,10 @@ class OrderMenuParserTest {
 				.orElseThrow();
 	}
 
-	private static List<OrderSnapshot> parseFirstContaining(String itemId) {
+	private static List<ObservedOrderRow> parseFirstContaining(String itemId) {
 		for (CapturedMenu menu : MENUS) {
-			List<OrderSnapshot> orders = OrderMenuParser.parse(menu);
+			List<ObservedOrderRow> orders = OrderMenuParser.parseObservation(menu)
+					.map(OrderMenuObservation::rows).orElse(List.of());
 
 			if (orders.stream().anyMatch(o -> o.itemId().equals(itemId))) {
 				return orders;
@@ -197,6 +262,23 @@ class OrderMenuParserTest {
 
 	private static List<OrderSnapshot> allOrders() {
 		return MENUS.stream().flatMap(m -> OrderMenuParser.parse(m).stream()).toList();
+	}
+
+	private static List<ObservedOrderRow> allObservedRows() {
+		return MENUS.stream().flatMap(menu -> OrderMenuParser.parseObservation(menu).stream())
+				.flatMap(observation -> observation.rows().stream()).toList();
+	}
+
+	private static ObservedOrderRow observed(MenuCoverage coverage, String name, String itemId,
+			String... lore) {
+		return OrderMenuParser.parseObservation(menu(coverage, name, itemId, lore)).orElseThrow()
+				.rows().getFirst();
+	}
+
+	private static CapturedMenu menu(MenuCoverage coverage, String name, String itemId,
+			String... lore) {
+		return new CapturedMenu(1L, "Co-op Bazaar Orders",
+				List.of(new CapturedSlot(11, name, List.of(lore), itemId, 1, "")), coverage);
 	}
 
 }
