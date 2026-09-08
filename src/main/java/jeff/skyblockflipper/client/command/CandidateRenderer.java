@@ -18,6 +18,7 @@
 package jeff.skyblockflipper.client.command;
 
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
 
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 
@@ -63,7 +64,7 @@ public final class CandidateRenderer {
 			source.sendFeedback(summaryLine(rank++, candidate));
 		}
 
-		source.sendFeedback(Component.literal("Hover a line for the steps and risks.")
+		source.sendFeedback(Component.literal("Hover a line for details and evidence.")
 				.withStyle(ChatFormatting.DARK_GRAY));
 	}
 
@@ -72,9 +73,10 @@ public final class CandidateRenderer {
 	 * ten-candidate list stays readable.
 	 */
 	private static Component summaryLine(int rank, FlipCandidate candidate) {
+		OpportunityPresentation presentation = OpportunityPresentation.of(candidate);
 		MutableComponent line = Component.literal(" " + rank + ". ").withStyle(ChatFormatting.DARK_GRAY)
 				.append(Component.literal(candidate.displayName()).withStyle(ChatFormatting.AQUA))
-				.append(Component.literal("  " + Chat.coins(Math.round(candidate.profitPerHour())) + "/hr")
+				.append(Component.literal("  " + presentation.headline())
 						.withStyle(ChatFormatting.GREEN))
 				.append(Component.literal("  " + Chat.coins(candidate.capitalRequired()) + " in")
 						.withStyle(ChatFormatting.GRAY));
@@ -86,31 +88,47 @@ public final class CandidateRenderer {
 	}
 
 	private static Component detail(FlipCandidate candidate) {
+		OpportunityPresentation presentation = OpportunityPresentation.of(candidate);
 		MutableComponent text = Component.literal(candidate.displayName() + "\n")
 				.withStyle(ChatFormatting.AQUA)
-				.append(Component.literal(candidate.kind().label() + " - paid for " + candidate.kind().edge() + "\n\n")
+				.append(Component.literal((presentation.actionable()
+						? candidate.kind().label() + " - paid for " + candidate.kind().edge()
+						: "Bazaar - quote economics only") + "\n\n")
 						.withStyle(ChatFormatting.DARK_GRAY));
 
 		text.append(field("Buy", String.format("%.1f", candidate.unitBuyPrice())));
 		text.append(field("Sell", String.format("%.1f", candidate.unitSellPrice())));
-		text.append(field("Net/unit", String.format("%.1f after fees", candidate.unitNetProfit())));
+		text.append(field(presentation.unitNetLabel(),
+				String.format("%.1f after fees", candidate.unitNetProfit())));
 		text.append(field("Units", String.valueOf(candidate.units())));
-		text.append(field("Total", Chat.coins(Math.round(candidate.totalNetProfit()))));
+		text.append(field(presentation.fullFillLabel(),
+				Chat.coins(Math.round(candidate.totalNetProfit()))));
+		text.append(field(presentation.completionLabel(), presentation.completion()));
 
-		text.append(Component.literal("\nSteps\n").withStyle(ChatFormatting.WHITE));
+		if (!presentation.steps().isEmpty()) {
+			text.append(Component.literal("\nSteps\n").withStyle(ChatFormatting.WHITE));
 
-		int step = 1;
+			int step = 1;
 
-		for (String instruction : candidate.steps()) {
-			text.append(Component.literal("  " + step++ + ". " + instruction + "\n")
-					.withStyle(ChatFormatting.GRAY));
+			for (String instruction : presentation.steps()) {
+				text.append(Component.literal("  " + step++ + ". " + instruction + "\n")
+						.withStyle(ChatFormatting.GRAY));
+			}
 		}
 
-		if (!candidate.risks().isEmpty()) {
+		if (!presentation.risks().isEmpty()) {
 			text.append(Component.literal("\nRisks\n").withStyle(ChatFormatting.RED));
 
-			for (String risk : candidate.risks()) {
+			for (String risk : presentation.risks()) {
 				text.append(Component.literal("  - " + risk + "\n").withStyle(ChatFormatting.GRAY));
+			}
+		}
+
+		if (!presentation.notes().isEmpty()) {
+			text.append(Component.literal("\nEvidence\n").withStyle(ChatFormatting.YELLOW));
+
+			for (String note : presentation.notes()) {
+				text.append(Component.literal("  - " + note + "\n").withStyle(ChatFormatting.GRAY));
 			}
 		}
 

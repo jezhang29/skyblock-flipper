@@ -332,6 +332,17 @@ public final class NpcWorklist {
 			add(parts, count(Kind.PLACE), "to place");
 
 			if (parts.isEmpty()) {
+				long unresolved = advice.stream()
+						.filter(entry -> !entry.order().remainingKnownExactly())
+						.count();
+				if (unresolved > 0L) {
+					return "Nothing to price: reconcile " + unresolved
+							+ (unresolved == 1L ? " order" : " orders")
+							+ (unresolved == 1L
+									? "; its slot and possible capital remain reserved"
+									: "; their slots and possible capital remain reserved");
+				}
+
 				if (hasRound() && outbidWaiting() > 0) {
 					// Not "all of them are on top of the book", which is what this used to say and is
 					// exactly wrong here: some of them have been outbid and the round in hand is not
@@ -441,10 +452,14 @@ public final class NpcWorklist {
 		// ever sees them: they hold a slot the basket must respect, but they are not repriced, cancelled
 		// or held by the NPC side.
 		List<NpcReprice.Order> mine = new ArrayList<>();
-		List<NpcReprice.Order> foreignOrders = new ArrayList<>();
+		List<NpcReprice.Order> slotOnly = new ArrayList<>();
 
 		for (NpcReprice.Order order : resting) {
-			(foreign.contains(order.itemId()) ? foreignOrders : mine).add(order);
+			boolean npcItem = context.catalog().get(order.itemId())
+					.flatMap(ItemCatalog.Entry::npcPrice)
+					.filter(price -> price > 0.0d)
+					.isPresent();
+			(foreign.contains(order.itemId()) || !npcItem ? slotOnly : mine).add(order);
 		}
 
 		// A reprice is only worth what it fills before the next trip, so a round part way through
@@ -452,11 +467,15 @@ public final class NpcWorklist {
 		Duration horizon = round == null ? null : round.remaining(now);
 		List<NpcReprice.Advice> advice = NpcReprice.review(mine, context, now, horizon);
 
-		// Only the orders the review recognised. One it dropped - an item no NPC buys, or a product
-		// missing from this snapshot - is not an NPC position, so charging the basket a slot for it
-		// would shrink the plan on the strength of a spread flip.
+		// Only reviewed orders can drive advice or frozen rows. Catalog-confirmed NPC orders which the
+		// current book cannot review remain in mine and are reserved below; missing market evidence
+		// cannot release their exposure.
 		List<NpcReprice.Order> recognised = advice.stream().map(NpcReprice.Advice::order).toList();
-		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, filled, cancelledAt, now);
+		List<NpcReprice.Order> unreviewed = mine.stream()
+				.filter(order -> !recognised.contains(order))
+				.toList();
+		List<NpcRound.Row> rows = rowsToWork(round, recognised, advice, unreviewed, filled,
+				cancelledAt, now);
 
 		// Re-price each frozen row against the live book once, before anything is sized against it. A
 		// row the book has chased past the stop, or one whose item has left the catalog, is dropped
@@ -466,7 +485,7 @@ public final class NpcWorklist {
 		List<LivePlan> plans = livePlans(rows, context);
 		List<NpcRound.Row> working = plans.stream().map(LivePlan::row).toList();
 		NpcBasket.Basket basket = NpcBasket.plan(context,
-				reserve(recognised, working, advice, foreignOrders));
+				reserve(mine, working, advice, slotOnly, unreviewed));
 
 		List<Task> tasks = new ArrayList<>();
 
@@ -513,22 +532,30 @@ public final class NpcWorklist {
 	 * leaving the row in would be telling the player to cancel it and put it back.
 	 */
 	private static List<NpcRound.Row> rowsToWork(NpcRound round, List<NpcReprice.Order> recognised,
-			List<NpcReprice.Advice> advice, Set<String> filled, Map<String, Long> cancelledAt,
-			long now) {
+			List<NpcReprice.Advice> advice, List<NpcReprice.Order> unreviewed, Set<String> filled,
+			Map<String, Long> cancelledAt, long now) {
 		if (round == null) {
 			return List.of();
 		}
 
 		Set<String> dead = new HashSet<>();
+		Set<String> unresolved = new HashSet<>();
+		for (NpcReprice.Order order : unreviewed) {
+			unresolved.add(order.itemId());
+		}
 
 		for (NpcReprice.Advice entry : advice) {
 			if (entry.isCancel()) {
 				dead.add(entry.order().itemId());
 			}
+			if (!entry.order().remainingKnownExactly()) {
+				unresolved.add(entry.order().itemId());
+			}
 		}
 
 		return round.outstanding(recognised, filled, cancelledAt, now).stream()
 				.filter(row -> !dead.contains(row.itemId()))
+				.filter(row -> !unresolved.contains(row.itemId()))
 				.toList();
 	}
 
@@ -554,7 +581,8 @@ public final class NpcWorklist {
 	 * a position is sized on what its orders were placed for rather than on what is still unfilled.
 	 */
 	private static NpcBasket.Held reserve(List<NpcReprice.Order> resting, List<NpcRound.Row> rows,
-			List<NpcReprice.Advice> advice, List<NpcReprice.Order> foreign) {
+			List<NpcReprice.Advice> advice, List<NpcReprice.Order> slotOnly,
+			List<NpcReprice.Order> unreviewed) {
 		Map<String, Reservation> perItem = new LinkedHashMap<>();
 
 		for (NpcReprice.Order order : resting) {
@@ -568,12 +596,22 @@ public final class NpcWorklist {
 		// Another strategy's orders hold their slots against the basket - slots bind - but not their
 		// coins, which are not the NPC bankroll, and never their advice, which is not the NPC side's to
 		// give. Marked spoken for so the basket leaves the item alone rather than topping it up.
-		for (NpcReprice.Order order : foreign) {
+		for (NpcReprice.Order order : slotOnly) {
 			Reservation held = perItem.computeIfAbsent(order.itemId(), id -> new Reservation());
 
 			held.orders++;
 			held.units += order.total();
 			held.spokenFor = true;
+		}
+
+		// A catalog-confirmed NPC order may be absent only because the current market snapshot cannot
+		// review it. Its price and conservative remaining quantity still reserve the exposure, while
+		// spokenFor prevents a new line on evidence that is presently missing.
+		for (NpcReprice.Order order : unreviewed) {
+			Reservation held = perItem.get(order.itemId());
+			if (held != null) {
+				held.spokenFor = true;
+			}
 		}
 
 		for (NpcRound.Row row : rows) {
@@ -588,7 +626,8 @@ public final class NpcWorklist {
 		for (NpcReprice.Advice entry : advice) {
 			Reservation held = perItem.get(entry.order().itemId());
 
-			if (held != null && entry.needsAction()) {
+			if (held != null
+					&& (entry.needsAction() || !entry.order().remainingKnownExactly())) {
 				held.spokenFor = true;
 			}
 		}

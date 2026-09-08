@@ -150,6 +150,20 @@ class GuideTest {
 		}
 	}
 
+	@Test
+	void bazaarGuidanceNamesTheQuoteOnlyBoundary() {
+		String guide = Guide.sections().stream()
+				.flatMap(section -> section.terms().stream())
+				.map(term -> term.name() + " " + term.meaning())
+				.collect(Collectors.joining("\n"));
+
+		assertTrue(guide.contains("quote-only"), guide);
+		assertTrue(guide.contains("Personal completion"), guide);
+		assertTrue(guide.contains("not expected realized profit"), guide);
+		assertTrue(guide.contains("no countdown"), guide);
+		assertTrue(guide.contains("excluding quote-only Bazaar spreads"), guide);
+	}
+
 	private static void collectUnknown(String text, List<String> unknown) {
 		Matcher matcher = MENTION.matcher(text);
 

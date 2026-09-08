@@ -67,25 +67,24 @@ public final class Guide {
 					new Term("2. Wait for prices to arrive", "Bazaar prices arrive a few seconds after "
 							+ "you join and refresh every 20 seconds. /flip status says how old they "
 							+ "are; until they land the list is empty"),
-					new Term("3. Ask for a list", "/flip, typed alone, ranks every kind of flip "
-							+ "together. /flip bazaar, /flip npc, /flip craft, /flip combine, /flip "
-							+ "fusion and /flip "
-							+ "snipe ask for one kind. It is sorted by profit per hour after fees, so "
-							+ "rank 1 is the best thing on offer"),
+					new Term("3. Ask for a list", "/flip, typed alone, compares strategies that still "
+							+ "have an hourly presentation. /flip bazaar is a separate quote-only shortlist; "
+							+ "/flip npc, /flip craft, /flip combine, /flip fusion and /flip snipe ask for "
+							+ "one kind"),
 					new Term("4. Read one row before trusting it", "Click the row in the flip screen. "
-							+ "The right panel says what to buy, at what price, how many, and what has "
-							+ "to happen for it to pay; anything uncertain is listed as a risk"),
-					new Term("5. Take it", "/flip take 1, or the Take button, writes the plan down at "
-							+ "the numbers you see. It does not trade for you: you place the order "
-							+ "yourself, in game. The mod never touches your account"),
+							+ "Supported rows show their plan and risks. A Bazaar spread row instead shows "
+							+ "current-price arithmetic and why personal completion is unavailable"),
+					new Term("5. Take it", "For supported rows, /flip take 1 or the Take button writes "
+							+ "the plan down at the numbers you see. Quote-only Bazaar spreads cannot be "
+							+ "taken; they have no personal completion evidence. The mod never trades for you"),
 					new Term("6. Do the trade in game", "Copy the item name with the Copy name button, "
 							+ "paste it into the bazaar search, and place the order the plan describes"),
 					new Term("7. Say what happened", "When the coins come back, /flip close <id> <units "
 							+ "sold> <price each>. The id is the four characters /flip take printed. If "
 							+ "the order never filled, use /flip abandon <id> instead"),
-					new Term("8. Check whether it works", "/flip ledger shows your open flips and two "
-							+ "numbers: how much of the promised profit you really got, and how much of "
-							+ "what you planned really filled. That is the only proof this works"),
+					new Term("8. Check what was recorded", "/flip ledger keeps open holdings visible and "
+							+ "shows legacy comparisons for completed entries. Those diagnostics are not "
+							+ "reconciled spread performance or a personal completion forecast"),
 					new Term("Optional: the whole bazaar at once", "/flip npc plan fills every order "
 							+ "slot with buy orders under what NPCs pay, sized to fit your bankroll "
 							+ "once. Turn on /flip track, place the whole list, open Bazaar -> Manage "
@@ -97,8 +96,9 @@ public final class Guide {
 
 	/** Every command, in one place, because a command you cannot remember does not exist. */
 	private static final Section COMMANDS = new Section("commands", "Commands", List.of(
-			new Term("/flip", "The ranked list. /flip bazaar, /flip npc, /flip craft, /flip combine, "
-					+ "/flip fusion and /flip snipe show one kind of flip only"),
+			new Term("/flip", "The shared hourly list, excluding quote-only Bazaar spreads. /flip "
+					+ "bazaar shows their current-price arithmetic and evidence gap; /flip npc, /flip "
+					+ "craft, /flip combine, /flip fusion and /flip snipe show one kind only"),
 			new Term("/flip gui", "The full screen: sortable list, the reasoning behind each row, your "
 					+ "ledger and this guide. The keybind opens the same thing"),
 			new Term("/flip npc plan", "Everything to do at the bazaar right now: what to collect, "
@@ -116,8 +116,8 @@ public final class Guide {
 					+ "Price is per item, as the game shows it - fees are taken off for you"),
 			new Term("/flip abandon <id>", "Ends a flip that never filled. Its units still count "
 					+ "against your fill rate, and nothing about it counts toward your profit rate"),
-			new Term("/flip ledger", "Your open flips, coins committed, and how well the mod's promises "
-					+ "have held up"),
+			new Term("/flip ledger", "Your open flips, coins committed, and legacy quote diagnostics. "
+					+ "Open spread holdings remain visible, but these rows do not calibrate future completion"),
 			new Term("/flip ledger forget <id>", "Deletes an entry as if it had never been written "
 					+ "down. For things that were not flips at all"),
 			new Term("/flip ledger clear unquoted", "Counts the entries that came from trades the mod "
@@ -149,24 +149,24 @@ public final class Guide {
 			new Term("Item", "The name Hypixel's own item list gives it, which is not always the name "
 					+ "you remember. If another item's name starts with this one, the row says so - the "
 					+ "bazaar search will show you both"),
-			new Term("Profit/hr", "Coins per hour after every fee, and what the list is sorted on. Not "
-					+ "the margin: a 15% margin on something that trades four a day is worth less than "
-					+ "2% on something moving half a million an hour"),
-			new Term("Capital", "Coins tied up to run the plan for an hour, never more than one flip is "
-					+ "allowed to spend"),
-			new Term("Fill", "How long the slower half of the flip should take to finish. A tilde in "
+			new Term("Outcome", "The supported hourly figure for legacy non-spread rows. Bazaar "
+					+ "spreads instead show quoted net if the displayed quantity fully fills; that quote "
+					+ "is not expected realized profit and is not in the shared hourly ranking"),
+			new Term("Capital", "The displayed quantity's quoted purchase cost. On a quote-only "
+					+ "spread this is arithmetic, not a claim that the quantity is feasible or authorized"),
+			new Term("Completion", "How long the slower half of a non-spread flip is estimated to take. A tilde in "
 					+ "front means it is an estimate from the item's weekly trading rather than from "
 					+ "fills this game has watched, which takes about an hour of play to start "
-					+ "measuring. A dash means the market never clears an order this big"),
+					+ "measuring. Bazaar spread personal completion is unavailable, so it has no countdown"),
 			new Term("Outbid", "How often somebody posts just inside your resting order, counted from "
-					+ "recorded history. It decides whether a buy order fills or just sits: a wide "
-					+ "margin on an item where you are outbid five times an hour is a margin you never "
-					+ "actually get")));
+					+ "recorded public quote history. It is descriptive and does not identify your queue "
+					+ "position, lost fills, a completion time or whether repricing helps")));
 
 	private static final Section STRATEGIES = new Section("strategies", "Kinds of flip", List.of(
-			new Term("Bazaar", "Buy low and sell high on the same item: post a buy order, wait, post a "
-					+ "sell offer, keep the gap. You are paid for waiting by people who want coins or "
-					+ "materials right now"),
+			new Term("Bazaar", "The quote-only shortlist shows the current buy/sell arithmetic and "
+					+ "the net if its displayed quantity fully fills. Personal completion, expected realized "
+					+ "profit, confidence and a fill countdown are unavailable until a comparable personal "
+					+ "spread cohort exists"),
 			new Term("NPC", "The bazaar price has dropped below the fixed price a shop NPC pays. No "
 					+ "bazaar tax applies, because selling to an NPC is not a bazaar trade"),
 			new Term("Craft", "Buy a recipe's materials on the bazaar, craft it, and sell the result "
@@ -217,9 +217,10 @@ public final class Guide {
 	 * no single strategy owns: what you have open across all of them, and what is still to click.
 	 */
 	private static final Section JOBS = new Section("jobs", "Flips you are working", List.of(
-			new Term("What a worked flip is", "A bazaar spread, craft or combine you told the mod you "
-					+ "are doing. Select its row on any tab and press Work; it then has a block on the "
-					+ "Jobs tab and a section on the bazaar panel until you stop it"),
+			new Term("What a worked flip is", "A craft, combine or fusion you told the mod you are "
+					+ "doing. Select its row and press Work; it then has a block on the Jobs tab and a "
+					+ "section on the bazaar panel until you stop it. Existing spread jobs remain visible, "
+					+ "but quote-only spreads cannot start new work"),
 			new Term("Several at once", "As many as you like. A craft's materials rest for an hour "
 					+ "while a combine's books fill and a spread sits on the book, so one flip at a "
 					+ "time is not how a session goes. They are listed in the order you picked, above "
@@ -545,34 +546,31 @@ public final class Guide {
 							+ "bazaar orders is a macro, and macros are against Hypixel's rules")));
 
 	private static final Section LIQUIDITY = new Section("liquidity", "How busy an item is", List.of(
-			new Term("Weekly volume", "How many changed hands over seven days, counted per side: one "
-					+ "for how fast sell offers get taken, the other for how fast buy orders fill"),
-			new Term("Why it limits the plan", "What is on the board now is a snapshot, not a supply. "
-					+ "4,000 units under the NPC price but only 40 traded in a week is not a 4,000-unit "
-					+ "chance, it is a week of holding what nobody wants. Plans are sized on what "
-					+ "really trades"),
+			new Term("Weekly activity", "Hypixel's moving-week fields combine historical activity "
+					+ "with live state. They are public activity proxies, not current flow and not your "
+					+ "personal fill rate"),
+			new Term("What visible depth means", "What is on the board now is a returned, possibly "
+					+ "truncated snapshot. It supports conditional quote arithmetic for covered quantity, "
+					+ "not a promise that the depth remains or that your order fills"),
 			new Term("Hauling", "How many inventory loads a plan means carrying: 35 slots at a stack "
 					+ "of 64. There is no walking - /trades reaches a shop from anywhere with a booster "
 					+ "cookie - so this counts how much clicking the plan is"),
-			new Term("Time to fill", "How long your order should take at the plan's size, set by how "
-					+ "fast people trade that side and how long you stay at the front of the queue"),
+			new Term("Spread completion", "Unavailable until comparable personal buy and sell "
+					+ "placements include zero, partial, full, cancelled and unresolved outcomes over a "
+					+ "named policy and horizon"),
 			new Term("Outbid rate", "How often someone posts just inside your price, from recorded "
-					+ "history. While outbid your order earns nothing until the market comes back, so a "
-					+ "wide gap on a crowded item is worth much less per hour than it looks"),
-			new Term("Measured or assumed", "Where the mod has enough history it says how fast fills "
-					+ "really arrive; where it does not, it uses a flat assumption and says so in the "
-					+ "risks. An assumed number is never shown as measured")));
+					+ "public quote history. It records observed price disadvantage, not lost execution, "
+					+ "continuous time behind or the benefit of repricing"),
+			new Term("Price history", "Recorded public quote changes remain descriptive. They do not "
+					+ "measure your fills, a queue position, a completion time or the value of repricing")));
 
 	private static final Section LEDGER = new Section("ledger", "Ledger", List.of(
-			new Term("Capture rate", "The coins you really made over the coins the mod promised, "
-					+ "counting only what filled. Below 100% means the promises run optimistic; it is "
-					+ "the number worth watching"),
-			new Term("Fill rate", "How many items really filled out of how many you planned. A high "
-					+ "capture rate with a low fill rate means the flips that work are the ones you "
-					+ "rarely get"),
-			new Term("Promises are frozen", "A flip's promised numbers are stored when you take it and "
-					+ "never redone, because by the time a fill goes badly the market has already moved "
-					+ "the way that made it go badly"),
+			new Term("Capture rate", "A legacy fee-normalized comparison on selected filled entries. "
+					+ "It is not reconciled realized profit and does not calibrate Bazaar spread outcomes"),
+			new Term("Fill rate", "A legacy ratio of recorded filled units to planned units. Missing, "
+					+ "ambiguous and unresolved activity prevent it from being a personal spread forecast"),
+			new Term("Legacy quotes are frozen", "Older quoted numbers remain stored unchanged for "
+					+ "comparison and migration. They are labeled diagnostics, not upgraded into forecasts"),
 			new Term("Abandon", "Ends a flip that never filled, with no selling price. Its items count "
 					+ "against your fill rate and nothing touches your capture rate: an order you gave "
 					+ "up on never happened, it did not go badly. Select it on the Ledger tab and press "
@@ -610,21 +608,21 @@ public final class Guide {
 					new Term("Where they are", "The Settings button on this screen, /flip config edit, "
 							+ "or the file /flip config points at; all three write the same file and "
 							+ "re-sort the list at once"),
-					new Term("Bankroll", "Coins you will put to work. A limit, not a target: every plan "
-							+ "is sized to fit inside it, so raising it makes bigger flips, not better "
-							+ "ones"),
-					new Term("Skip items already falling", "Drops a bazaar flip whose price has already "
-							+ "fallen more than you allow, because buy orders fill fastest while people "
-							+ "dump. 0 turns it off"),
+					new Term("Bankroll", "A legacy planning limit. For quote-only spreads it may change "
+							+ "the displayed full-fill scenario, but it does not establish spendable cash, "
+							+ "portfolio feasibility or authorization to trade"),
+					new Term("Skip items already falling", "A legacy research-shortlist filter over public "
+							+ "price history. It is not a measured loss probability or personal execution rule; "
+							+ "0 turns it off"),
 					new Term("Minimum auction discount", "How far under normal price an auction must be "
 							+ "listed to be worth a look. It also keeps the search fast, since most "
 							+ "listings are thrown out by it first"),
 					new Term("Hide shaky auction finds", "Hides auction snipes without enough recent "
 							+ "sales of the same item behind the price to trust. Bazaar and NPC flips, "
 							+ "which price off a live market, ignore it"),
-					new Term("How long you will wait for a fill", "How long you will leave a bazaar "
-							+ "order resting. Plans are sized on what fills inside it, so a long wait "
-							+ "promotes slow items and a short one keeps only what fills fast")));
+					new Term("How long you will wait for a fill", "A readable legacy horizon used by older "
+							+ "heuristics. It is not a measured completion time and is not shown as a spread "
+							+ "countdown or personal outcome")));
 
 	private static final Section SYNC = new Section("sync", "History from another machine", List.of(
 			new Term("What it is", "A download of the price history a recorder on another machine kept "

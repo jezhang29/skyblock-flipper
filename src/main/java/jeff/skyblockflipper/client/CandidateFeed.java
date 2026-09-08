@@ -101,7 +101,7 @@ public final class CandidateFeed {
 	 * line is already in the worklist, so neither is followable here.
 	 */
 	private static final Set<StrategyKind> FOLLOWABLE = EnumSet.of(
-			StrategyKind.CRAFT, StrategyKind.COMBINE, StrategyKind.FUSION, StrategyKind.BAZAAR_SPREAD);
+			StrategyKind.CRAFT, StrategyKind.COMBINE, StrategyKind.FUSION);
 
 	/** Deep enough to serve any allowed {@code hudLines} without re-ranking when it changes. */
 	private static final int CACHE_DEPTH = 10;

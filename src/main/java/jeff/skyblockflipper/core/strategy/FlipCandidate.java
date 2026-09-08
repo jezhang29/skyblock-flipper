@@ -21,15 +21,15 @@ import jeff.skyblockflipper.core.pricing.FillModel;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
  * One ranked opportunity, in a shape every strategy can produce and the UI can sort uniformly.
  *
- * <p>The ranking axis is {@link #profitPerHour()}, not margin percent. A 15% spread on something
- * that fills four units a day is worthless; a 2% spread on something moving 500k units an hour is
- * a business. Ranking by margin is the single most common way flipping tools send people after
- * illiquid junk.
+ * <p>Legacy supported candidates use {@link #profitPerHour()} as their ranking axis. Quote-only
+ * Bazaar spreads retain that field only for compatibility and are excluded from the common hourly
+ * comparison; public activity does not establish a personal execution rate.
  *
  * @param itemId          bazaar product or item id
  * @param displayName     human-readable name for the UI
@@ -55,6 +55,8 @@ import java.util.Optional;
  *                        signature does not read than a real underprice. Sorted below every trusted
  *                        candidate so a signature-miss mirage can never be the top line, and never
  *                        set by the order-book strategies, which price from a live book
+ * @param outcomeAvailability whether the outcome supports a quote, scenarios, or a calibrated
+ *                            presentation; legacy non-spread constructors retain their existing UI
  */
 public record FlipCandidate(
 		String itemId,
@@ -71,12 +73,27 @@ public record FlipCandidate(
 		List<String> risks,
 		List<String> notes,
 		FillModel.FillEstimate fill,
-		boolean suspect
+		boolean suspect,
+		OutcomeAvailability outcomeAvailability
 ) implements Comparable<FlipCandidate> {
 	public FlipCandidate {
 		steps = List.copyOf(steps);
 		risks = List.copyOf(risks);
 		notes = List.copyOf(notes);
+		outcomeAvailability = Objects.requireNonNull(outcomeAvailability, "outcomeAvailability");
+	}
+
+	/**
+	 * The canonical shape before outcome support was explicit. Non-spread strategies use this
+	 * compatibility adapter so Phase 4 does not change their presentation ahead of their migrations.
+	 */
+	public FlipCandidate(String itemId, String displayName, StrategyKind kind, double unitBuyPrice,
+			double unitSellPrice, double unitNetProfit, long units, long capitalRequired,
+			double profitPerHour, double confidence, List<String> steps, List<String> risks,
+			List<String> notes, FillModel.FillEstimate fill, boolean suspect) {
+		this(itemId, displayName, kind, unitBuyPrice, unitSellPrice, unitNetProfit, units,
+				capitalRequired, profitPerHour, confidence, steps, risks, notes, fill, suspect,
+				OutcomeAvailability.CALIBRATED);
 	}
 
 	/**
@@ -115,11 +132,10 @@ public record FlipCandidate(
 	}
 
 	/**
-	 * How long the slower leg takes to turn the whole plan over, or empty when it never does.
+	 * Legacy estimate of how long the slower modeled leg takes, or empty when its rate is zero.
 	 *
-	 * <p>This is the number the flip screen was missing. A plan that quotes 6.78M an hour and takes
-	 * eleven hours to fill is not the same opportunity as one that quotes 6.78M and clears in
-	 * twenty minutes, and nothing on the screen distinguished them.
+	 * <p>Quote-only presentations never expose this value: the underlying public displacement model
+	 * is not evidence of personal completion.
 	 */
 	public Optional<Duration> timeToTurnOver() {
 		if (fill == null) {
@@ -133,7 +149,10 @@ public record FlipCandidate(
 				: Optional.of(Duration.ofSeconds(Math.round(units / perHour * 3600.0d)));
 	}
 
-	/** Whether {@link #fill()} rests on recorded history rather than on an assumed share of flow. */
+	/**
+	 * Whether the legacy model used recorded public displacement history. This is not personal fill
+	 * evidence and is never rendered for quote-only candidates.
+	 */
 	public boolean fillMeasured() {
 		return fill != null && fill.measured();
 	}
@@ -159,13 +178,15 @@ public record FlipCandidate(
 	public FlipCandidate asSuspect() {
 		return suspect ? this : new FlipCandidate(itemId, displayName, kind, unitBuyPrice,
 				unitSellPrice, unitNetProfit, units, capitalRequired, profitPerHour, confidence,
-				steps, risks, notes, fill, true);
+				steps, risks, notes, fill, true, outcomeAvailability);
 	}
 
 	/**
-	 * Trusted candidates first, then by profit per hour within each group.
+	 * Outcome-supported candidates first, then legacy suspicion and the applicable display order.
 	 *
-	 * <p>The suspect split comes before the profit comparison on purpose: a signature-miss mirage
+	 * <p>Quote-only/scenario-only candidates use a stable name order because neither has a comparable
+	 * expected-outcome axis. For calibrated-adapter candidates, the suspect split comes before the
+	 * profit comparison on purpose: a signature-miss mirage
 	 * quotes the most profit of anything on the book precisely because its quote is wrong, so ranking
 	 * on profit alone would float it to the top. Demoting it as a class keeps it visible - it is not
 	 * dropped, only quarantined - while making it impossible for it to be the first line a player acts
@@ -173,10 +194,27 @@ public record FlipCandidate(
 	 */
 	@Override
 	public int compareTo(FlipCandidate other) {
+		if (outcomeAvailability != other.outcomeAvailability) {
+			return Integer.compare(supportOrder(other.outcomeAvailability),
+					supportOrder(outcomeAvailability));
+		}
+
 		if (suspect != other.suspect) {
 			return suspect ? 1 : -1;
 		}
 
+		if (outcomeAvailability != OutcomeAvailability.CALIBRATED) {
+			return displayName.compareToIgnoreCase(other.displayName);
+		}
+
 		return Double.compare(other.profitPerHour, profitPerHour);
+	}
+
+	private static int supportOrder(OutcomeAvailability availability) {
+		return switch (availability) {
+			case QUOTE_ONLY -> 0;
+			case SCENARIOS_ONLY -> 1;
+			case CALIBRATED -> 2;
+		};
 	}
 }

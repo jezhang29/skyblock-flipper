@@ -42,6 +42,7 @@ import jeff.skyblockflipper.client.gui.Settings;
 import jeff.skyblockflipper.client.track.CaptureService;
 import jeff.skyblockflipper.client.track.MenuMemory;
 import jeff.skyblockflipper.client.track.TrackerService;
+import jeff.skyblockflipper.core.api.BazaarFetch;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
@@ -55,6 +56,7 @@ import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcProbe;
 import jeff.skyblockflipper.core.strategy.NpcReprice;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.text.Coins;
@@ -111,12 +113,15 @@ public final class FlipCommand {
 					StrategyKind only = SkyblockFlipperClient.config().filteredKind();
 					showTop(ctx.getSource(), only, only == null
 							? "Top flips right now"
-							: "Top " + only.label().toLowerCase(Locale.ROOT) + " flips right now");
+							: only == StrategyKind.BAZAAR_SPREAD
+									? "Bazaar quote-only shortlist"
+									: "Top " + only.label().toLowerCase(Locale.ROOT) + " flips right now");
 					return 1;
 				})
 				.then(ClientCommands.literal("bazaar")
 						.executes(ctx -> {
-							showTop(ctx.getSource(), StrategyKind.BAZAAR_SPREAD, "Best bazaar spreads");
+							showTop(ctx.getSource(), StrategyKind.BAZAAR_SPREAD,
+									"Bazaar quote-only shortlist");
 							return 1;
 						}))
 				.then(ClientCommands.literal("npc")
@@ -969,6 +974,12 @@ public final class FlipCommand {
 
 		FlipCandidate candidate = shown.get(rank - 1);
 
+		if (!OpportunityPresentation.of(candidate).actionable()) {
+			source.sendError(Component.literal(OpportunityPresentation.SPREAD_EVIDENCE_GAP)
+					.withStyle(ChatFormatting.YELLOW));
+			return 0;
+		}
+
 		try {
 			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
 			// So the NPC side does not later adopt this buy order as its own, on an item it could sell.
@@ -1303,8 +1314,20 @@ public final class FlipCommand {
 
 		BazaarSnapshot bazaar = data.bazaar();
 		line(source, "bazaar products", data.hasBazaar()
-				? bazaar.products().size() + " (" + describeAge(data.bazaarAge()) + " ago)"
+				? String.valueOf(bazaar.products().size())
 				: "waiting for first fetch");
+		BazaarFetch fetch = data.bazaarFetch();
+		line(source, "bazaar fetch", switch (fetch.status()) {
+			case NEVER_ATTEMPTED -> "never attempted";
+			case SUCCESS -> "success (" + describeAge(data.bazaarFetchAge()) + " ago)";
+			case FAILED -> (fetch.rateLimited() ? "rate limited" : "failed") + " ("
+					+ describeAge(data.bazaarFetchAge()) + " ago)";
+		});
+		if (data.hasBazaar()) {
+			line(source, "bazaar source", describeAge(data.bazaarSourceAge()) + " old");
+			line(source, "bazaar content",
+					"last changed " + describeAge(data.bazaarContentAge()) + " ago");
+		}
 
 		line(source, "item catalog", data.catalog().isEmpty()
 				? "waiting for first fetch"
@@ -1335,12 +1358,12 @@ public final class FlipCommand {
 							+ (trends.productsWithDailyHistory() > 0
 									? ", " + trends.productsWithDailyHistory() + " with daily rollup"
 									: "")
-							// Fills need an hour of uninterrupted sampling before they mean
-							// anything, so a player who has just started the client would otherwise
-							// have no way to tell whether the ranking is measured or assumed.
+							// This legacy counter observes public first-displacement signals. It is
+							// descriptive history, not personal execution evidence.
 							+ (trends.productsWithMeasuredFills() > 0
-									? ", " + trends.productsWithMeasuredFills() + " with measured fills"
-									: ", fills still assumed (needs ~1h of uptime)");
+									? ", " + trends.productsWithMeasuredFills()
+											+ " with public first-displacement history"
+									: ", first-displacement history warming (~1h uptime)");
 		}
 
 		line(source, "price history", history);

@@ -251,8 +251,9 @@ public final class TrackedOrder {
 				if (exact.value() >= filled) {
 					filled = exact.value();
 					filledExact = true;
-				} else if (!filledExact) {
-					// A later exact row below an independently supported lower bound conflicts.
+				} else {
+					// A cumulative fill cannot decrease. Retain the higher supported lower bound,
+					// but the two observations conflict and no exact-quantity action is safe.
 					filledExact = false;
 				}
 			}

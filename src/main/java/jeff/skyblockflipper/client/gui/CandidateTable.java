@@ -18,6 +18,8 @@
 package jeff.skyblockflipper.client.gui;
 
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
+import jeff.skyblockflipper.core.strategy.OutcomeAvailability;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Waits;
 
@@ -26,7 +28,6 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -42,9 +43,10 @@ import java.util.Set;
  * headers, and expressing that through the widget contract would be more plumbing than the screen
  * driving it directly. The screen forwards clicks and scrolls; this decides what they mean.
  *
- * <p>Sorting happens here and nowhere else. The list handed in is already ranked by profit per
- * hour - {@link FlipCandidate}'s natural order - and re-sorting is a view concern; the ranking
- * itself still belongs to {@code CandidateFeed}.
+ * <p>Sorting happens here and nowhere else. The list handed in already follows the strategy's
+ * support-aware natural order, and re-sorting is a view concern. The Outcome column uses hourly
+ * value for legacy supported strategies and explicitly quoted full-fill arithmetic for quote-only
+ * spreads; the merged list never contains the latter.
  *
  * <p><b>Columns are measured, not placed at fixed fractions.</b> The numeric columns are as wide as
  * their widest actual value plus their header, right-aligned against their own edge, and the item
@@ -100,7 +102,7 @@ final class CandidateTable {
 	/** What a column click sorts by. Every one of these is already on {@link FlipCandidate}. */
 	enum Column {
 		NAME("Item", Comparator.comparing(FlipCandidate::displayName)),
-		PROFIT("Profit/hr", Comparator.comparingDouble(FlipCandidate::profitPerHour)),
+		PROFIT("Outcome", Comparator.comparingDouble(CandidateTable::outcomeSortValue)),
 		CAPITAL("Capital", Comparator.comparingLong(FlipCandidate::capitalRequired)),
 
 		/**
@@ -110,8 +112,7 @@ final class CandidateTable {
 		 * twenty minutes ranked identically and looked identical. Sorted with the unknowns last,
 		 * because "no estimate" is not "fast".
 		 */
-		FILL("Fill", Comparator.comparingDouble(
-				c -> c.timeToTurnOver().map(Duration::toSeconds).orElse(Long.MAX_VALUE)));
+		FILL("Completion", Comparator.comparingDouble(CandidateTable::completionSortValue));
 
 		private final String label;
 		private final Comparator<FlipCandidate> ascending;
@@ -250,7 +251,8 @@ final class CandidateTable {
 		rightAligned(graphics, font, Column.PROFIT, candidate, textY, TEXT_PROFIT);
 		rightAligned(graphics, font, Column.CAPITAL, candidate, textY, TEXT);
 		rightAligned(graphics, font, Column.FILL, candidate, textY,
-				candidate.fillMeasured() ? TEXT : TEXT_DIM);
+				candidate.outcomeAvailability() == OutcomeAvailability.CALIBRATED
+						&& candidate.fillMeasured() ? TEXT : TEXT_DIM);
 
 	}
 
@@ -512,16 +514,31 @@ final class CandidateTable {
 	}
 
 	private static String cell(Column column, FlipCandidate candidate) {
+		OpportunityPresentation presentation = OpportunityPresentation.of(candidate);
+
 		return switch (column) {
 			case NAME -> candidate.displayName();
-			case PROFIT -> Coins.format(candidate.profitPerHour());
+			case PROFIT -> presentation.headline();
 			case CAPITAL -> Coins.format(candidate.capitalRequired());
-			// A tilde marks an estimate from an assumed share of flow rather than from recorded
-			// displacement, so a guess never reads as a measurement.
-			case FILL -> candidate.timeToTurnOver()
-					.map(d -> (candidate.fillMeasured() ? "" : "~") + Waits.format(d))
-					.orElse("-");
+			case FILL -> candidate.outcomeAvailability() != OutcomeAvailability.CALIBRATED
+					? presentation.completion()
+					: candidate.timeToTurnOver()
+							.map(d -> (candidate.fillMeasured() ? "" : "~") + Waits.format(d))
+							.orElse("-");
 		};
+	}
+
+	private static double outcomeSortValue(FlipCandidate candidate) {
+		return candidate.outcomeAvailability() != OutcomeAvailability.CALIBRATED
+				? candidate.totalNetProfit()
+				: candidate.profitPerHour();
+	}
+
+	private static double completionSortValue(FlipCandidate candidate) {
+		return candidate.outcomeAvailability() != OutcomeAvailability.CALIBRATED
+				? Double.POSITIVE_INFINITY
+				: candidate.timeToTurnOver().map(java.time.Duration::toSeconds)
+						.orElse(Long.MAX_VALUE);
 	}
 
 	/**

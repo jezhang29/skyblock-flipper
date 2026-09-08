@@ -161,6 +161,17 @@ class OrderMenuParserTest {
 	}
 
 	@Test
+	void sellClaimItemsRemainIndependentRatherThanConstrainingFill() {
+		ObservedOrderRow row = observed(MenuCoverage.COMPLETE, "SELL Slimeball", "SLIME_BALL",
+				"Offer amount: 10x", "Filled: ???", "You have 10 items to claim!",
+				"By: " + ME);
+
+		assertInstanceOf(NumericEvidence.Unknown.class, row.filled());
+		assertEquals(10L, row.claimItems().orElseThrow());
+		assertFalse(row.supportsExactQuantityActions());
+	}
+
+	@Test
 	void claimOnlyAndMalformedRowsKeepIndependentEvidence() {
 		ObservedOrderRow claimOnly = observed(MenuCoverage.COMPLETE, "BUY Slimeball", "SLIME_BALL",
 				"Order amount: 10x", "You have 3 items to claim!", "By: " + ME);

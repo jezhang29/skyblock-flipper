@@ -149,13 +149,13 @@ public final class ConfigSchema {
 					0, Fees.MAX_BAZAAR_FLIPPER_LEVEL, 1,
 					c -> c.bazaarFlipperLevel, (c, v) -> c.bazaarFlipperLevel = v),
 			new Entry.Ratio("maxCapitalShare", "Most one flip may spend",
-					"The largest share of your bankroll one flip may use, so the list is not topped by "
-							+ "a single huge position.",
+					"Legacy per-row share of configured bankroll. For quote-only spreads it changes a "
+							+ "displayed scenario, not verified cash, feasibility, or authorization.",
 					0.01d, 1.0d, 0.05d,
 					c -> c.maxCapitalShare, (c, v) -> c.maxCapitalShare = v),
 			new Entry.LongRange("minProfitPerFlip", "Minimum profit per flip",
-					"Hide any flip expected to make less than this in total profit, not as a rate per "
-							+ "hour.",
+					"Legacy minimum for the displayed full-fill result. A quote-only spread clearing "
+							+ "it is not an expected realized outcome or an actionable recommendation.",
 					0L, 1_000_000_000L, 50_000L,
 					c -> c.minProfitPerFlip, (c, v) -> c.minProfitPerFlip = v),
 			new Entry.Ratio("minConfidence", "Hide shaky auction finds",
@@ -164,13 +164,14 @@ public final class ConfigSchema {
 					0.0d, 1.0d, 0.05d,
 					c -> c.minConfidence, (c, v) -> c.minConfidence = v),
 			new Entry.Ratio("maxAdverseDrift", "Skip items already falling",
-					"Skip bazaar flips on items whose price has fallen more than this lately, since "
-							+ "your order fills fastest while people dump; 0 turns it off.",
+					"Skip NPC, craft, combine and fusion flips on items whose price has fallen more "
+							+ "than this lately; 0 turns it off. Bazaar spreads no longer filter on "
+							+ "it and state the decline as a risk instead.",
 					0.0d, 1.0d, 0.01d,
 					c -> c.maxAdverseDrift, (c, v) -> c.maxAdverseDrift = v),
 			new Entry.IntRange("fillHorizonMinutes", "How long you will wait for a fill (minutes)",
-					"How long you will leave a bazaar order resting, since plans only count what fills "
-							+ "in that time.",
+					"Readable legacy heuristic horizon; it is not a measured spread completion time "
+							+ "and is not rendered as a personal countdown.",
 					5, 720, 5,
 					c -> c.fillHorizonMinutes, (c, v) -> c.fillHorizonMinutes = v)));
 

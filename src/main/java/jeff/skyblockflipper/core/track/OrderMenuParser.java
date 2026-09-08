@@ -168,17 +168,19 @@ public final class OrderMenuParser {
 
 		EvidenceRef rowEvidence = evidence(menu, slot, owner, "filled");
 		EvidenceRef claimEvidence = evidence(menu, slot, owner, "claim-items");
-		NumericEvidence<Long> filled = filled(filledRaw, total, claimItems, rowEvidence,
+		NumericEvidence<Long> filled = filled(side, filledRaw, total, claimItems, rowEvidence,
 				claimEvidence);
 		return Optional.of(new ObservedOrderRow(menu.at(), slot.index(), side, slot.itemId(),
 				name.group(2), owner, total, filled, unitPrice, claimCoins, claimItems, slot.lore()));
 	}
 
-	private static NumericEvidence<Long> filled(String raw, long total, OptionalLong claimItems,
+	private static NumericEvidence<Long> filled(TradeEvent.Side side, String raw, long total,
+			OptionalLong claimItems,
 			EvidenceRef rowEvidence, EvidenceRef claimEvidence) {
 		if (raw != null && EXACT_INTEGER.matcher(raw).matches()) {
 			long value = integer(raw);
-			if (value > total || (claimItems.isPresent() && claimItems.getAsLong() > value)) {
+			if (value > total || (side == TradeEvent.Side.BUY && claimItems.isPresent()
+					&& claimItems.getAsLong() > value)) {
 				return new NumericEvidence.Conflict<>(List.of(rowEvidence, claimEvidence),
 						List.of("filled text and exact claim refer to different states",
 								"the row changed while the menu was captured"));
@@ -186,7 +188,10 @@ public final class OrderMenuParser {
 			return new NumericEvidence.Exact<>(value, List.of(rowEvidence));
 		}
 
-		if (claimItems.isPresent()) {
+		// Claimable items constrain a BUY order's filled units. The same-looking field has no
+		// verified fill interpretation for SELL offers, so retain it on the row without using it in
+		// the fill quantity.
+		if (side == TradeEvent.Side.BUY && claimItems.isPresent()) {
 			long claimed = claimItems.getAsLong();
 			if (claimed > total) {
 				return new NumericEvidence.Conflict<>(List.of(rowEvidence, claimEvidence),

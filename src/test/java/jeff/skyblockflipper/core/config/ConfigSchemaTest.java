@@ -104,6 +104,25 @@ class ConfigSchemaTest {
 		}
 	}
 
+	@Test
+	void legacySpreadSettingsDoNotClaimMeasuredOutcomes() {
+		String fillHelp = entry("fillHorizonMinutes").help();
+		String driftHelp = entry("maxAdverseDrift").help();
+		String capitalHelp = entry("maxCapitalShare").help();
+		String profitHelp = entry("minProfitPerFlip").help();
+
+		assertTrue(fillHelp.contains("legacy heuristic"), fillHelp);
+		assertTrue(fillHelp.contains("not a measured spread completion time"), fillHelp);
+		// This one is still live for every strategy except spread, so its help has to name them:
+		// describing it as the Bazaar filter would invite a player to zero it and silently drop the
+		// NPC, craft, combine and fusion drift guards with it.
+		assertTrue(driftHelp.contains("NPC, craft, combine and fusion"), driftHelp);
+		assertTrue(driftHelp.contains("Bazaar spreads no longer filter on it"), driftHelp);
+		assertTrue(capitalHelp.contains("not verified cash, feasibility, or authorization"),
+				capitalHelp);
+		assertTrue(profitHelp.contains("not an expected realized outcome"), profitHelp);
+	}
+
 	/** Public non-static fields of {@link FlipperConfig}: exactly the things a player can set. */
 	private static List<String> settingFieldNames() {
 		List<String> names = new ArrayList<>();

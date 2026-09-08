@@ -30,6 +30,7 @@ import jeff.skyblockflipper.core.strategy.BazaarAction;
 import jeff.skyblockflipper.core.strategy.BazaarStep;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.text.Coins;
@@ -469,13 +470,16 @@ public final class BazaarOverlay {
 		// Committed jobs first, then the expanded candidate - the same order the panel lists them, so
 		// the box works down the visible list rather than jumping about.
 		for (WorkedJob job : jobs) {
-			addStepGuides(job.steps(), list);
+			if (job.kind() != StrategyKind.BAZAAR_SPREAD) {
+				addStepGuides(job.steps(), list);
+			}
 		}
 
 		if (!expandedCandidate.isEmpty()) {
 			for (FlipCandidate candidate : ranked) {
 				if (candidate.itemId().equals(expandedCandidate)
-						&& !CandidateFeed.working(candidate.itemId())) {
+						&& !CandidateFeed.working(candidate.itemId())
+						&& OpportunityPresentation.of(candidate).actionable()) {
 					WorkedJob preview = CandidateFeed.preview(type, candidate.itemId(),
 							candidate.displayName());
 
@@ -835,9 +839,14 @@ public final class BazaarOverlay {
 					rows.add(Row.jobHeading(headingVerb(job.kind()), job.displayName(),
 							progressOf(job, orders), job.itemId()));
 					names.add(job.displayName());
-					addSteps(job.steps(), job, orders, rows, names);
 
-					if (!job.note().isEmpty()) {
+					if (job.kind() == StrategyKind.BAZAAR_SPREAD) {
+						rows.add(Row.jobNote(OpportunityPresentation.SPREAD_EVIDENCE_GAP));
+					} else {
+						addSteps(job.steps(), job, orders, rows, names);
+					}
+
+					if (job.kind() != StrategyKind.BAZAAR_SPREAD && !job.note().isEmpty()) {
 						rows.add(Row.jobNote(job.note()));
 					}
 				}
@@ -851,22 +860,28 @@ public final class BazaarOverlay {
 				}
 
 				boolean open = candidate.itemId().equals(expanded);
+				OpportunityPresentation presentation = OpportunityPresentation.of(candidate);
 				rows.add(Row.candidate(candidate.itemId(), candidate.displayName(),
-						"+" + Coins.format(candidate.totalNetProfit()), open));
+						presentation.headline(), open));
 				names.add(candidate.displayName());
 
 				if (open) {
-					WorkedJob preview = CandidateFeed.preview(type, candidate.itemId(),
-							candidate.displayName());
+					WorkedJob preview = presentation.actionable()
+							? CandidateFeed.preview(type, candidate.itemId(), candidate.displayName())
+							: null;
 
 					if (preview != null) {
 						addSteps(preview.steps(), preview, orders, rows, names);
 					}
 
-					// The commit control, below the steps it would set going. Shown even for a plan that
-					// stopped clearing (a stalled preview has no steps), so the player is never stuck with
-					// an expanded row they cannot act on.
-					rows.add(Row.work(candidate.itemId(), candidate.displayName()));
+					if (presentation.actionable()) {
+						// The commit control, below the steps it would set going. Shown even for a plan that
+						// stopped clearing (a stalled preview has no steps), so the player is never stuck with
+						// an expanded row they cannot act on.
+						rows.add(Row.work(candidate.itemId(), candidate.displayName()));
+					} else {
+						rows.add(Row.jobNote(OpportunityPresentation.SPREAD_EVIDENCE_GAP));
+					}
 				}
 			}
 		}

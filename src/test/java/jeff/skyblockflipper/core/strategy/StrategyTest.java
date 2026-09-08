@@ -151,7 +151,11 @@ class StrategyTest {
 	void sizesAPlanWithinTheCapitalCap() {
 		// A tight spread on an enormously liquid book, so throughput never runs out and the coins
 		// are the only thing that can bound the plan.
-		BazaarProduct deep = product(100.0d, 104.0d, 400, 5_000_000_000L);
+		BazaarProduct deep = new BazaarProduct(
+				"TEST_ITEM",
+				List.of(new OrderLevel(104.0d, 1_000_000_000L, 400)),
+				List.of(new OrderLevel(100.0d, 1_000_000_000L, 400)),
+				new BazaarProduct.MovingWeek(5_000_000_000L, 5_000_000_000L));
 		StrategyContext capped = new StrategyContext(
 				new BazaarSnapshot(Instant.now(), Map.of(deep.productId(), deep)),
 				ItemCatalog.empty(),
@@ -371,11 +375,23 @@ class StrategyTest {
 				.rank(contextFor(cheap, catalog, 0L), 10);
 
 		assertFalse(ranked.isEmpty());
+		assertTrue(ranked.stream().noneMatch(c -> c.kind() == StrategyKind.BAZAAR_SPREAD),
+				"quote-only spreads must not enter the shared hourly ranking: " + ranked);
 
 		for (int i = 1; i < ranked.size(); i++) {
 			assertTrue(ranked.get(i - 1).profitPerHour() >= ranked.get(i).profitPerHour(),
 					"ranking is not sorted by profit per hour");
 		}
+	}
+
+	@Test
+	void spreadRemainsVisibleInItsOwnQuoteOnlyLane() {
+		List<FlipCandidate> ranked = StrategyEngine.withDefaults()
+				.rank(contextFor(healthy()), StrategyKind.BAZAAR_SPREAD, 10);
+
+		assertFalse(ranked.isEmpty());
+		assertTrue(ranked.stream().allMatch(
+				candidate -> candidate.outcomeAvailability() == OutcomeAvailability.QUOTE_ONLY));
 	}
 
 	@Test
@@ -482,12 +498,52 @@ class StrategyTest {
 	}
 
 	@Test
-	void refusesToMarketMakeIntoAFallingPrice() {
-		// Buy orders fill fastest exactly while people are dumping, so a spread quoted here is
-		// not the spread that gets realized. Nothing in the order book shows this.
-		assertTrue(new BazaarSpreadStrategy()
+	void fallingPriceHistoryDoesNotSuppressAQuoteOnlyRow() {
+		assertFalse(new BazaarSpreadStrategy()
 				.findCandidates(contextWith(healthy(), trend(90.0d, 90.0d, 100.0d, 0.1d), 0.05d))
 				.isEmpty());
+	}
+
+	/**
+	 * The other half of the gate removal. Dropping the admission gate is only truthful if the row
+	 * then says what the history saw; a quote-only row that shows neither the rejection nor the
+	 * reason is strictly less informative than the one that was rejected.
+	 */
+	@Test
+	void aFallingQuoteOnlyRowStatesTheDeclineItIsNoLongerRejectedFor() {
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextWith(healthy(), trend(90.0d, 90.0d, 100.0d, 0.1d), 0.05d))
+				.getFirst();
+
+		assertTrue(OpportunityPresentation.of(candidate).risks().stream()
+						.anyMatch(risk -> risk.contains("fill fastest into a decline")),
+				OpportunityPresentation.of(candidate).risks().toString());
+	}
+
+	@Test
+	void aPushableBookStatesTheAbruptMoveItIsNoLongerRejectedFor() {
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextWith(thin(), trend(150.0d, 110.0d, 100.0d, 0.03d), 0.05d))
+				.getFirst();
+
+		assertTrue(OpportunityPresentation.of(candidate).risks().stream()
+						.anyMatch(risk -> risk.contains("one player could push")),
+				OpportunityPresentation.of(candidate).risks().toString());
+	}
+
+	/**
+	 * The risks a quote-only row carries have to be descriptions of the public record, so this pins
+	 * the boundary from the other side: they may say the book is thin, never how long a leg takes.
+	 */
+	@Test
+	void quoteOnlyRisksDescribeTheBookWithoutClaimingACompletionTime() {
+		FlipCandidate measured = withFills(healthy(), fills(1.0d));
+		String rendered = String.join(" ", OpportunityPresentation.of(measured).risks());
+
+		assertFalse(rendered.contains("/hr"), rendered);
+		assertFalse(rendered.contains("round trip"), rendered);
+		assertFalse(rendered.toLowerCase().contains("to buy"), rendered);
+		assertFalse(rendered.toLowerCase().contains("may take hours"), rendered);
 	}
 
 	@Test
@@ -523,8 +579,8 @@ class StrategyTest {
 	}
 
 	@Test
-	void rejectsAnAbruptMoveOnABookThinEnoughToPush() {
-		assertTrue(new BazaarSpreadStrategy()
+	void abruptMoveHeuristicDoesNotSuppressAQuoteOnlyRow() {
+		assertFalse(new BazaarSpreadStrategy()
 				.findCandidates(contextWith(thin(), trend(150.0d, 110.0d, 100.0d, 0.03d), 0.05d))
 				.isEmpty());
 	}
@@ -539,13 +595,13 @@ class StrategyTest {
 	}
 
 	@Test
-	void rejectsAThinBookSittingFarAboveItsMultiDayNormal() {
+	void dailyHistoryHeuristicDoesNotSuppressAQuoteOnlyRow() {
 		// A scheme running longer than the in-memory window is already inside that window's
 		// average and no longer looks abrupt against it. The daily rollup does not move.
 		PriceTrend settled = trend(200.0d, 195.0d, 190.0d, 0.5d);
 
 		assertFalse(settled.isSpiking(3.0d), "this must not be caught by the sigma test");
-		assertTrue(new BazaarSpreadStrategy()
+		assertFalse(new BazaarSpreadStrategy()
 				.findCandidates(contextWith(thin(), settled, Map.of("TEST_ITEM", 100.0d), 0.05d))
 				.isEmpty());
 	}
@@ -618,34 +674,24 @@ class StrategyTest {
 	}
 
 	@Test
-	void anUnmeasuredProductRanksExactlyWhereItDidBeforeFillsWereModelled() {
-		// The fallback is the same share of the same flow the strategy assumed unconditionally
-		// before the tape could answer this, so a fresh install's ranking is unchanged.
+	void quoteOnlyReferenceSizeUsesReturnedDepthRatherThanAssumedFlow() {
 		FlipCandidate candidate = new BazaarSpreadStrategy()
 				.findCandidates(contextFor(healthy())).getFirst();
 
-		// 5% of the bottleneck weekly volume spread over a week, in whole units - the plan is
-		// sized in units you can actually place, and always was.
-		long expectedUnits = (long) (5_000_000L / 168.0d * 0.05d);
-
-		assertEquals(expectedUnits, candidate.units());
-		assertEquals(candidate.unitNetProfit() * expectedUnits, candidate.profitPerHour(), 1e-9d);
+		assertEquals(20_000L, candidate.units());
+		assertEquals(candidate.unitNetProfit() * candidate.units(), candidate.totalNetProfit(),
+				1e-9d);
 	}
 
 	@Test
-	void saysHowLongTheFillTakesWhenItHasMeasuredIt() {
+	void legacyFillEstimateNeverBecomesQuoteOnlyPresentationEvidence() {
 		FlipCandidate measured = withFills(healthy(), fills(1.0d));
+		OpportunityPresentation presentation = OpportunityPresentation.of(measured);
 
-		assertTrue(measured.notes().stream().anyMatch(note -> note.contains("to buy")),
-				"a measured candidate should state its fill time, got " + measured.notes());
-
-		// And says nothing of the sort when it has not, rather than quoting the fallback as fact.
-		FlipCandidate unmeasured = new BazaarSpreadStrategy()
-				.findCandidates(contextFor(healthy())).getFirst();
-
-		assertTrue(unmeasured.notes().stream().noneMatch(note -> note.contains("to buy")),
-				"an unmeasured candidate must not present a guess as a measurement, got "
-						+ unmeasured.notes());
+		assertTrue(measured.fillMeasured(), "legacy comparison data should remain available");
+		assertEquals(OpportunityPresentation.PERSONAL_COMPLETION_UNAVAILABLE,
+				presentation.completion());
+		assertTrue(presentation.hourly().isEmpty());
 	}
 
 	// --- NPC planning ----------------------------------------------------------------------------

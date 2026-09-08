@@ -100,21 +100,33 @@ public final class NpcReprice {
 	 *                  posted. The two are the same number and mean different things, and
 	 *                  {@link NpcRound#eligible} is the rule that cannot be written without knowing
 	 *                  which it has
+	 * @param remainingKnownExactly whether {@code remaining} is an exact actionable quantity. When
+	 *                              false it is a conservative upper bound used only to reserve the
+	 *                              order's slot, capital, and position
 	 */
 	public record Order(String itemId, String displayName, double unitPrice, long total,
-			long remaining, long unclaimed, long placedAt, boolean adopted) {
+			long remaining, long unclaimed, long placedAt, boolean adopted,
+			boolean remainingKnownExactly) {
+		/** Compatibility shape for orders whose remaining quantity was already exact. */
+		public Order(String itemId, String displayName, double unitPrice, long total, long remaining,
+				long unclaimed, long placedAt, boolean adopted) {
+			this(itemId, displayName, unitPrice, total, remaining, unclaimed, placedAt, adopted,
+					true);
+		}
+
 		/**
 		 * An order whose placement was announced, which is the shape everything had before a dwell
 		 * rule needed to tell the two apart.
 		 */
 		public Order(String itemId, String displayName, double unitPrice, long total, long remaining,
 				long unclaimed, long placedAt) {
-			this(itemId, displayName, unitPrice, total, remaining, unclaimed, placedAt, false);
+			this(itemId, displayName, unitPrice, total, remaining, unclaimed, placedAt, false, true);
 		}
 
 		/** A bare order with nothing known about its history, which is what most tests want. */
 		public static Order of(String itemId, String displayName, double unitPrice, long remaining) {
-			return new Order(itemId, displayName, unitPrice, remaining, remaining, 0L, 0L, false);
+			return new Order(itemId, displayName, unitPrice, remaining, remaining, 0L, 0L, false,
+					true);
 		}
 
 		/** Units that have filled, whether or not they have been collected. */
@@ -477,6 +489,18 @@ public final class NpcReprice {
 					order.unitPrice(), chaseStop, margin(npcPrice, order.unitPrice()),
 					"Filled completely - all " + order.total() + " units are in the order waiting "
 							+ "to be collected"));
+		}
+
+		// Below the full-fill branch on purpose: remaining() is an upper bound when the fill is
+		// inexact, so remaining() == 0 means every unit filled whether or not the count is exact,
+		// and that order wants its claim, not a reconcile. What the bound cannot do is authorize a
+		// cancel, expiry, or reprice quantity, so it holds its slot and escrow until another
+		// observation reconciles the fill.
+		if (!order.remainingKnownExactly()) {
+			return Optional.of(new Advice(order, Action.HOLD, npcPrice, order.unitPrice(),
+					order.unitPrice(), chaseStop, margin(npcPrice, order.unitPrice()),
+					"Remaining quantity is unresolved; reserve the slot and up to "
+							+ order.remaining() + " units, then reopen the orders menu to reconcile"));
 		}
 
 		// Before anything about the book, because it is not a fact about the book: the window is how

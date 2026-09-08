@@ -34,6 +34,7 @@ import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcPlan;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.text.Coins;
@@ -573,15 +574,27 @@ public final class FlipScreen extends Screen {
 		}
 
 		int cursor = y;
+		OpportunityPresentation presentation = OpportunityPresentation.of(candidate);
 
 		Component name = Component.literal(candidate.displayName());
 		graphics.textWithWordWrap(font, name, x, cursor, wrapWidth, 0xFF55FFFF);
 		cursor += font.wordWrapHeight(name, wrapWidth) + 1;
 
-		graphics.text(font, Component.literal(
-						candidate.kind().label() + " - paid for " + candidate.kind().edge()),
+		graphics.text(font, Component.literal(presentation.actionable()
+						? candidate.kind().label() + " - paid for " + candidate.kind().edge()
+						: "Bazaar - quote economics only"),
 				x, cursor, TEXT_DIM);
 		cursor += font.lineHeight + 5;
+
+		if (!presentation.actionable()) {
+			cursor = figures(graphics, candidate, x, cursor, wrapWidth);
+			cursor += 4;
+			cursor = section(graphics, x, cursor, wrapWidth, "Evidence",
+					presentation.notes(), TEXT_WARN);
+			cursor += 2;
+			return section(graphics, x, cursor, wrapWidth, "Risks",
+					presentation.risks(), TEXT_WARN);
+		}
 
 		// A craft flip is a list of clicks to make at a menu you are standing in front of, so the
 		// clicks come first and the arithmetic that justified them comes after. Every other strategy
@@ -611,15 +624,26 @@ public final class FlipScreen extends Screen {
 	private int figures(GuiGraphicsExtractor graphics, FlipCandidate candidate, int x, int y,
 			int wrapWidth) {
 		int cursor = y;
+		OpportunityPresentation presentation = OpportunityPresentation.of(candidate);
 
 		cursor = field(graphics, x, cursor, wrapWidth, "Buy", String.format("%.1f", candidate.unitBuyPrice()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Sell", String.format("%.1f", candidate.unitSellPrice()));
-		cursor = field(graphics, x, cursor, wrapWidth, "Net/unit",
+		cursor = field(graphics, x, cursor, wrapWidth, presentation.unitNetLabel(),
 				String.format("%.1f after fees", candidate.unitNetProfit()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Units", String.valueOf(candidate.units()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Capital", Coins.format(candidate.capitalRequired()));
-		cursor = field(graphics, x, cursor, wrapWidth, "Total", Coins.format(candidate.totalNetProfit()));
-		cursor = field(graphics, x, cursor, wrapWidth, "Per hour", Coins.format(candidate.profitPerHour()));
+		cursor = field(graphics, x, cursor, wrapWidth, presentation.fullFillLabel(),
+				Coins.format(candidate.totalNetProfit()));
+
+		if (presentation.hourly().isPresent()) {
+			cursor = field(graphics, x, cursor, wrapWidth, "Per hour",
+					presentation.hourly().orElseThrow());
+		}
+
+		if (!presentation.actionable()) {
+			return field(graphics, x, cursor, wrapWidth, presentation.completionLabel(),
+					presentation.completion());
+		}
 
 		// Stated as fields rather than left in the prose notes: whether an order fills is the first
 		// question about a resting plan, and it was three paragraphs down.
@@ -673,7 +697,8 @@ public final class FlipScreen extends Screen {
 	 */
 	private int field(GuiGraphicsExtractor graphics, int x, int y, int wrapWidth, String key,
 			String value) {
-		int labelWidth = Math.min(font.width(Component.literal("Net/unit")) + 8, wrapWidth / 2);
+		int labelWidth = Math.min(Math.max(font.width(Component.literal("Net/unit")),
+				font.width(Component.literal(key))) + 8, wrapWidth / 2);
 		Component text = Component.literal(value);
 
 		graphics.text(font, Component.literal(key), x, y, TEXT_DIM);
@@ -998,7 +1023,7 @@ public final class FlipScreen extends Screen {
 
 		if (jobs.isEmpty()) {
 			Component message = Component.literal(
-					"Nothing is being worked. Pick a bazaar, craft or combine row on its own tab "
+					"Nothing is being worked. Pick a craft, combine or fusion row on its own tab "
 							+ "and press Work: its steps then follow you onto the bazaar panel, "
 							+ "and several can run at once.");
 			graphics.textWithWordWrap(font, message, x + PANEL_PAD, cursor,
@@ -1024,6 +1049,13 @@ public final class FlipScreen extends Screen {
 			cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
 					jobHeading(job), "", progressText(job), TEXT_NOTE);
 			jobRowIds.add(job.itemId());
+
+			if (job.kind() == StrategyKind.BAZAAR_SPREAD) {
+				cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
+						"  " + OpportunityPresentation.SPREAD_EVIDENCE_GAP, "", "", TEXT_WARN);
+				jobRowIds.add(job.itemId());
+				continue;
+			}
 
 			if (!job.note().isEmpty()) {
 				cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
@@ -1122,17 +1154,36 @@ public final class FlipScreen extends Screen {
 		cursor += font.lineHeight + 4;
 
 		long capital = 0L;
-		double profit = 0.0d;
+		double supportedProfit = 0.0d;
+		double spreadQuotedProfit = 0.0d;
+		boolean hasSupported = false;
+		boolean hasSpread = false;
 
 		for (WorkedJob job : jobs) {
 			capital += job.capital();
-			profit += job.netProfit();
+
+			if (job.kind() == StrategyKind.BAZAAR_SPREAD) {
+				hasSpread = true;
+				spreadQuotedProfit += job.netProfit();
+			} else {
+				hasSupported = true;
+				supportedProfit += job.netProfit();
+			}
 		}
 
 		cursor = field(graphics, textX, cursor, contentWidth, "Flips", String.valueOf(jobs.size()));
-		cursor = field(graphics, textX, cursor, contentWidth, "Capital", Coins.format(capital));
-		cursor = field(graphics, textX, cursor, contentWidth, "Net if all fill",
-				Coins.format(profit));
+		cursor = field(graphics, textX, cursor, contentWidth, "Legacy planned capital",
+				Coins.format(capital));
+
+		if (hasSupported) {
+			cursor = field(graphics, textX, cursor, contentWidth, "Supported net if all fill",
+					Coins.format(supportedProfit));
+		}
+
+		if (hasSpread) {
+			cursor = field(graphics, textX, cursor, contentWidth,
+					OpportunityPresentation.QUOTED_FULL_FILL_NET, Coins.format(spreadQuotedProfit));
+		}
 
 		WorkedJob selected = selectedJob();
 
@@ -1150,14 +1201,29 @@ public final class FlipScreen extends Screen {
 					.withStyle(ChatFormatting.GOLD), textX, cursor, TEXT);
 			cursor += font.lineHeight + 4;
 
-			cursor = field(graphics, textX, cursor, contentWidth, "Strategy",
-					selected.kind().label());
-			cursor = field(graphics, textX, cursor, contentWidth, "Capital",
-					Coins.format(selected.capital()));
-			cursor = field(graphics, textX, cursor, contentWidth, "Net",
-					Coins.format(selected.netProfit()));
-			cursor = field(graphics, textX, cursor, contentWidth, "Steps",
-					selected.steps().size() + ", " + progressText(selected));
+			if (selected.kind() == StrategyKind.BAZAAR_SPREAD) {
+				cursor = field(graphics, textX, cursor, contentWidth, "Strategy",
+						"Bazaar - quote economics only");
+				cursor = field(graphics, textX, cursor, contentWidth, "Quoted purchase cost",
+						Coins.format(selected.capital()));
+				cursor = field(graphics, textX, cursor, contentWidth,
+						OpportunityPresentation.QUOTED_FULL_FILL_NET,
+						Coins.format(selected.netProfit()));
+				cursor = field(graphics, textX, cursor, contentWidth,
+						OpportunityPresentation.PERSONAL_COMPLETION,
+						OpportunityPresentation.PERSONAL_COMPLETION_UNAVAILABLE);
+				cursor = field(graphics, textX, cursor, contentWidth, "Evidence",
+						OpportunityPresentation.SPREAD_EVIDENCE_GAP);
+			} else {
+				cursor = field(graphics, textX, cursor, contentWidth, "Strategy",
+						selected.kind().label());
+				cursor = field(graphics, textX, cursor, contentWidth, "Capital",
+						Coins.format(selected.capital()));
+				cursor = field(graphics, textX, cursor, contentWidth, "Net",
+						Coins.format(selected.netProfit()));
+				cursor = field(graphics, textX, cursor, contentWidth, "Steps",
+						selected.steps().size() + ", " + progressText(selected));
+			}
 		}
 
 		graphics.disableScissor();
@@ -1377,11 +1443,14 @@ public final class FlipScreen extends Screen {
 	 * ellipsis that at least says it was cut.
 	 */
 	private void renderFooter(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
-		boolean hasSelection = tab.showsCandidates() && table.selection() != null;
+		FlipCandidate selection = tab.showsCandidates() ? table.selection() : null;
+		boolean hasSelection = selection != null;
+		boolean actionableSelection = hasSelection
+				&& OpportunityPresentation.of(selection).actionable();
 
 		if (tab.showsCandidates()) {
 			copyButton.setLabel("Copy name");
-			takeButton.render(graphics, font, mouseX, mouseY, hasSelection);
+			takeButton.render(graphics, font, mouseX, mouseY, actionableSelection);
 			copyButton.render(graphics, font, mouseX, mouseY, hasSelection);
 			workButton.setLabel(workLabel());
 			workButton.render(graphics, font, mouseX, mouseY, workable());
@@ -1464,6 +1533,11 @@ public final class FlipScreen extends Screen {
 			return;
 		}
 
+		if (!OpportunityPresentation.of(candidate).actionable()) {
+			notice = OpportunityPresentation.SPREAD_EVIDENCE_GAP;
+			return;
+		}
+
 		try {
 			// Exactly the path /flip take uses, so both routes write one ledger with one format.
 			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
@@ -1512,6 +1586,11 @@ public final class FlipScreen extends Screen {
 			return;
 		}
 
+		if (!OpportunityPresentation.of(candidate).actionable()) {
+			notice = OpportunityPresentation.SPREAD_EVIDENCE_GAP;
+			return;
+		}
+
 		if (!CandidateFeed.work(candidate.kind(), candidate.itemId(), candidate.displayName())) {
 			// An auction snipe and an NPC basket line are not lists of clicks at a bazaar menu, so
 			// there is nothing for the panel to follow. Both have a view of their own.
@@ -1533,10 +1612,18 @@ public final class FlipScreen extends Screen {
 	private boolean workable() {
 		FlipCandidate candidate = table.selection();
 
-		return candidate != null && (CandidateFeed.working(candidate.itemId())
-				|| candidate.kind() == StrategyKind.CRAFT
-				|| candidate.kind() == StrategyKind.COMBINE
-				|| candidate.kind() == StrategyKind.BAZAAR_SPREAD);
+		if (candidate == null) {
+			return false;
+		}
+
+		if (CandidateFeed.working(candidate.itemId())) {
+			return true;
+		}
+
+		return OpportunityPresentation.of(candidate).actionable()
+				&& (candidate.kind() == StrategyKind.CRAFT
+						|| candidate.kind() == StrategyKind.COMBINE
+						|| candidate.kind() == StrategyKind.FUSION);
 	}
 
 	/** Work or Stop working, whichever this selection would do. */

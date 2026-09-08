@@ -24,8 +24,8 @@ import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.core.config.FlipperConfig;
 import jeff.skyblockflipper.core.config.HudAnchor;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
-import jeff.skyblockflipper.core.text.Coins;
 
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -163,7 +163,7 @@ public final class FlipHud implements HudElement {
 					.withStyle(ChatFormatting.YELLOW));
 		}
 
-		return line.append(Component.literal(" " + Coins.format(candidate.profitPerHour()) + "/hr")
+		return line.append(Component.literal(" " + OpportunityPresentation.of(candidate).headline())
 				.withStyle(ChatFormatting.GREEN));
 	}
 

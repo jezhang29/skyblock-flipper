@@ -19,6 +19,7 @@ package jeff.skyblockflipper.client.track;
 
 import jeff.skyblockflipper.core.track.CapturedMenu;
 import jeff.skyblockflipper.core.track.CapturedSlot;
+import jeff.skyblockflipper.core.track.MenuCoverage;
 
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.component.DataComponents;
@@ -50,8 +51,20 @@ public final class MenuReader {
 	private MenuReader() {
 	}
 
+	/**
+	 * The tracker's and capture file's input, and the one read allowed to claim completeness.
+	 *
+	 * <p>{@code CaptureService} only calls this once a menu's contents have been identical for
+	 * {@code SETTLE_TICKS} ticks and its slot list is non-empty, which is what rules out the
+	 * half-painted read {@link #describe} has to allow for. Completeness is load-bearing rather
+	 * than cosmetic: absence from a settled menu is the only evidence that an order left the book
+	 * without saying so - a fill collected on another device, or in a session nothing was watching
+	 * - and {@code TradeTracker} buries an order on nothing else. Reporting UNKNOWN here strands
+	 * every such order in {@code resting()} for ever, holding a slot and its escrow against the
+	 * NPC basket.
+	 */
 	static CapturedMenu read(AbstractContainerScreen<?> screen, long at) {
-		return read(screen, at, true);
+		return read(screen, at, true, MenuCoverage.COMPLETE);
 	}
 
 	/**
@@ -62,10 +75,15 @@ public final class MenuReader {
 	 * which one to draw a box behind. Everything a slot is matched on - name, lore, item id - is kept.
 	 */
 	public static CapturedMenu describe(AbstractContainerScreen<?> screen, long at) {
-		return read(screen, at, false);
+		// Read on whatever tick asked, with no settle behind it: Hypixel sends a menu as a frame of
+		// filler and paints the real items in over the following ticks, so a row missing from this
+		// read may simply not have arrived yet. Nothing downstream of here may read absence as
+		// removal, which is what UNKNOWN says.
+		return read(screen, at, false, MenuCoverage.UNKNOWN);
 	}
 
-	private static CapturedMenu read(AbstractContainerScreen<?> screen, long at, boolean withNbt) {
+	private static CapturedMenu read(AbstractContainerScreen<?> screen, long at, boolean withNbt,
+			MenuCoverage coverage) {
 		List<CapturedSlot> slots = new ArrayList<>();
 
 		for (Slot slot : screen.getMenu().slots) {
@@ -84,7 +102,7 @@ public final class MenuReader {
 			slots.add(toCaptured(slot.index, stack, withNbt));
 		}
 
-		return new CapturedMenu(at, plain(screen.getTitle()), slots);
+		return new CapturedMenu(at, plain(screen.getTitle()), slots, coverage);
 	}
 
 	private static CapturedSlot toCaptured(int index, ItemStack stack, boolean withNbt) {

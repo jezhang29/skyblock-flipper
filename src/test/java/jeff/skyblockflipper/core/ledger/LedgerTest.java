@@ -19,6 +19,7 @@ package jeff.skyblockflipper.core.ledger;
 
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
+import jeff.skyblockflipper.core.strategy.OutcomeAvailability;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.track.Settlement;
 import jeff.skyblockflipper.core.track.TradeEvent;
@@ -48,6 +49,12 @@ class LedgerTest {
 				List.of("buy", "sell"), List.of());
 	}
 
+	private static FlipCandidate quoteOnlyCandidate(String id) {
+		return new FlipCandidate(id, id, StrategyKind.BAZAAR_SPREAD, 100.0d, 110.0d, 8.625d,
+				10L, 1_000L, 1_000_000.0d, 0.99d, List.of("buy", "sell"), List.of(),
+				List.of(), null, false, OutcomeAvailability.QUOTE_ONLY);
+	}
+
 	private static Ledger ledgerIn(Path dir) {
 		return new Ledger(dir.resolve("ledger.jsonl"));
 	}
@@ -64,6 +71,19 @@ class LedgerTest {
 		// 105 less the 1.25% bazaar tax, less the 100 paid.
 		assertEquals(105.0d * 0.9875d - 100.0d, closed.realizedUnitNet(), 1e-9);
 		assertEquals(closed.realizedUnitNet() * 6L, closed.realizedTotal(), 1e-9);
+	}
+
+	@Test
+	void existingQuoteOnlySpreadHoldingRemainsVisibleAfterReload(@TempDir Path dir) throws Exception {
+		Ledger ledger = ledgerIn(dir);
+		LedgerEntry opened = ledger.open(quoteOnlyCandidate("HELD_ITEM"), 1L);
+
+		Ledger reloaded = ledgerIn(dir);
+		reloaded.load();
+
+		assertEquals(List.of(opened.id()),
+				reloaded.openEntries().stream().map(LedgerEntry::id).toList());
+		assertEquals(StrategyKind.BAZAAR_SPREAD, reloaded.openEntries().getFirst().kind());
 	}
 
 	@Test

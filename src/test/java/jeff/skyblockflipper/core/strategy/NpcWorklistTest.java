@@ -137,6 +137,42 @@ class NpcWorklistTest {
 						|| task.itemId().equals("ITEM_1") || task.itemId().equals("ITEM_2")));
 	}
 
+	@Test
+	void unresolvedRemainingStillReservesItsSlotCapitalAndPosition() {
+		NpcReprice.Order unresolved = new NpcReprice.Order("ITEM_0", "ITEM_0", 600.0d,
+				500L, 400L, 0L, NOW, false, false);
+
+		NpcWorklist.Worklist worklist = NpcWorklist.of(List.of(unresolved), context(2, 1), NOW);
+
+		assertEquals(1, worklist.basket().held().orders());
+		assertEquals(240_000L, worklist.basket().held().capital());
+		assertEquals(0, worklist.count(NpcWorklist.Kind.PLACE));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.REPRICE));
+		assertEquals(0, worklist.count(NpcWorklist.Kind.CANCEL));
+		assertEquals(1, worklist.holding());
+		assertTrue(worklist.headline().contains("reconcile"), worklist.headline());
+		assertTrue(worklist.tasks().getFirst().reason().contains("up to 400 units"),
+				worklist.tasks().getFirst().reason());
+	}
+
+	@Test
+	void missingMarketProductCannotReleaseACataloguedNpcOrder() {
+		StrategyContext complete = context(1, 2);
+		StrategyContext missing = new StrategyContext(BazaarSnapshot.empty(), complete.catalog(),
+				complete.underpriced(), complete.trends(), complete.fees(), complete.bankroll(),
+				complete.minProfitPerFlip(), complete.minConfidence(), complete.maxAdverseDrift(),
+				complete.fillHorizon(), complete.maxCapitalShare(), complete.npc(), complete.craft(),
+				complete.combine(), complete.fusion());
+		NpcReprice.Order order = NpcReprice.Order.of("ITEM_0", "ITEM_0", 600.0d, 400L);
+
+		NpcWorklist.Worklist worklist = NpcWorklist.of(List.of(order), missing, NOW);
+
+		assertEquals(1, worklist.basket().held().orders());
+		assertEquals(240_000L, worklist.basket().held().capital());
+		assertTrue(worklist.basket().held().closed("ITEM_0"));
+		assertTrue(worklist.pending().stream().noneMatch(task -> task.itemId().equals("ITEM_0")));
+	}
+
 	/**
 	 * A line larger than one order counts down as it is placed, rather than vanishing on the first one.
 	 *

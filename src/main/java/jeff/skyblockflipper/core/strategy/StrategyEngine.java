@@ -21,11 +21,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Runs every strategy and merges the results onto one ranking.
+ * Runs every strategy and merges outcome-supported results onto one ranking.
  *
- * <p>Comparing a bazaar spread against an NPC flip only works because both report net profit per
- * hour after fees, which is the reason {@link FlipCandidate} is a shared shape rather than each
- * strategy having its own.
+ * <p>Quote-only and scenario-only results stay available through their per-strategy views. They are
+ * intentionally absent here: an internal legacy score cannot make an unsupported outcome comparable
+ * to a strategy still using the shared hourly presentation.
  */
 public final class StrategyEngine {
 	private final List<FlipStrategy> strategies;
@@ -41,12 +41,16 @@ public final class StrategyEngine {
 				new FusionFlipStrategy()));
 	}
 
-	/** Best candidates across all strategies, capped at {@code limit}. */
+	/** Hourly-comparable candidates across strategies, capped at {@code limit}. */
 	public List<FlipCandidate> rank(StrategyContext context, int limit) {
 		List<FlipCandidate> all = new ArrayList<>();
 
 		for (FlipStrategy strategy : strategies) {
-			all.addAll(strategy.findCandidates(context));
+			for (FlipCandidate candidate : strategy.findCandidates(context)) {
+				if (OpportunityPresentation.of(candidate).sharedHourlyComparable()) {
+					all.add(candidate);
+				}
+			}
 		}
 
 		all.sort(null);

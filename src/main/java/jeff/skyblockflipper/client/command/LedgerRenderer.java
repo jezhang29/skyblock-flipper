@@ -19,6 +19,7 @@ package jeff.skyblockflipper.client.command;
 
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.ledger.LedgerStats;
+import jeff.skyblockflipper.core.strategy.OpportunityPresentation;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 import jeff.skyblockflipper.core.text.Coins;
 
@@ -86,6 +87,14 @@ final class LedgerRenderer {
 					: "made " + Coins.format(entry.realizedTotal()) + ", no quote";
 		}
 
+		if (entry.kind() == StrategyKind.BAZAAR_SPREAD) {
+			return entry.unitsSold() == 0L
+					? "legacy quote " + Coins.format(entry.quotedUnitNet() * entry.units())
+							+ "; not a completion forecast"
+					: "legacy fee-normalized result " + Coins.format(entry.realizedTotal())
+							+ "; not reconciled realized P&L";
+		}
+
 		if (entry.unitsSold() == 0L) {
 			return "quoted " + Coins.format(entry.quotedUnitNet() * entry.units());
 		}
@@ -138,6 +147,12 @@ final class LedgerRenderer {
 	 * next to the rankings rather than only inside {@code /flip ledger}.
 	 */
 	static void renderCaptureWarning(FabricClientCommandSource source, LedgerStats stats, StrategyKind kind) {
+		if (kind == StrategyKind.BAZAAR_SPREAD) {
+			source.sendFeedback(Component.literal(OpportunityPresentation.SPREAD_EVIDENCE_GAP)
+					.withStyle(ChatFormatting.YELLOW));
+			return;
+		}
+
 		OptionalDouble capture = stats.captureRate();
 
 		if (!stats.isMeaningful() || capture.isEmpty() || capture.getAsDouble() >= POOR_CAPTURE) {

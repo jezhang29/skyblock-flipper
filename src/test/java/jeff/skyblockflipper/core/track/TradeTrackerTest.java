@@ -326,6 +326,21 @@ class TradeTrackerTest {
 	}
 
 	@Test
+	void lowerExactMenuReadingConflictsWithAnEarlierExactFill() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 100x Slimeball for 2,000 coins."));
+		tracker.accept(chat("[Bazaar] Your Buy Order for 100x Slimeball was filled!"));
+		tracker.accept(orders(1_000L, "BUY Slimeball", "SLIME_BALL", "Order amount: 100x",
+				"Filled: 50/100 (50.0%)", "Price per unit: 20.0 coins"));
+
+		TrackedOrder order = order(tracker, "Slimeball");
+		assertEquals(100L, order.filled(), "retain the independently supported lower bound");
+		assertFalse(order.filledKnownExactly());
+		assertTrue(order.exactRemaining().isEmpty());
+	}
+
+	@Test
 	void unknownSellFillStillRetainsItsIndependentCoinClaim() {
 		TradeTracker tracker = new TradeTracker(ME);
 
@@ -348,6 +363,39 @@ class TradeTrackerTest {
 				MenuCoverage.PARTIAL));
 
 		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Slimeball").status());
+	}
+
+	/**
+	 * The same for an unsettled read. {@code MenuReader.describe} reports UNKNOWN because Hypixel
+	 * paints a menu in over several ticks; only the settled read the tracker is fed may claim
+	 * completeness, and burial is gated on that.
+	 */
+	@Test
+	void unknownCoverageDoesNotMakeAnUnseenOrderVanish() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 10x Slimeball for 200 coins."));
+		tracker.accept(new CapturedMenu(1_000L, "Co-op Bazaar Orders", List.of(),
+				MenuCoverage.UNKNOWN));
+
+		assertEquals(TrackedOrder.Status.RESTING, order(tracker, "Slimeball").status());
+	}
+
+	/**
+	 * And the state that has to keep working, because it is the only reaper there is: an order
+	 * absent from a settled menu is buried. Reporting UNKNOWN for every live read strands each
+	 * such order in {@code resting()} for ever, holding a slot and its escrow against the basket.
+	 */
+	@Test
+	void completeCoverageStillBuriesAnOrderAbsentFromTheMenu() {
+		TradeTracker tracker = new TradeTracker(ME);
+
+		tracker.accept(chat("[Bazaar] Buy Order Setup! 10x Slimeball for 200 coins."));
+		tracker.accept(new CapturedMenu(1_000L, "Co-op Bazaar Orders", List.of(),
+				MenuCoverage.COMPLETE));
+
+		assertEquals(TrackedOrder.Status.VANISHED, order(tracker, "Slimeball").status());
+		assertTrue(tracker.resting().isEmpty(), "a buried order must free its slot");
 	}
 
 	/** An amount matching no resting order cancels nothing, rather than cancelling the nearest. */

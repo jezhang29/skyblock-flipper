@@ -323,6 +323,38 @@ class NpcRepriceTest {
 		assertTrue(advice.reason().contains("Filled completely"), advice.reason());
 	}
 
+	/**
+	 * The same order with an inexact fill count. {@code remaining()} is an upper bound when the
+	 * count is inexact, so zero remaining still means every unit filled - the order wants its
+	 * claim, not a "reserve up to 0 units" reconcile.
+	 */
+	@Test
+	void aCompletelyFilledOrderKeepsItsClaimEvenWhenTheCountIsInexact() {
+		NpcReprice.Order order = new NpcReprice.Order("ITEM", "ITEM", 800.0d, 500L, 0L, 500L, 0L,
+				false, false);
+
+		NpcReprice.Advice advice = NpcReprice.review(List.of(order),
+				context("ITEM", 900.0d, NPC_PRICE), NOW).getFirst();
+
+		assertEquals(NpcReprice.Action.HOLD, advice.action());
+		assertTrue(advice.hasUnclaimed());
+		assertTrue(advice.reason().contains("Filled completely"), advice.reason());
+		assertFalse(advice.reason().contains("up to 0 units"), advice.reason());
+	}
+
+	/** A part-filled order with an inexact count holds its slot and says so, rather than acting. */
+	@Test
+	void anInexactPartFillHoldsItsSlotInsteadOfActing() {
+		NpcReprice.Order order = new NpcReprice.Order("ITEM", "ITEM", 800.0d, 500L, 300L, 0L, 0L,
+				false, false);
+
+		NpcReprice.Advice advice = NpcReprice.review(List.of(order),
+				context("ITEM", 900.0d, NPC_PRICE), NOW).getFirst();
+
+		assertEquals(NpcReprice.Action.HOLD, advice.action());
+		assertTrue(advice.reason().contains("up to 300 units"), advice.reason());
+	}
+
 	// What a reprice is worth, which is what decides whether it is asked for at all.
 	//
 	// One book throughout: 16,800 units a week is 100 an hour of flow, and a 500-unit order at 800
