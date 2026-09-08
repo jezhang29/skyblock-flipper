@@ -39,13 +39,15 @@ public record BazaarProduct(
 		String productId,
 		List<OrderLevel> sellOffers,
 		List<OrderLevel> buyOrders,
-		MovingWeek movingWeek
-) {
+		MovingWeek movingWeek,
+		DepthCoverage sellOfferCoverage,
+		DepthCoverage buyOrderCoverage,
+		BazaarQuickStatus quickStatus,
+		ActivityProxy activityProxy
+) implements java.io.Serializable {
 	/** Seven-day volume on each side, straight from {@code quick_status}. */
-	public record MovingWeek(long instantBought, long instantSold) {
+	public record MovingWeek(long instantBought, long instantSold) implements java.io.Serializable {
 	}
-
-	private static final double HOURS_PER_WEEK = 168.0d;
 
 	/**
 	 * The smallest price step the bazaar accepts, and so the amount by which you outbid or undercut
@@ -61,6 +63,19 @@ public record BazaarProduct(
 	public BazaarProduct {
 		sellOffers = List.copyOf(sellOffers);
 		buyOrders = List.copyOf(buyOrders);
+		if (sellOfferCoverage.returnedLevels() != sellOffers.size()
+				|| buyOrderCoverage.returnedLevels() != buyOrders.size()) {
+			throw new IllegalArgumentException("depth coverage must match returned levels");
+		}
+	}
+
+	/** Compatibility constructor for pre-observation callers with complete returned lists. */
+	public BazaarProduct(String productId, List<OrderLevel> sellOffers, List<OrderLevel> buyOrders,
+			MovingWeek movingWeek) {
+		this(productId, sellOffers, buyOrders, movingWeek,
+				DepthCoverage.returned(sellOffers), DepthCoverage.returned(buyOrders),
+				BazaarQuickStatus.legacyActivity(movingWeek.instantBought(), movingWeek.instantSold()),
+				ActivityProxy.reported(movingWeek.instantBought(), movingWeek.instantSold()));
 	}
 
 	/**
@@ -121,24 +136,21 @@ public record BazaarProduct(
 	}
 
 	/**
-	 * Units per hour other players instantly buy, i.e. the rate sell offers get lifted.
+	 * Legacy quotient of the public seven-day instant-buy activity proxy.
 	 *
-	 * <p>This is the ceiling on how fast <b>you</b> can keep instant-buying: what is resting on the
-	 * ask side right now is a snapshot, not a supply. Sizing an hourly plan off the visible book
-	 * assumes it refills for free, which on a thin item it does not.
+	 * <p>This is not live flow, a personal fill rate, or a supported execution forecast.
 	 */
 	public double instantBuysPerHour() {
-		return movingWeek.instantBought() / HOURS_PER_WEEK;
+		return activityProxy.weeklyAverageInstantBuyActivityPerHour().orElse(0.0d);
 	}
 
 	/**
-	 * Units per hour other players instantly sell, i.e. the rate buy orders get filled.
+	 * Legacy quotient of the public seven-day instant-sell activity proxy.
 	 *
-	 * <p>The ceiling on a resting buy order: an order only fills as fast as people dump into it,
-	 * however good the price looks.
+	 * <p>This is not live flow, a personal fill rate, or a supported execution forecast.
 	 */
 	public double instantSellsPerHour() {
-		return movingWeek.instantSold() / HOURS_PER_WEEK;
+		return activityProxy.weeklyAverageInstantSellActivityPerHour().orElse(0.0d);
 	}
 
 	/**
@@ -156,8 +168,7 @@ public record BazaarProduct(
 	 * asked about.
 	 *
 	 * <p>Only the returned depth is walked. Hypixel truncates each side, so this is a bound on what
-	 * is visible now rather than on what would fill over time - see {@link #instantBuysPerHour()}
-	 * for the flow question, which is the one that decides how much can be bought an hour.
+	 * is visible now rather than on what would execute later.
 	 */
 	public OptionalDouble costToBuy(long units) {
 		if (units <= 0L) {

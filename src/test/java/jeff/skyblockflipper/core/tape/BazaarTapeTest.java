@@ -168,6 +168,18 @@ class BazaarTapeTest {
 	}
 
 	@Test
+	void legacyTapeStillDeduplicatesBySourceTimestamp(@TempDir Path dir) throws Exception {
+		Instant source = Instant.now();
+		BazaarTape tape = new BazaarTape(dir, 30);
+
+		assertEquals(1, tape.record(book(source, 100.0d, 90.0d)).size());
+		// Full-content identity is retained by MarketObservation/MarketData. The legacy descriptive
+		// tape deliberately keeps its established source-stamp deduplication until its replacement.
+		assertTrue(tape.record(book(source, 110.0d, 99.0d)).isEmpty());
+		assertEquals(1, readBack(tape, 30).size());
+	}
+
+	@Test
 	void filesSamplesUnderTheDayHypixelStampedNotTheDayTheyWereFetched(@TempDir Path dir)
 			throws Exception {
 		Instant twoDaysAgo = Instant.now().minus(2, ChronoUnit.DAYS);

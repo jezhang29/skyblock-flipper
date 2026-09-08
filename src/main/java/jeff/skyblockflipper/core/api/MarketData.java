@@ -20,6 +20,8 @@ package jeff.skyblockflipper.core.api;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
+import jeff.skyblockflipper.core.model.MarketContentId;
+import jeff.skyblockflipper.core.model.MarketObservation;
 import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PricedBid;
@@ -31,6 +33,7 @@ import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -42,9 +45,14 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class MarketData {
 	private final AtomicReference<BazaarSnapshot> bazaar = new AtomicReference<>(BazaarSnapshot.empty());
+	private final AtomicReference<MarketObservation> bazaarObservation = new AtomicReference<>();
+	private final AtomicReference<BazaarFetch> bazaarFetch =
+			new AtomicReference<>(BazaarFetch.never());
 	private final AtomicReference<MayorInfo> mayor = new AtomicReference<>(MayorInfo.unknown());
 	private final AtomicReference<ItemCatalog> catalog = new AtomicReference<>(ItemCatalog.empty());
 	private final AtomicReference<Instant> bazaarFetchedAt = new AtomicReference<>(Instant.EPOCH);
+	private final AtomicReference<Instant> bazaarContentChangedAt =
+			new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<Instant> salesFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<FairValueModel> values = new AtomicReference<>(FairValueModel.empty());
 	private final AtomicReference<RecoveryValueModel> recoveryValues =
@@ -63,28 +71,87 @@ public final class MarketData {
 	private volatile int salesRollupEntries;
 	private final AtomicLong pollFailures = new AtomicLong();
 	private final AtomicLong bazaarRevision = new AtomicLong();
+	private final AtomicLong bazaarFetchRevision = new AtomicLong();
+	private final AtomicLong bazaarSourceRevision = new AtomicLong();
+	private final AtomicLong bazaarContentRevision = new AtomicLong();
 
 	public BazaarSnapshot bazaar() {
 		return bazaar.get();
 	}
 
+	public Optional<MarketObservation> bazaarObservation() {
+		return Optional.ofNullable(bazaarObservation.get());
+	}
+
+	public BazaarFetch bazaarFetch() {
+		return bazaarFetch.get();
+	}
+
+	public Optional<MarketContentId> bazaarContentId() {
+		return bazaarObservation().map(MarketObservation::contentId);
+	}
+
 	public void setBazaar(BazaarSnapshot snapshot) {
-		bazaar.set(snapshot);
-		bazaarFetchedAt.set(Instant.now());
-		bazaarRevision.incrementAndGet();
+		publishBazaar(MarketObservation.fromSnapshot(snapshot, Instant.now()));
+	}
+
+	/** Publishes one successful response while keeping fetch, source, and content changes separate. */
+	public synchronized void publishBazaar(MarketObservation observation) {
+		MarketObservation previous = bazaarObservation.get();
+		boolean sourceChanged = previous == null
+				|| !previous.sourceTime().equals(observation.sourceTime());
+		boolean contentChanged = previous == null
+				|| !previous.contentId().equals(observation.contentId());
+
+		bazaarObservation.set(observation);
+		bazaar.set(observation.snapshot());
+		bazaarFetch.set(BazaarFetch.success(observation));
+		bazaarFetchedAt.set(observation.retrievedAt());
+		bazaarFetchRevision.incrementAndGet();
+
+		if (sourceChanged) {
+			bazaarSourceRevision.incrementAndGet();
+		}
+		if (contentChanged) {
+			bazaarContentChangedAt.set(observation.retrievedAt());
+			bazaarContentRevision.incrementAndGet();
+			bazaarRevision.incrementAndGet();
+		}
+	}
+
+	/** Records a failed attempt without replacing or restamping the last successful book. */
+	public synchronized void recordBazaarFailure(Instant attemptedAt, String message,
+			boolean rateLimited) {
+		bazaarFetch.set(BazaarFetch.failed(attemptedAt, message, rateLimited));
+		bazaarFetchRevision.incrementAndGet();
 	}
 
 	/**
-	 * Bumped whenever market state a ranking is derived from is replaced. Readers that cache derived
+	 * Bumped whenever market content a ranking is derived from changes. Readers that cache derived
 	 * work (the HUD ranks the whole market) compare this instead of re-deriving on a timer:
 	 * candidates cannot change while their inputs have not, so a timer either recomputes identical
 	 * results or shows stale ones.
 	 *
-	 * <p>The book is what moves this most, and {@link #setNpcEdges} moves it too - see there for why
-	 * a snapshot arriving has to count as a change even though the book did not.
+	 * <p>An identical successful fetch does not move this revision. {@link #setNpcEdges} does - see
+	 * there for why that non-book input must invalidate the same legacy decision cache.
 	 */
 	public long bazaarRevision() {
 		return bazaarRevision.get();
+	}
+
+	/** Every attempted Bazaar retrieval, successful or failed. */
+	public long bazaarFetchRevision() {
+		return bazaarFetchRevision.get();
+	}
+
+	/** Successful publications whose reported source timestamp differs from the previous one. */
+	public long bazaarSourceRevision() {
+		return bazaarSourceRevision.get();
+	}
+
+	/** Successful publications whose canonical full content differs from the previous one. */
+	public long bazaarContentRevision() {
+		return bazaarContentRevision.get();
 	}
 
 	public ItemCatalog catalog() {
@@ -265,9 +332,37 @@ public final class MarketData {
 		return lastError.get();
 	}
 
-	/** How stale the order book is, or empty if nothing has been fetched yet. */
+	/** Age of the last successful Bazaar retrieval; zero if none has succeeded. */
 	public Duration bazaarAge() {
 		return age(bazaarFetchedAt.get());
+	}
+
+	/** Age of the latest attempt; inspect {@link #bazaarFetch()} to learn whether it succeeded. */
+	public Duration bazaarFetchAge() {
+		return bazaarFetchAge(Instant.now());
+	}
+
+	public Duration bazaarFetchAge(Instant now) {
+		return age(bazaarFetch.get().attemptedAt(), now);
+	}
+
+	/** Age of Hypixel's reported source publication, independent of our retrieval health. */
+	public Duration bazaarSourceAge() {
+		return bazaarSourceAge(Instant.now());
+	}
+
+	public Duration bazaarSourceAge(Instant now) {
+		MarketObservation observation = bazaarObservation.get();
+		return age(observation != null ? observation.sourceTime() : Instant.EPOCH, now);
+	}
+
+	/** Time since the canonical full book content last changed. */
+	public Duration bazaarContentAge() {
+		return bazaarContentAge(Instant.now());
+	}
+
+	public Duration bazaarContentAge(Instant now) {
+		return age(bazaarContentChangedAt.get(), now);
 	}
 
 	public Duration salesAge() {
@@ -279,6 +374,10 @@ public final class MarketData {
 	}
 
 	private static Duration age(Instant at) {
-		return at.equals(Instant.EPOCH) ? Duration.ZERO : Duration.between(at, Instant.now());
+		return age(at, Instant.now());
+	}
+
+	private static Duration age(Instant at, Instant now) {
+		return at.equals(Instant.EPOCH) ? Duration.ZERO : Duration.between(at, now);
 	}
 }

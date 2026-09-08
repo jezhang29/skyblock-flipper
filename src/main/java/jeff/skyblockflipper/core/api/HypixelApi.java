@@ -24,6 +24,7 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.EndedAuction;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
+import jeff.skyblockflipper.core.model.MarketObservation;
 import jeff.skyblockflipper.core.model.dto.AuctionsDto;
 import jeff.skyblockflipper.core.model.dto.BazaarDto;
 import jeff.skyblockflipper.core.model.dto.EndedAuctionsDto;
@@ -56,7 +57,7 @@ import java.util.zip.GZIPInputStream;
  * (or per IP when unauthenticated), so a 429 on one endpoint means backing off on all of them.
  * Callers get an {@link ApiException} while the backoff is in effect rather than a silent stall.
  */
-public final class HypixelApi {
+public class HypixelApi {
 	private static final String BASE = "https://api.hypixel.net/v2/";
 	private static final Duration TIMEOUT = Duration.ofSeconds(30);
 	/** Fallback backoff when a 429 arrives without a usable reset header. */
@@ -78,7 +79,13 @@ public final class HypixelApi {
 	}
 
 	public BazaarSnapshot fetchBazaar() throws ApiException {
-		return get("skyblock/bazaar", BazaarDto.class).toSnapshot();
+		return fetchBazaarObservation().snapshot();
+	}
+
+	/** Fetches a Bazaar publication while retaining its independent retrieval timestamp. */
+	public MarketObservation fetchBazaarObservation() throws ApiException {
+		BazaarDto dto = get("skyblock/bazaar", BazaarDto.class);
+		return dto.toObservation(Instant.now());
 	}
 
 	/**

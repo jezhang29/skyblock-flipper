@@ -20,7 +20,11 @@ package jeff.skyblockflipper.core.model.dto;
 import com.google.gson.annotations.SerializedName;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
+import jeff.skyblockflipper.core.model.BazaarQuickStatus;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
+import jeff.skyblockflipper.core.model.ActivityProxy;
+import jeff.skyblockflipper.core.model.DepthCoverage;
+import jeff.skyblockflipper.core.model.MarketObservation;
 import jeff.skyblockflipper.core.model.OrderLevel;
 
 import java.time.Instant;
@@ -73,14 +77,24 @@ public final class BazaarDto {
 	}
 
 	public static final class QuickStatusDto {
-		/** Units instantly bought over the last week. */
-		public long buyMovingWeek;
-		/** Units instantly sold over the last week. */
+		public String productId;
+		public double sellPrice;
+		public long sellVolume;
 		public long sellMovingWeek;
+		public int sellOrders;
+		public double buyPrice;
+		public long buyVolume;
+		public long buyMovingWeek;
+		public int buyOrders;
 	}
 
 	/** Translates the wire format into the domain model, swapping the two sides exactly once. */
 	public BazaarSnapshot toSnapshot() {
+		return toObservation(Instant.EPOCH).snapshot();
+	}
+
+	/** Translates the complete wire response without conflating source and retrieval clocks. */
+	public MarketObservation toObservation(Instant retrievedAt) {
 		Map<String, BazaarProduct> mapped = new HashMap<>();
 
 		if (products != null) {
@@ -89,18 +103,41 @@ public final class BazaarDto {
 					return;
 				}
 
-				long instantBought = dto.quickStatus != null ? dto.quickStatus.buyMovingWeek : 0L;
-				long instantSold = dto.quickStatus != null ? dto.quickStatus.sellMovingWeek : 0L;
+				List<OrderLevel> sellOffers = levels(dto.asks);
+				List<OrderLevel> buyOrders = levels(dto.bids);
+				BazaarQuickStatus quick = quickStatus(dto.quickStatus);
+				ActivityProxy activity = dto.quickStatus == null
+						? ActivityProxy.unavailable()
+						: ActivityProxy.reported(dto.quickStatus.buyMovingWeek,
+								dto.quickStatus.sellMovingWeek);
 
 				mapped.put(id, new BazaarProduct(
 						dto.productId != null ? dto.productId : id,
-						levels(dto.asks),
-						levels(dto.bids),
-						new BazaarProduct.MovingWeek(instantBought, instantSold)));
+						sellOffers,
+						buyOrders,
+						new BazaarProduct.MovingWeek(activity.buyMovingWeek(),
+								activity.sellMovingWeek()),
+						coverage(dto.asks, sellOffers),
+						coverage(dto.bids, buyOrders),
+						quick,
+						activity));
 			});
 		}
 
-		return new BazaarSnapshot(Instant.ofEpochMilli(lastUpdated), mapped);
+		return MarketObservation.bazaar(Instant.ofEpochMilli(lastUpdated), retrievedAt, mapped);
+	}
+
+	private static DepthCoverage coverage(List<SummaryDto> summaries, List<OrderLevel> levels) {
+		return summaries == null ? DepthCoverage.absent() : DepthCoverage.returned(levels);
+	}
+
+	private static BazaarQuickStatus quickStatus(QuickStatusDto quick) {
+		if (quick == null) {
+			return BazaarQuickStatus.absent();
+		}
+		return new BazaarQuickStatus(BazaarQuickStatus.State.RETURNED, quick.productId,
+				quick.sellPrice, quick.sellVolume, quick.sellMovingWeek, quick.sellOrders,
+				quick.buyPrice, quick.buyVolume, quick.buyMovingWeek, quick.buyOrders);
 	}
 
 	private static List<OrderLevel> levels(List<SummaryDto> summaries) {

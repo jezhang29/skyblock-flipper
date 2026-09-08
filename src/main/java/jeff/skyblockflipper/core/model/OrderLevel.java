@@ -24,5 +24,6 @@ package jeff.skyblockflipper.core.model;
  * @param amount       units available at this level
  * @param orders       number of distinct player orders making up this level
  */
-public record OrderLevel(double pricePerUnit, long amount, int orders) {
+public record OrderLevel(double pricePerUnit, long amount, int orders)
+		implements java.io.Serializable {
 }

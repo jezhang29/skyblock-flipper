@@ -26,7 +26,14 @@ import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,13 +50,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class BazaarDtoTest {
 	private static BazaarSnapshot snapshot;
+	private static MarketObservation observation;
 
 	@BeforeAll
 	static void parseFixture() throws Exception {
 		try (InputStream in = BazaarDtoTest.class.getResourceAsStream("/bazaar-sample.json")) {
 			BazaarDto dto = new Gson().fromJson(
 					new InputStreamReader(in, StandardCharsets.UTF_8), BazaarDto.class);
-			snapshot = dto.toSnapshot();
+			observation = dto.toObservation(Instant.parse("2026-09-07T12:00:00Z"));
+			snapshot = observation.snapshot();
 		}
 	}
 
@@ -68,6 +77,72 @@ class BazaarDtoTest {
 
 		// sell_summary[0] is 1270.8 -- the highest bid, what you receive to instant-sell.
 		assertEquals(1270.8d, diamond.instantSellPrice().getAsDouble(), 0.05d);
+	}
+
+	@Test
+	void preservesEveryReturnedLevelAndItsCoverage() {
+		BazaarProduct diamond = snapshot.product("ENCHANTED_DIAMOND").orElseThrow();
+
+		assertEquals(List.of(1308.4d, 1308.5d, 1308.7d),
+				diamond.sellOffers().stream().map(OrderLevel::pricePerUnit).toList());
+		assertEquals(List.of(1270.8d, 1270.7d, 1270.6d),
+				diamond.buyOrders().stream().map(OrderLevel::pricePerUnit).toList());
+		assertEquals(3, diamond.sellOfferCoverage().returnedLevels());
+		assertEquals(4L, diamond.sellOfferCoverage().returnedOrders());
+		assertEquals(DepthCoverage.State.RETURNED_LEVELS,
+				diamond.sellOfferCoverage().state());
+	}
+
+	@Test
+	void distinguishesAbsentAndReturnedEmptySides() {
+		BazaarDto dto = new BazaarDto();
+		dto.lastUpdated = 1_000L;
+		BazaarDto.ProductDto product = new BazaarDto.ProductDto();
+		product.productId = "ONE_SIDED";
+		product.asks = null;
+		product.bids = List.of();
+		dto.products = Map.of("ONE_SIDED", product);
+
+		BazaarProduct mapped = dto.toObservation(Instant.EPOCH)
+				.snapshot().product("ONE_SIDED").orElseThrow();
+
+		assertEquals(DepthCoverage.State.FIELD_ABSENT, mapped.sellOfferCoverage().state());
+		assertEquals(DepthCoverage.State.RETURNED_EMPTY, mapped.buyOrderCoverage().state());
+		assertEquals(ActivityProxy.State.UNAVAILABLE, mapped.activityProxy().state());
+		assertTrue(mapped.activityProxy().weeklyAverageInstantBuyActivityPerHour().isEmpty());
+	}
+
+	@Test
+	void preservesEveryRawQuickStatusFieldWithoutCallingItPersonalExecution() {
+		BazaarQuickStatus quick = snapshot.product("ENCHANTED_DIAMOND").orElseThrow().quickStatus();
+
+		assertEquals(BazaarQuickStatus.State.RETURNED, quick.state());
+		assertEquals("ENCHANTED_DIAMOND", quick.productId());
+		assertEquals(1270.7491068700167d, quick.sellPrice());
+		assertEquals(2_227_868L, quick.sellVolume());
+		assertEquals(25_113_690L, quick.sellMovingWeek());
+		assertEquals(55, quick.sellOrders());
+		assertEquals(1326.48539789141d, quick.buyPrice());
+		assertEquals(974_378L, quick.buyVolume());
+		assertEquals(5_905_860L, quick.buyMovingWeek());
+		assertEquals(135, quick.buyOrders());
+	}
+
+	@Test
+	void observationIsSerializableWithTheFullBook() throws Exception {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+			out.writeObject(observation);
+		}
+
+		MarketObservation recovered;
+		try (ObjectInputStream in = new ObjectInputStream(
+				new ByteArrayInputStream(bytes.toByteArray()))) {
+			recovered = (MarketObservation) in.readObject();
+		}
+
+		assertEquals(observation, recovered);
+		assertEquals(3, recovered.products().get("ENCHANTED_DIAMOND").sellOffers().size());
 	}
 
 	@Test

@@ -237,8 +237,16 @@ public final class MarketPoller implements AutoCloseable {
 		}
 	}
 
-	private void pollBazaar() throws ApiException {
-		data.setBazaar(api.fetchBazaar());
+	void pollBazaar() throws ApiException {
+		try {
+			data.publishBazaar(api.fetchBazaarObservation());
+		} catch (ApiException e) {
+			data.recordBazaarFailure(Instant.now(), e.getMessage(), e.isRateLimited());
+			throw e;
+		} catch (RuntimeException e) {
+			data.recordBazaarFailure(Instant.now(), e.toString(), false);
+			throw e;
+		}
 	}
 
 	private void pollSales() throws ApiException {
