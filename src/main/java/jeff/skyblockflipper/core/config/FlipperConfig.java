@@ -1,9 +1,27 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.strategy.CraftContext;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
 
 import java.io.IOException;
@@ -24,13 +42,6 @@ import java.util.List;
  * file. That means adding a new setting later does not invalidate existing configs.
  */
 public final class FlipperConfig {
-	/**
-	 * Hypixel API key. Optional: every endpoint this mod needs (bazaar, auctions,
-	 * auctions_ended, items, election) is public and unauthenticated. Only set this if we
-	 * later add profile-aware features.
-	 */
-	public String apiKey = "";
-
 	/** Coins available to deploy. Candidates needing more capital than this are hidden. */
 	public long bankroll = 10_000_000L;
 
@@ -73,6 +84,48 @@ public final class FlipperConfig {
 	 * it is worth turning off on a metered connection - the bazaar strategies do not need it.
 	 */
 	public boolean scanAuctions = true;
+
+	/** Master switch for unsolicited recovery alerts. Analysis and the Recovery tab remain read-only. */
+	public boolean recoveryAlertsEnabled = false;
+
+	/** Write qualifying recovery alerts to client chat. Off by default. */
+	public boolean recoveryChatNotifications = false;
+
+	/** Show qualifying recovery alerts as in-game system toasts. Off by default. */
+	public boolean recoveryToastNotifications = false;
+
+	/** Play one UI note with a qualifying recovery alert. Off by default. */
+	public boolean recoveryAlertSound = false;
+
+	/** Minimum conservative recovery profit for a row or alert. */
+	public long recoveryMinProfit = 500_000L;
+
+	/** Minimum conservative recovery margin after the safety buffer. */
+	public double recoveryMinMargin = 0.15d;
+
+	/** Haircut applied to uncertain recovery resale values before fees. */
+	public double recoverySafetyBuffer = 0.15d;
+
+	/** Minimum realized standalone/clean-host AH samples. */
+	public int recoveryMinAhSamples = 6;
+
+	/** Minimum realized AH sale rate per day. */
+	public double recoveryMinAhSalesPerDay = 1.0d;
+
+	/** Maximum estimated hours to resell an AH leg. */
+	public double recoveryMaxAhSellHours = 48.0d;
+
+	/** Minimum weekly-flow-derived hourly dumps into Bazaar bids. */
+	public double recoveryMinBazaarSellsPerHour = 1.0d;
+
+	/** Maximum age of a shared auction snapshot before an alert is suppressed. */
+	public int recoveryMaxAgeSeconds = 120;
+
+	/** Recovery alert family gates. Analysis remains visible even when an alert family is off. */
+	public boolean recoveryGemstoneAlerts = true;
+	public boolean recoveryDrillAlerts = true;
+	public boolean recoveryRodAlerts = true;
+	public boolean recoveryLegacyAlerts = false;
 
 	/**
 	 * How far under fair value a listing has to be listed before it is worth looking at (0-1).
@@ -257,48 +310,53 @@ public final class FlipperConfig {
 	public int npcMaxOrderSlots = 0;
 
 	/**
-	 * How much of a resting window's measured upward bid drift to pay up front, as a multiple of it.
+	 * Whether craft flips are offered at all.
 	 *
-	 * <p><b>The setting that turns this trade into one you can leave.</b> Chasing the book is already
-	 * charged against every candidate's margin - {@code NpcEdge.chaseCostRatio} over
-	 * {@link #npcRestingHours} - the mod simply expects you to pay it a reprice at a time. Paying the
-	 * same coins into the posted price instead buys the front of the book for the whole window
-	 * without a single trip back.
-	 *
-	 * <p>Measured 2026-08-14 over four days of the user's own tape, 1,966 eight-hour windows across
-	 * 153 candidates: share of a window spent at the top of the book is 62.6% posting at the plain
-	 * outbid price, 93.2% at 0.5x and 96.7% at 1.0x.
-	 *
-	 * <p><b>Set it to 1.0.</b> Not because that is where the market peaks - a perfect-foresight sizing
-	 * peaks at 0.25x and is flat to 1.0x - but because it is where <i>this mod's</i> arithmetic peaks,
-	 * and the two questions have different answers. {@code FillModel} never lets a displaced order
-	 * return to the front of the book, while on the tape the top bid falls back constantly, so the
-	 * fill it credits a premium with is far under what the tape shows. That gap shrinks as the premium
-	 * grows. Running the shipped allocator over the live book at the user's settings, and then
-	 * re-scoring the very same basket against what the tape says an order at that price collects:
-	 *
-	 * <pre>
-	 * premium   the basket it plans   what the tape backs
-	 * 0.00x     47.3M                 24.7M
-	 * 0.25x     36.1M                 36.1M
-	 * 0.50x     40.3M                 40.3M
-	 * 1.00x     50.0M                 50.0M
-	 * </pre>
-	 *
-	 * <p>Two things to read out of that. Every premium is <b>fully backed</b> - the mod plans less
-	 * than the tape says it would collect, which is the direction to be wrong in. And the shipped
-	 * zero-premium plan is the one row that is <b>not</b> backed: it quotes 47.3M on the assumption
-	 * that you come back and reprice sixteen times, and collects 24.7M if you do not.
-	 *
-	 * <p><b>Zero is still the default</b>, because the measurement rests on one assumption the tape
-	 * cannot check: every sample in it came from a book with none of your orders in it, so an item
-	 * whose competition re-posts one increment above whatever is on top would give back the premium
-	 * immediately. {@code /flip npc probe} is how that gets settled per item.
-	 *
-	 * <p>Pair it with a long {@link #npcCheckInMinutes} for a genuinely unattended cycle: the premium
-	 * holds the book and the interval stops the reminder asking you back.
+	 * <p>On, because the strategy refuses rather than guesses everywhere its pricing is unsure, and
+	 * a strategy nobody sees is a strategy nobody checks. Off is for the player who wants the ranked
+	 * list to be about the NPC basket and nothing else.
 	 */
-	public double npcDriftPremium = 0.0d;
+	public boolean craftFlipsEnabled = true;
+
+	/**
+	 * How many bazaar order slots one craft plan may occupy.
+	 *
+	 * <p>Slots are shared with the NPC basket, which is the daily driver, and measured on the live
+	 * book of 2026-08-18 the best eight craft plans together wanted 19 of the 21 slots a Bazaar
+	 * Flipper 1 account has. A plan over this budget is re-quoted with its materials instant-bought,
+	 * which rests nothing but the sell offer, rather than dropped.
+	 */
+	public int craftMaxOrderSlots = CraftContext.DEFAULT_MAX_ORDER_SLOTS;
+
+	/**
+	 * Whether enchanted-book combine flips are offered at all.
+	 *
+	 * <p>On, for the same reason craft is: the strategy refuses rather than guesses. It ranks low on
+	 * profit per hour on purpose - its return is per anvil click, not per hour - so it never crowds
+	 * the list; {@code /flip combine} is where it is meant to be read. Off is for the player who does
+	 * not want the anvil work.
+	 */
+	public boolean combineFlipsEnabled = true;
+
+	/**
+	 * Whether attribute-shard fusion flips are offered at all.
+	 *
+	 * <p>On, for the same reason combine is: the strategy refuses rather than guesses. A fusion's
+	 * per-click return dwarfs a combine's, but the input-to-output haul is heavy, so {@code /flip
+	 * fusion} is where it is meant to be read. Off is for the player who does not want the fusing.
+	 */
+	public boolean fusionFlipsEnabled = true;
+
+	/**
+	 * The player's Pure Reptile (crocodile) perk level, 0 to 10.
+	 *
+	 * <p>Each level adds 2% to reptile-family fusion output, so a level-10 crocodile turns a two-shard
+	 * reptile fusion into 2.4 outputs a click. The mod cannot read the perk from the game, so it comes
+	 * in here. It defaults to 0 - no bonus - because a profit-flattering multiplier ships as an
+	 * off-by-default setting, never a baked-in default: set too high, every reptile fusion is quietly
+	 * over-valued. See {@code docs/fusion-flipping.md}.
+	 */
+	public int fusionCrocodileLevel = 0;
 
 	/**
 	 * What the basket ranks candidates on when it has to choose between them.
@@ -360,6 +418,9 @@ public final class FlipperConfig {
 	/** The value of {@link #strategyFilter} that means no filtering at all. */
 	public static final String FILTER_ALL = "ALL";
 
+	/** The highest crocodile (Pure Reptile) perk level the game grants, which caps {@link #fusionCrocodileLevel}. */
+	public static final int MAX_CROCODILE_LEVEL = 10;
+
 	/** Open the flip screen with a keybind. The screen is also reachable however you like via chat. */
 	public boolean guiKeybindEnabled = true;
 
@@ -397,6 +458,16 @@ public final class FlipperConfig {
 	 * time.
 	 */
 	public String bazaarOverlaySide = OverlaySide.LEFT.name();
+
+	/**
+	 * Which flip type the bazaar panel opens on, as a {@link StrategyKind} name.
+	 *
+	 * <p>The panel shows one bazaar flip type at a time and this remembers the last one picked. NPC by
+	 * default, which is what the panel always showed. Independent of {@link #strategyFilter}, which
+	 * also carries {@code ALL} and the auction snipe - neither of which is a type the in-bazaar panel
+	 * can draw a trip for, so this is its own setting rather than a reuse of that one.
+	 */
+	public String bazaarOverlayType = StrategyKind.NPC_FLIP.name();
 
 	/**
 	 * Put a green box behind the slot the top row of the basket is asking you to click.
@@ -484,6 +555,25 @@ public final class FlipperConfig {
 		return OverlaySide.parse(bazaarOverlaySide);
 	}
 
+	/**
+	 * {@link #bazaarOverlayType} as a strategy, defaulting to the NPC basket.
+	 *
+	 * <p>Only ever a bazaar kind: a hand-edited name that is not one - or the auction snipe, which is
+	 * not at the bazaar - falls back to {@code NPC_FLIP} rather than leaving the panel with a type it
+	 * cannot draw.
+	 */
+	public StrategyKind bazaarOverlayType() {
+		String name = bazaarOverlayType == null ? "" : bazaarOverlayType.trim();
+
+		for (StrategyKind kind : StrategyKind.bazaarKinds()) {
+			if (kind.name().equalsIgnoreCase(name)) {
+				return kind;
+			}
+		}
+
+		return StrategyKind.NPC_FLIP;
+	}
+
 	/** Resolved at plan time, so a hand-edited name costs a default rather than a null. */
 	public NpcRanking npcRanking() {
 		return NpcRanking.parse(npcRankingKey);
@@ -510,35 +600,60 @@ public final class FlipperConfig {
 		return null;
 	}
 
-	/** What the filter may be set to. {@code CRAFT} is left out while it has no strategy behind it. */
+	/** What the filter may be set to: no restriction, or any strategy the engine actually runs. */
 	public static List<String> strategyFilterOptions() {
 		List<String> options = new ArrayList<>();
 		options.add(FILTER_ALL);
 
 		for (StrategyKind kind : StrategyKind.values()) {
-			if (kind != StrategyKind.CRAFT) {
-				options.add(kind.name());
-			}
+			options.add(kind.name());
 		}
 
 		return List.copyOf(options);
 	}
 
+	/** What the bazaar panel may open on: every bazaar flip type, by {@link StrategyKind} name. */
+	public static List<String> bazaarOverlayTypeOptions() {
+		return StrategyKind.bazaarKinds().stream().map(StrategyKind::name).toList();
+	}
+
 	/** What the background sweep should do, read fresh so a reload takes effect on the next one. */
 	public ScanSettings scanSettings() {
 		return new ScanSettings(scanAuctions, valuationWindowDays, snipeMinDiscount, bankroll,
-				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds);
+				bazaarTapeEnabled, bazaarTapeRetentionDays, trendWindowHours, bazaarPollSeconds,
+				bazaarFlipperLevel, recoverySettings());
+	}
+
+	public RecoverySettings recoverySettings() {
+		return new RecoverySettings(recoveryAlertsEnabled, recoveryChatNotifications,
+				recoveryToastNotifications, recoveryAlertSound, recoveryMinProfit,
+				recoveryMinMargin, recoverySafetyBuffer, recoveryMinAhSamples,
+				recoveryMinAhSalesPerDay, recoveryMaxAhSellHours,
+				recoveryMinBazaarSellsPerHour, recoveryMaxAgeSeconds,
+				recoveryGemstoneAlerts, recoveryDrillAlerts, recoveryRodAlerts,
+				recoveryLegacyAlerts);
 	}
 
 	/** Clamps hand-edited values into ranges the rest of the mod can rely on. */
 	public FlipperConfig validated() {
 		bankroll = Math.max(0L, bankroll);
 		bazaarFlipperLevel = Math.clamp(bazaarFlipperLevel, 0, Fees.MAX_BAZAAR_FLIPPER_LEVEL);
+		// The crocodile perk caps at 10; a value above it would over-value every reptile fusion.
+		fusionCrocodileLevel = Math.clamp(fusionCrocodileLevel, 0, MAX_CROCODILE_LEVEL);
 		minProfitPerFlip = Math.max(0L, minProfitPerFlip);
 		// A zero share would size every plan at one unit and rank nothing; above one it is not a
 		// share of anything.
 		maxCapitalShare = Math.clamp(maxCapitalShare, 0.01d, 1.0d);
 		minConfidence = Math.clamp(minConfidence, 0.0d, 1.0d);
+		recoveryMinProfit = Math.max(0L, recoveryMinProfit);
+		recoveryMinMargin = Math.clamp(recoveryMinMargin, 0.0d, 5.0d);
+		recoverySafetyBuffer = Math.clamp(recoverySafetyBuffer, 0.10d, 0.15d);
+		recoveryMinAhSamples = Math.clamp(recoveryMinAhSamples, 6, 100);
+		recoveryMinAhSalesPerDay = Math.clamp(recoveryMinAhSalesPerDay, 0.1d, 1_000.0d);
+		recoveryMaxAhSellHours = Math.clamp(recoveryMaxAhSellHours, 1.0d, 168.0d);
+		recoveryMinBazaarSellsPerHour = Math.clamp(
+				recoveryMinBazaarSellsPerHour, 0.1d, 1_000_000.0d);
+		recoveryMaxAgeSeconds = Math.clamp(recoveryMaxAgeSeconds, 30, 600);
 		// Zero would make every NPC plan empty rather than uncapped, which is not what someone
 		// clearing the field means; the upper bound is loose because the real value is unverified.
 		npcDailyCapCoins = Math.clamp(npcDailyCapCoins, 1_000_000L, 100_000_000_000L);
@@ -549,14 +664,13 @@ public final class FlipperConfig {
 		// measured against is not observable.
 		npcCheckInMinutes = Math.clamp(npcCheckInMinutes, 5, 480);
 		npcRestingHours = Math.clamp(npcRestingHours, 0.5d, 24.0d);
-		// Zero is the shipped behaviour and has to stay reachable. The ceiling is where the premium
-		// costs more margin than the fills it buys are worth: the measured curve peaks at 0.25 and
-		// is already falling by 1.5.
-		npcDriftPremium = Math.clamp(npcDriftPremium, 0.0d, 2.0d);
 		npcRankingKey = npcRanking().name();
 		// Zero means "all of them", so it stays; the ceiling is the most any Bazaar Flipper level
 		// could give. What the account actually has still wins at plan time.
 		npcMaxOrderSlots = Math.clamp(npcMaxOrderSlots, 0, Fees.MAX_BAZAAR_ORDER_SLOTS);
+		// A craft plan always rests the one sell offer it exits on, so zero would mean "no craft
+		// flips" while reading as a tightened budget. Turning them off is what the flag is for.
+		craftMaxOrderSlots = Math.clamp(craftMaxOrderSlots, 1, Fees.MAX_BAZAAR_ORDER_SLOTS);
 		hudLines = Math.clamp(hudLines, 1, 10);
 		// A zero or negative discount would call every listing at fair value a bargain and hand
 		// the sweep tens of thousands of blobs to decode.
@@ -589,6 +703,9 @@ public final class FlipperConfig {
 		hudMarginY = Math.clamp(hudMarginY, 0, 400);
 		hudAnchor = anchor().name();
 		bazaarOverlaySide = overlaySide().name();
+		// An unknown or non-bazaar name would leave the panel with a type it cannot draw a trip for;
+		// bazaarOverlayType() folds it back to the NPC basket.
+		bazaarOverlayType = bazaarOverlayType().name();
 		// An unknown name would silently mean "every strategy", which looks like the filter
 		// being ignored rather than being misspelled.
 		StrategyKind kind = filteredKind();

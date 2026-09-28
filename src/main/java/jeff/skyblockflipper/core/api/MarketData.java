@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.api;
 
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
@@ -7,6 +24,8 @@ import jeff.skyblockflipper.core.valuation.FairValueModel;
 import jeff.skyblockflipper.core.valuation.NpcEdgeSnapshot;
 import jeff.skyblockflipper.core.valuation.PricedListing;
 import jeff.skyblockflipper.core.valuation.TrendSnapshot;
+import jeff.skyblockflipper.core.recovery.RecoveryValueModel;
+import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -27,13 +46,13 @@ public final class MarketData {
 	private final AtomicReference<Instant> bazaarFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<Instant> salesFetchedAt = new AtomicReference<>(Instant.EPOCH);
 	private final AtomicReference<FairValueModel> values = new AtomicReference<>(FairValueModel.empty());
+	private final AtomicReference<RecoveryValueModel> recoveryValues =
+			new AtomicReference<>(RecoveryValueModel.empty());
 	private final AtomicReference<TrendSnapshot> trends = new AtomicReference<>(TrendSnapshot.empty());
 	private final AtomicReference<NpcEdgeSnapshot> npcEdges =
 			new AtomicReference<>(NpcEdgeSnapshot.empty());
-	private final AtomicReference<List<PricedListing>> underpriced = new AtomicReference<>(List.of());
-	private final AtomicReference<Instant> auctionsScannedAt = new AtomicReference<>(Instant.EPOCH);
-	private final AtomicReference<String> scanSummary = new AtomicReference<>("");
-	private final AtomicLong auctionsLastUpdated = new AtomicLong();
+	private final AtomicReference<AuctionScanSnapshot> auctionScan =
+			new AtomicReference<>(AuctionScanSnapshot.empty());
 	private final AtomicReference<String> lastError = new AtomicReference<>("");
 	private final AtomicLong salesRecorded = new AtomicLong();
 
@@ -82,6 +101,16 @@ public final class MarketData {
 		values.set(model);
 	}
 
+	public RecoveryValueModel recoveryValues() {
+		return recoveryValues.get();
+	}
+
+	/** Publishes the two models built together from the same streamed sale pass. */
+	public void setValues(FairValueModel model, RecoveryValueModel recoveryModel) {
+		values.set(model);
+		recoveryValues.set(recoveryModel);
+	}
+
 	/**
 	 * Which way bazaar prices have been moving.
 	 *
@@ -123,7 +152,19 @@ public final class MarketData {
 
 	/** Live listings found below fair value by the last sweep. */
 	public List<PricedListing> underpriced() {
-		return underpriced.get();
+		return auctionScan.get().ordinary();
+	}
+
+	public List<RecoveryOpportunity> recoveryOpportunities() {
+		return auctionScan.get().recovery();
+	}
+
+	public AuctionScanSnapshot auctionScan() {
+		return auctionScan.get();
+	}
+
+	public long recoveryRevision() {
+		return auctionScan.get().recoveryRevision();
 	}
 
 	/**
@@ -131,27 +172,31 @@ public final class MarketData {
 	 *                    skipped rather than re-downloaded
 	 */
 	public void setAuctionScan(long lastUpdated, List<PricedListing> found, String summary) {
-		auctionsLastUpdated.set(lastUpdated);
-		underpriced.set(List.copyOf(found));
-		scanSummary.set(summary);
-		auctionsScannedAt.set(Instant.now());
+		setAuctionScan(lastUpdated, found, List.of(), summary);
+	}
+
+	public void setAuctionScan(long lastUpdated, List<PricedListing> ordinary,
+			List<RecoveryOpportunity> recovery, String summary) {
+		auctionScan.updateAndGet(previous -> new AuctionScanSnapshot(lastUpdated, Instant.now(),
+				ordinary, recovery, previous.ordinaryRevision() + 1L,
+				previous.recoveryRevision() + 1L, summary));
 	}
 
 	public long auctionsLastUpdated() {
-		return auctionsLastUpdated.get();
+		return auctionScan.get().lastUpdated();
 	}
 
 	public Duration auctionsAge() {
-		return age(auctionsScannedAt.get());
+		return age(auctionScan.get().scannedAt());
 	}
 
 	public boolean hasScannedAuctions() {
-		return !auctionsScannedAt.get().equals(Instant.EPOCH);
+		return !auctionScan.get().scannedAt().equals(Instant.EPOCH);
 	}
 
 	/** One line describing what the last sweep did, for {@code /flip status}. */
 	public String scanSummary() {
-		return scanSummary.get();
+		return auctionScan.get().summary();
 	}
 
 	public MayorInfo mayor() {

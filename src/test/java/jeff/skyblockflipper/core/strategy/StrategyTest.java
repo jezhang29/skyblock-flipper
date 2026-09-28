@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.config.NpcRanking;
@@ -5,6 +22,7 @@ import jeff.skyblockflipper.core.model.BazaarProduct;
 import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.OrderLevel;
+import jeff.skyblockflipper.core.model.Stacking;
 import jeff.skyblockflipper.core.pricing.Fees;
 import jeff.skyblockflipper.core.valuation.FillStats;
 import jeff.skyblockflipper.core.valuation.NpcEdge;
@@ -63,6 +81,50 @@ class StrategyTest {
 
 	private static StrategyContext contextFor(BazaarProduct product) {
 		return contextFor(product, ItemCatalog.empty(), 0L);
+	}
+
+	/**
+	 * A quantity the amount box will take, not a total that reads as one order.
+	 *
+	 * <p>Measured on the live book of 2026-08-20: one of the 130 bazaar candidates
+	 * ({@code ESSENCE_CRIMSON}, 111,507 units against a 71,680 ceiling) asked for more than one
+	 * order. A bare total reads as one order, and that is how a line of 500 Jungle Hearts came to be
+	 * typed into a box that takes 256 of them.
+	 */
+	@Test
+	void aSpreadPlanOverOneOrderSaysHowItSplits() {
+		// Deep and busy enough that an hour of flow runs past the 71,680-unit order ceiling.
+		BazaarProduct busy = new BazaarProduct(
+				"TEST_ITEM",
+				List.of(new OrderLevel(104.0d, 100_000_000L, 40)),
+				List.of(new OrderLevel(100.0d, 100_000_000L, 40)),
+				new BazaarProduct.MovingWeek(2_000_000_000L, 2_000_000_000L));
+
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(busy)).getFirst();
+
+		assertTrue(candidate.units() > Stacking.UNITS_PER_ORDER_STACKABLE,
+				"the fixture has to want more than one order to mean anything, got "
+						+ candidate.units());
+
+		String split = " x " + Stacking.UNITS_PER_ORDER_STACKABLE;
+
+		assertTrue(candidate.steps().stream().anyMatch(step -> step.contains(split)),
+				"the buy leg has to name the orders it splits into: " + candidate.steps());
+		assertEquals(2L, candidate.steps().stream().filter(step -> step.contains(split)).count(),
+				"both legs are typed into an amount box: " + candidate.steps());
+	}
+
+	/** One order covers it, so the total is the number to type and nothing is added to it. */
+	@Test
+	void aSpreadPlanInsideOneOrderQuotesABareTotal() {
+		FlipCandidate candidate = new BazaarSpreadStrategy()
+				.findCandidates(contextFor(healthy())).getFirst();
+
+		assertTrue(candidate.units() < Stacking.UNITS_PER_ORDER_STACKABLE);
+		assertTrue(candidate.steps().stream().anyMatch(
+						step -> step.endsWith("quantity " + candidate.units())),
+				"a single-order plan should quote the total plainly: " + candidate.steps());
 	}
 
 	@Test
@@ -853,90 +915,40 @@ class StrategyTest {
 	}
 
 	/**
-	 * The premium moves the chase into the posted price instead of adding to it.
+	 * Measured upward drift moves the cost of a plan and never the price it posts at.
 	 *
-	 * <p>Same trade, same coins, spent in the other order: the mod already charges every candidate
-	 * for chasing the book over the resting window, and the premium pays those coins into the price
-	 * typed rather than into a series of reprices. At a premium of 1.0 the unit cost is unchanged and
-	 * only where the coins sit has moved, which is what makes the two regimes comparable at all.
+	 * <p>Paying the drift into the posted price - {@code npcDriftPremium} - was removed on
+	 * 2026-08-19. It looked like the same coins spent in a better order, and on tape it was: an
+	 * order the book has to climb to is not displaced until it does. But every sample of that tape
+	 * came from a book with none of the user's own orders in it. Measured in play overnight on
+	 * 2026-08-16, an order posted 3.9% above the book held the top of it for 4 of 145 samples,
+	 * because a competitor parks a coin or two above your order specifically whatever price you
+	 * chose. See {@code docs/npc-flipping.md}, "Removed: paying the chase up front".
 	 *
-	 * <p>Asserted on the plan rather than on the candidate because the sizes here are held down by
-	 * the bankroll, and what the premium changes is the fill rate underneath it.
+	 * <p>So the chase stays a charge against the margin and the price box gets Hypixel's own "+0.1".
 	 */
 	@Test
-	void thePremiumMovesTheChaseIntoThePostedPriceRatherThanAddingToIt() {
+	void theChaseIsChargedAgainstTheMarginAndNeverPostedIntoThePrice() {
 		BazaarProduct product = product(800.0d, 1100.0d, 40, 50_000_000L);
 		ItemCatalog catalog = npcCatalog(1000.0d, false);
-
-		// 5 coins an hour over an 8-hour window: 40 coins of chase on an 800.1 post.
-		NpcPlan chasing = npcPremiumPlan(product, catalog, 0.0d);
-		NpcPlan posted = npcPremiumPlan(product, catalog, 1.0d);
-		NpcPlan half = npcPremiumPlan(product, catalog, 0.5d);
-
-		// Posted at the top and chased all window.
-		assertEquals(800.1d, chasing.postPrice(), 1e-6);
-
-		// The whole chase paid up front: the order rests 40 coins higher and costs exactly the same.
-		assertEquals(840.1d, posted.postPrice(), 1e-6);
-		assertEquals(chasing.unitCost(), posted.unitCost(), 1e-6);
-		assertEquals(chasing.unitNetProfit(), posted.unitNetProfit(), 1e-6);
-
-		// Half of it up front and half still to chase, which is again the same coins.
-		assertEquals(820.1d, half.postPrice(), 1e-6);
-		assertEquals(chasing.unitCost(), half.unitCost(), 1e-6);
-
-		// And it buys the fill the chase was for: an order the book has to climb 40 coins to reach
-		// is not displaced for most of the window, so it collects far more of the flow than one
-		// posted at the top and left there.
-		assertTrue(posted.fillPerHour() > chasing.fillPerHour(),
-				"paying the chase up front should collect more of the flow: "
-						+ posted.fillPerHour() + " vs " + chasing.fillPerHour());
-	}
-
-	/**
-	 * A premium that would post over the chase stop is refused outright.
-	 *
-	 * <p>The margin floor is also the ceiling on the price: an order above {@code npc x (1 - floor)}
-	 * is one the mod would refuse to reprice to, so it must refuse to open one there. Charging the
-	 * cost and checking the cost is not the same test once the premium has separated the price the
-	 * player types from the coins the trade spends.
-	 */
-	@Test
-	void refusesAPremiumThatWouldPostOverTheChaseStop() {
-		// 20% margin, floor 15%, so the stop is 850. A drift of 20 coins an hour is 160 over the
-		// window, which posts at 960.1 - past the stop, though the coins are the same either way.
-		BazaarProduct product = product(800.0d, 1100.0d, 40, 50_000_000L);
-		ItemCatalog catalog = npcCatalog(1000.0d, false);
-
-		NpcContext steep = new NpcContext(npcEdges(1000.0d, 0.99d, 20.0d),
-				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 8.0d,
-				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED,
-				NpcContext.UNLIMITED_ORDERS_PER_ITEM, 1.0d, NpcRanking.LOAD);
-
-		assertTrue(new NpcFlipStrategy()
-				.findCandidates(npcContext(product, catalog, steep, new Fees(0, false)))
-				.isEmpty(), "a premium past the chase stop is not a plan");
-	}
-
-	/**
-	 * The same product and book at a stated premium, with everything else shipped.
-	 *
-	 * <p>Measured displacement is what the premium acts on, so the tape has to say something: with
-	 * no {@code FillStats} the model falls back to a flat share of the flow and every horizon and
-	 * every premium size the same plan.
-	 */
-	private static NpcPlan npcPremiumPlan(BazaarProduct product, ItemCatalog catalog,
-			double premium) {
-		NpcContext npc = new NpcContext(npcEdges(1000.0d, 0.99d, 5.0d),
-				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 8.0d,
-				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED,
-				NpcContext.UNLIMITED_ORDERS_PER_ITEM, premium, NpcRanking.LOAD);
 		TrendSnapshot trends = new TrendSnapshot(Map.of(), Map.of("TEST_ITEM", fills(4.0d)),
 				Map.of(), Duration.ofHours(24), 288, Instant.now());
 
-		return NpcFlipStrategy
-				.restingPlans(npcContext(product, catalog, npc, new Fees(0, false), trends, BANKROLL))
+		// 5 coins an hour over an 8-hour window: 40 coins of chase on an 800.1 post.
+		NpcPlan plan = NpcFlipStrategy.restingPlans(npcContext(product, catalog,
+						npcDrifting(5.0d), new Fees(0, false), trends, BANKROLL))
 				.getFirst();
+
+		assertEquals(800.1d, plan.postPrice(), 1e-6);
+		assertEquals(840.1d, plan.unitCost(), 1e-6);
+		assertEquals(40.0d, plan.chaseCost(), 1e-6);
+	}
+
+	/** The shipped context over one product's measured upward drift, in coins an hour. */
+	private static NpcContext npcDrifting(double driftPerHour) {
+		return new NpcContext(npcEdges(1000.0d, 0.99d, driftPerHour),
+				NpcContext.DEFAULT_MIN_MARGIN_RATIO, NpcContext.DEFAULT_CHECK_IN, 8.0d,
+				NpcContext.ALL_ORDER_SLOTS, NpcContext.CAP_UNLIMITED);
 	}
 
 	@Test

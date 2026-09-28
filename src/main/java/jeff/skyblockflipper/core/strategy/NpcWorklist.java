@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.model.BazaarProduct;
@@ -94,8 +111,7 @@ public final class NpcWorklist {
 			String orderSplit,
 			double profit,
 			long capital,
-			String reason,
-			boolean postsAboveBook
+			String reason
 	) {
 		public boolean needsClick() {
 			return kind != Kind.HOLD;
@@ -396,10 +412,45 @@ public final class NpcWorklist {
 	 */
 	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
 			NpcRound round, Set<String> filled, Map<String, Long> cancelledAt) {
+		return of(resting, context, now, round, filled, cancelledAt, Set.of());
+	}
+
+	/**
+	 * The same trip, told which resting orders belong to another strategy.
+	 *
+	 * <p>The one thing the orders menu cannot say: whose flip a buy order is. A buy order on an
+	 * NPC-sellable item looks identical whether the player placed it to sell to the NPC or to feed a
+	 * craft, a combine or the buy leg of a spread - and without this the NPC side reviewed all of
+	 * them, so a combine source order or a craft ingredient got a reprice or a cancel the moment its
+	 * window ran out. Reported from play.
+	 *
+	 * <p>A foreign order is <b>reserved but never reviewed</b>. Its slot is subtracted from the basket
+	 * so the plan cannot try to place an NPC order into a slot the book physically holds - slots bind,
+	 * which is the whole shape of this strategy - but no claim, reprice, cancel or hold task is emitted
+	 * for it, because it is not the NPC side's to touch. Its coins are left out of the reservation:
+	 * coins do not bind, and the NPC bankroll is already the coins earmarked for NPC flips, so counting
+	 * a combine order's capital against it would shrink the basket twice for one budget.
+	 *
+	 * @param foreign item ids the player is flipping under a non-NPC strategy, from
+	 *                {@code FlipIntents.foreignItems}. Empty is the old behaviour: every resting buy
+	 *                order is the NPC side's to review
+	 */
+	public static Worklist of(List<NpcReprice.Order> resting, StrategyContext context, long now,
+			NpcRound round, Set<String> filled, Map<String, Long> cancelledAt, Set<String> foreign) {
+		// Orders on an item the player is running another strategy on are set aside before the review
+		// ever sees them: they hold a slot the basket must respect, but they are not repriced, cancelled
+		// or held by the NPC side.
+		List<NpcReprice.Order> mine = new ArrayList<>();
+		List<NpcReprice.Order> foreignOrders = new ArrayList<>();
+
+		for (NpcReprice.Order order : resting) {
+			(foreign.contains(order.itemId()) ? foreignOrders : mine).add(order);
+		}
+
 		// A reprice is only worth what it fills before the next trip, so a round part way through
 		// values its rows over what is left of it. Null is a full interval, not no time at all.
 		Duration horizon = round == null ? null : round.remaining(now);
-		List<NpcReprice.Advice> advice = NpcReprice.review(resting, context, now, horizon);
+		List<NpcReprice.Advice> advice = NpcReprice.review(mine, context, now, horizon);
 
 		// Only the orders the review recognised. One it dropped - an item no NPC buys, or a product
 		// missing from this snapshot - is not an NPC position, so charging the basket a slot for it
@@ -414,7 +465,8 @@ public final class NpcWorklist {
 		// must not happen. See NpcReprice.repriceNow.
 		List<LivePlan> plans = livePlans(rows, context);
 		List<NpcRound.Row> working = plans.stream().map(LivePlan::row).toList();
-		NpcBasket.Basket basket = NpcBasket.plan(context, reserve(recognised, working, advice));
+		NpcBasket.Basket basket = NpcBasket.plan(context,
+				reserve(recognised, working, advice, foreignOrders));
 
 		List<Task> tasks = new ArrayList<>();
 
@@ -502,7 +554,7 @@ public final class NpcWorklist {
 	 * a position is sized on what its orders were placed for rather than on what is still unfilled.
 	 */
 	private static NpcBasket.Held reserve(List<NpcReprice.Order> resting, List<NpcRound.Row> rows,
-			List<NpcReprice.Advice> advice) {
+			List<NpcReprice.Advice> advice, List<NpcReprice.Order> foreign) {
 		Map<String, Reservation> perItem = new LinkedHashMap<>();
 
 		for (NpcReprice.Order order : resting) {
@@ -511,6 +563,17 @@ public final class NpcWorklist {
 			held.orders++;
 			held.units += order.total();
 			held.capital += Math.round(order.unitPrice() * order.remaining());
+		}
+
+		// Another strategy's orders hold their slots against the basket - slots bind - but not their
+		// coins, which are not the NPC bankroll, and never their advice, which is not the NPC side's to
+		// give. Marked spoken for so the basket leaves the item alone rather than topping it up.
+		for (NpcReprice.Order order : foreign) {
+			Reservation held = perItem.computeIfAbsent(order.itemId(), id -> new Reservation());
+
+			held.orders++;
+			held.units += order.total();
+			held.spokenFor = true;
 		}
 
 		for (NpcRound.Row row : rows) {
@@ -562,7 +625,7 @@ public final class NpcWorklist {
 				.map(entry -> new Task(Kind.CLAIM, entry.order().itemId(),
 						entry.order().displayName(), 0.0d, entry.order().unclaimed(),
 						String.valueOf(entry.order().unclaimed()), entry.claimableProfit(), 0L,
-						claimReason(entry), false))
+						claimReason(entry)))
 				.toList();
 	}
 
@@ -592,7 +655,7 @@ public final class NpcWorklist {
 				.map(entry -> new Task(Kind.CANCEL, entry.order().itemId(),
 						entry.order().displayName(), 0.0d, entry.order().remaining(),
 						String.valueOf(entry.order().remaining()), 0.0d, entry.capitalAtStake(),
-						entry.reason(), false))
+						entry.reason()))
 				.sorted(Comparator.comparingLong(Task::capital).reversed())
 				.toList();
 	}
@@ -604,7 +667,7 @@ public final class NpcWorklist {
 				.map(entry -> new Task(Kind.REPRICE, entry.order().itemId(),
 						entry.order().displayName(), entry.postPrice(), entry.order().remaining(),
 						String.valueOf(entry.order().remaining()), entry.profitAtStake(),
-						entry.capitalAtStake(), entry.reason(), false))
+						entry.capitalAtStake(), entry.reason()))
 				.sorted(Comparator.comparingDouble(Task::profit).reversed())
 				.toList();
 	}
@@ -657,8 +720,8 @@ public final class NpcWorklist {
 			tasks.add(new Task(Kind.REPRICE, row.itemId(), row.displayName(), price,
 					row.units(), Stacking.orderSplit(row.units(), perOrder),
 					plan.live().profitAtStake(), capital,
-					repriceReason(row, price, perOrder, placeFirst, capital, plan.live().chaseStop()),
-					false));
+					repriceReason(row, price, perOrder, placeFirst, capital,
+							plan.live().chaseStop())));
 		}
 
 		return tasks;
@@ -713,7 +776,7 @@ public final class NpcWorklist {
 		return basket.lines().stream()
 				.map(line -> new Task(Kind.PLACE, line.plan().itemId(), line.plan().displayName(),
 						line.plan().postPrice(), line.units(), line.orderSplit(), line.profit(),
-						line.capital(), placeReason(line, context), line.plan().postsAboveBook()))
+						line.capital(), placeReason(line, context)))
 				.toList();
 	}
 
@@ -787,7 +850,7 @@ public final class NpcWorklist {
 		return new Task(Kind.HOLD, entry.order().itemId(), entry.order().displayName(),
 				entry.order().unitPrice(), entry.order().remaining(),
 				String.valueOf(entry.order().remaining()), entry.profitAtStake(),
-				entry.capitalAtStake(), reason, false);
+				entry.capitalAtStake(), reason);
 	}
 
 	private static String waitingReason(NpcReprice.Advice entry) {

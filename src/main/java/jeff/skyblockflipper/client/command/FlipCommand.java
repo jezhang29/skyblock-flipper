@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.command;
 
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -11,10 +28,13 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.FlipIntentsService;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
 import jeff.skyblockflipper.client.NpcCheckInService;
 import jeff.skyblockflipper.client.NpcProbeService;
+import jeff.skyblockflipper.client.RecoveryFeed;
+import jeff.skyblockflipper.client.RecoveryAlertService;
 import jeff.skyblockflipper.client.TapeSyncService;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
 import jeff.skyblockflipper.client.gui.FlipKeybinds;
@@ -30,14 +50,17 @@ import jeff.skyblockflipper.core.model.BazaarSnapshot;
 import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcProbe;
 import jeff.skyblockflipper.core.strategy.NpcReprice;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.track.BazaarSlots;
+import jeff.skyblockflipper.core.track.TrackedOrder;
 import jeff.skyblockflipper.core.track.CaptureLog;
 import jeff.skyblockflipper.core.track.CapturedMenu;
 import jeff.skyblockflipper.core.track.CapturedSlot;
@@ -57,6 +80,7 @@ import net.minecraft.network.chat.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -132,11 +156,48 @@ public final class FlipCommand {
 										.suggests(FlipCommand::suggestBazaarItems)
 										.executes(ctx -> startProbe(ctx.getSource(),
 												StringArgumentType.getString(ctx, "id"))))))
+				.then(ClientCommands.literal("craft")
+						.executes(ctx -> {
+							showCrafts(ctx.getSource());
+							return 1;
+						})
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopCraft(ctx.getSource()))))
+				.then(ClientCommands.literal("combine")
+						.executes(ctx -> {
+							showCombines(ctx.getSource());
+							return 1;
+						})
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopCombine(ctx.getSource()))))
+				.then(ClientCommands.literal("fusion")
+						.executes(ctx -> {
+							showFusions(ctx.getSource());
+							return 1;
+						})
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopFusion(ctx.getSource()))))
+				.then(ClientCommands.literal("jobs")
+						.executes(ctx -> showJobs(ctx.getSource()))
+						.then(ClientCommands.literal("stop")
+								.executes(ctx -> stopJobs(ctx.getSource(), null))
+								// Greedy, because the way in is the name off the screen and names
+								// have spaces in them.
+								.then(ClientCommands.argument("id", StringArgumentType.greedyString())
+										.suggests(FlipCommand::suggestWorkedItems)
+										.executes(ctx -> stopJobs(ctx.getSource(),
+												StringArgumentType.getString(ctx, "id"))))))
 				.then(ClientCommands.literal("snipe")
 						.executes(ctx -> {
 							showSnipes(ctx.getSource());
 							return 1;
 						}))
+				.then(ClientCommands.literal("recovery")
+						.executes(ctx -> showRecovery(ctx.getSource(), null))
+						.then(ClientCommands.argument("uuid", StringArgumentType.word())
+								.suggests(FlipCommand::suggestRecoveryUuids)
+								.executes(ctx -> showRecovery(ctx.getSource(),
+										StringArgumentType.getString(ctx, "uuid")))))
 				.then(ClientCommands.literal("guide")
 						.executes(ctx -> {
 							showGuide(ctx.getSource(), null);
@@ -234,6 +295,8 @@ public final class FlipCommand {
 								MarketDataService.restart();
 								// A new bankroll changes the ranking without the book moving.
 								CandidateFeed.invalidate();
+								RecoveryFeed.invalidate();
+								RecoveryAlertService.invalidate();
 								ctx.getSource().sendFeedback(Chat.prefixed(
 										Component.literal("Config reloaded.").withStyle(ChatFormatting.GREEN)));
 								return 1;
@@ -328,10 +391,11 @@ public final class FlipCommand {
 	/**
 	 * Quotes the premium price for one item and starts watching what happens to an order there.
 	 *
-	 * <p>Settles the one assumption behind {@code npcDriftPremium} that no amount of tape can:
-	 * every sample on the tape came from a book with none of the player's orders in it, so whether
-	 * competitors re-post above whatever is on top is unobservable from outside. One order and one
-	 * session answers it. See {@link NpcProbe}.
+	 * <p>Settles the one assumption no amount of tape can: every sample on it came from a book with
+	 * none of the player's orders in it, so whether competitors re-post above whatever is on top is
+	 * unobservable from outside. One order and one session answers it. It answered no on 2026-08-16,
+	 * which is why the mod no longer posts above the book at all - so this is now an experiment
+	 * rather than a setup step, and the only thing that could re-open that. See {@link NpcProbe}.
 	 */
 	private static int startProbe(FabricClientCommandSource source, String id) {
 		if (!marketReady(source)) {
@@ -371,10 +435,9 @@ public final class FlipCommand {
 			return 0;
 		}
 
-		// The premium the settings ask for, or a quarter of the drift where they ask for none - which
-		// is the measured peak, and the number somebody probing before turning the setting on wants.
-		double multiple = config.npcDriftPremium > 0.0d ? config.npcDriftPremium : DEFAULT_PROBE_PREMIUM;
-		double premium = multiple * edge.bidDriftPerHour() * config.npcRestingHours;
+		// Fixed rather than read from a setting: paying a premium is no longer something the strategy
+		// does, so this is the experiment that would have to produce new evidence before it were.
+		double premium = DEFAULT_PROBE_PREMIUM * edge.bidDriftPerHour() * config.npcRestingHours;
 		double price = outbid.getAsDouble() + premium;
 
 		if (premium <= 0.0d) {
@@ -391,7 +454,7 @@ public final class FlipCommand {
 				.withStyle(ChatFormatting.GREEN)));
 		line(source, "post one buy order at", String.format("%.1f", price));
 		line(source, "which is", String.format("%.1f above the book, %.2gx the %.1fh drift",
-				premium, multiple, config.npcRestingHours));
+				premium, DEFAULT_PROBE_PREMIUM, config.npcRestingHours));
 		line(source, "then", "leave it. /flip npc probe says whether anything outbid it.");
 		source.sendFeedback(Component.literal(
 						"  Being outbid by 0.1 is the increment button and is expected - watch for an "
@@ -506,11 +569,12 @@ public final class FlipCommand {
 	}
 
 	/**
-	 * The premium to probe with when the setting is still off.
+	 * The premium to probe with.
 	 *
-	 * <p>A whole window's drift, which is the setting worth turning on: the shipped fill model is
-	 * conservative about a premium and its own arithmetic peaks there. See
-	 * {@code FlipperConfig.npcDriftPremium}.
+	 * <p>A whole resting window's measured drift, which is the largest premium the strategy ever
+	 * asked for while it asked for one. The probe is asking whether a competitor will climb above
+	 * your order whatever you paid, so the useful test is the generous end: an order that cannot
+	 * hold the top at a full window's drift will not hold it at less.
 	 */
 	private static final double DEFAULT_PROBE_PREMIUM = 1.0d;
 
@@ -597,6 +661,90 @@ public final class FlipCommand {
 		return 1;
 	}
 
+	/**
+	 * Every flip being worked, as the clicks each one still needs.
+	 *
+	 * <p>The chat twin of the bazaar panel and the Jobs tab, and it renders the same
+	 * {@link WorkedJob} rows, so none of the three can quote a different price for one line.
+	 */
+	private static int showJobs(FabricClientCommandSource source) {
+		List<WorkedJob> jobs = CandidateFeed.jobs();
+
+		if (jobs.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"No flips are being worked - pick one in /flip gui and press Work.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 0;
+		}
+
+		List<TrackedOrder> orders = TrackerService.orders();
+
+		for (WorkedJob job : jobs) {
+			source.sendFeedback(Component.literal(job.displayName() + " - "
+					+ job.kind().label()).withStyle(ChatFormatting.GOLD));
+
+			if (!job.note().isEmpty()) {
+				source.sendFeedback(Component.literal("  " + job.note())
+						.withStyle(ChatFormatting.YELLOW));
+				continue;
+			}
+
+			for (WorkedJob.Step step : job.steps()) {
+				source.sendFeedback(Component.literal("  " + job.describe(step, orders))
+						.withStyle(ChatFormatting.GRAY));
+			}
+		}
+
+		if (orders.isEmpty()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Turn on autoTrackEnabled to see which steps are done.")
+					.withStyle(ChatFormatting.DARK_GRAY)));
+		}
+
+		return 1;
+	}
+
+	/** Stops working one flip by name, or all of them when none is named. */
+	private static int stopJobs(FabricClientCommandSource source, String name) {
+		if (name == null) {
+			int dropped = CandidateFeed.stopWork();
+
+			source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
+					? "No flips were being worked."
+					: "Stopped working " + dropped + (dropped == 1 ? " flip." : " flips."))
+					.withStyle(ChatFormatting.GRAY)));
+			return 1;
+		}
+
+		for (WorkedJob job : CandidateFeed.jobs()) {
+			if (job.displayName().equalsIgnoreCase(name) || job.itemId().equalsIgnoreCase(name)) {
+				CandidateFeed.stopWork(job.itemId());
+				source.sendFeedback(Chat.prefixed(Component.literal(
+						"Stopped working " + job.displayName() + ".")
+						.withStyle(ChatFormatting.GRAY)));
+				return 1;
+			}
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Nothing called \"" + name + "\" is being worked.")
+				.withStyle(ChatFormatting.YELLOW)));
+		return 0;
+	}
+
+	private static CompletableFuture<Suggestions> suggestWorkedItems(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+
+		for (WorkedJob job : CandidateFeed.jobs()) {
+			if (job.displayName().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(job.displayName());
+			}
+		}
+
+		return builder.buildFuture();
+	}
+
 	/** Whether there is a book to answer with, with the reason there is not if there is not. */
 	private static boolean marketReady(FabricClientCommandSource source) {
 		if (MarketDataService.data().hasBazaar()) {
@@ -615,6 +763,123 @@ public final class FlipCommand {
 	 * Auction flips get their own explanation of why the list is empty, because there are several
 	 * quite different reasons and "nothing found" reads like a broken feature for all of them.
 	 */
+	/**
+	 * Craft flips, with the one refusal worth explaining said out loud.
+	 *
+	 * <p>An empty list with crafting switched off looks exactly like an empty list with nothing
+	 * profitable on the book, and the player has no way to tell which they are looking at.
+	 */
+	private static void showCrafts(FabricClientCommandSource source) {
+		if (!SkyblockFlipperClient.config().craftFlipsEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Craft flips are off - turn them on in /flip config edit.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		reportWorked(source, StrategyKind.CRAFT, "/flip craft stop");
+
+		showTop(source, StrategyKind.CRAFT, "Best things to craft and sell");
+	}
+
+	/** Stops working every craft, leaving any combine or spread job on the panel. */
+	private static int stopCraft(FabricClientCommandSource source) {
+		int dropped = CandidateFeed.stopWork(StrategyKind.CRAFT);
+
+		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
+				? "No craft was being worked."
+				: "Stopped working " + dropped + (dropped == 1 ? " craft." : " crafts."))
+				.withStyle(ChatFormatting.GRAY)));
+
+		return 1;
+	}
+
+	/**
+	 * Combine flips, ranked here rather than in the main list because their edge is per anvil click,
+	 * not per hour, so profit-per-hour ranking buries them.
+	 *
+	 * <p>Says so out loud when combining is off, for the same reason craft does: an empty list with
+	 * the strategy switched off looks identical to one with nothing profitable on the book.
+	 */
+	private static void showCombines(FabricClientCommandSource source) {
+		if (!SkyblockFlipperClient.config().combineFlipsEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Combine flips are off - turn them on in /flip config edit.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		reportWorked(source, StrategyKind.COMBINE, "/flip combine stop");
+
+		showTop(source, StrategyKind.COMBINE, "Best books to combine and sell");
+	}
+
+	/** Stops working every combine, leaving any craft or spread job on the panel. */
+	private static int stopCombine(FabricClientCommandSource source) {
+		int dropped = CandidateFeed.stopWork(StrategyKind.COMBINE);
+
+		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
+				? "No combine was being worked."
+				: "Stopped working " + dropped + (dropped == 1 ? " combine." : " combines."))
+				.withStyle(ChatFormatting.GRAY)));
+
+		return 1;
+	}
+
+	/**
+	 * Fusion flips: buy cheap attribute shards, fuse them up, sell the output. Its own list, ranked by
+	 * profit per hour, with net per fusion click in the notes for a click-limited player.
+	 */
+	private static void showFusions(FabricClientCommandSource source) {
+		if (!SkyblockFlipperClient.config().fusionFlipsEnabled) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Fusion flips are off - turn them on in /flip config edit.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return;
+		}
+
+		reportWorked(source, StrategyKind.FUSION, "/flip fusion stop");
+
+		showTop(source, StrategyKind.FUSION, "Best shards to fuse and sell");
+	}
+
+	/** Stops working every fusion, leaving any other job on the panel. */
+	private static int stopFusion(FabricClientCommandSource source) {
+		int dropped = CandidateFeed.stopWork(StrategyKind.FUSION);
+
+		source.sendFeedback(Chat.prefixed(Component.literal(dropped == 0
+				? "No fusion was being worked."
+				: "Stopped working " + dropped + (dropped == 1 ? " fusion." : " fusions."))
+				.withStyle(ChatFormatting.GRAY)));
+
+		return 1;
+	}
+
+	/**
+	 * What of this strategy is already being worked, said before the ranking rather than after it.
+	 *
+	 * <p>A player who has four flips open and asks for the list needs to know which of the rows
+	 * below they are already standing on, or they pick the same one twice.
+	 */
+	private static void reportWorked(FabricClientCommandSource source, StrategyKind kind,
+			String stopCommand) {
+		List<String> names = new ArrayList<>();
+
+		for (WorkedJob job : CandidateFeed.jobs()) {
+			if (job.kind() == kind) {
+				names.add(job.displayName());
+			}
+		}
+
+		if (names.isEmpty()) {
+			return;
+		}
+
+		source.sendFeedback(Chat.prefixed(Component.literal(
+				"Working " + String.join(", ", names) + " - /flip jobs for the steps, "
+						+ stopCommand + " to leave them.").withStyle(ChatFormatting.GRAY)));
+	}
+
 	private static void showSnipes(FabricClientCommandSource source) {
 		FlipperConfig config = SkyblockFlipperClient.config();
 		MarketData data = MarketDataService.data();
@@ -643,6 +908,49 @@ public final class FlipCommand {
 		showTop(source, StrategyKind.AUCTION_VALUE, "Listings below fair value");
 	}
 
+	private static int showRecovery(FabricClientCommandSource source, String uuid) {
+		FlipperConfig config = SkyblockFlipperClient.config();
+		MarketData data = MarketDataService.data();
+		if (!config.scanAuctions) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"Auction scanning is off - recovery uses that same sweep and makes no extra requests.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 1;
+		}
+		if (!data.hasScannedAuctions()) {
+			source.sendFeedback(Chat.prefixed(Component.literal(
+					"First shared auction sweep has not finished yet.")
+					.withStyle(ChatFormatting.YELLOW)));
+			return 1;
+		}
+		List<RecoveryOpportunity> opportunities = RecoveryFeed.current();
+		if (uuid == null) {
+			RecoveryRenderer.renderList(source, opportunities);
+			return 1;
+		}
+		Optional<RecoveryOpportunity> selected = opportunities.stream()
+				.filter(value -> value.auctionUuid().equalsIgnoreCase(uuid)).findFirst();
+		if (selected.isEmpty()) {
+			source.sendError(Component.literal(
+					"That auction UUID is not in the current recovery snapshot.")
+					.withStyle(ChatFormatting.RED));
+			return 0;
+		}
+		RecoveryRenderer.renderDetail(source, selected.orElseThrow());
+		return 1;
+	}
+
+	private static CompletableFuture<Suggestions> suggestRecoveryUuids(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		String typed = builder.getRemaining().toLowerCase(Locale.ROOT);
+		for (RecoveryOpportunity opportunity : RecoveryFeed.current()) {
+			if (opportunity.auctionUuid().toLowerCase(Locale.ROOT).startsWith(typed)) {
+				builder.suggest(opportunity.auctionUuid());
+			}
+		}
+		return builder.buildFuture();
+	}
+
 	/** Records the flip on the line the player is looking at, at the numbers they saw. */
 	private static int take(FabricClientCommandSource source, int rank) {
 		List<FlipCandidate> shown = CandidateRenderer.lastShown();
@@ -663,6 +971,8 @@ public final class FlipCommand {
 
 		try {
 			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
+			// So the NPC side does not later adopt this buy order as its own, on an item it could sell.
+			FlipIntentsService.record(candidate.itemId(), candidate.kind(), System.currentTimeMillis());
 
 			source.sendFeedback(Chat.prefixed(Component.literal("Took " + entry.displayName() + " as ")
 					.withStyle(ChatFormatting.WHITE)
@@ -1121,7 +1431,6 @@ public final class FlipCommand {
 				+ String.format("%.2gh", config.npcRestingHours) + " resting, "
 				+ config.npcCheckInMinutes + "m reprice rounds");
 		line(source, "min profit per flip", Chat.coins(config.minProfitPerFlip));
-		line(source, "min confidence", String.format("%.2f", config.minConfidence));
 		line(source, "max adverse drift", config.maxAdverseDrift <= 0.0d
 				? "off"
 				: String.format("%.1f%%", config.maxAdverseDrift * 100.0d));

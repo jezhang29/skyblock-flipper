@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.api;
 
 import jeff.skyblockflipper.core.item.DecodedItem;
@@ -11,11 +28,22 @@ import jeff.skyblockflipper.core.model.ItemCatalog;
 import jeff.skyblockflipper.core.model.MayorInfo;
 import jeff.skyblockflipper.core.model.UpgradeCost;
 import jeff.skyblockflipper.core.model.dto.AuctionsDto;
+import jeff.skyblockflipper.core.pricing.CombineQuote;
+import jeff.skyblockflipper.core.pricing.CraftQuote;
+import jeff.skyblockflipper.core.pricing.Fees;
+import jeff.skyblockflipper.core.pricing.FusionQuote;
+import jeff.skyblockflipper.core.recipe.FusionTable;
+import jeff.skyblockflipper.core.strategy.CombineJob;
+import jeff.skyblockflipper.core.strategy.CombineTable;
+import jeff.skyblockflipper.core.strategy.FusionJob;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
 import java.util.zip.GZIPInputStream;
 
@@ -199,5 +227,118 @@ class LiveApiTest {
 
 		assertTrue(mayor.isKnown());
 		assertFalse(mayor.name().isBlank());
+	}
+
+	/**
+	 * Prints the shipped combine picks against the live book, one row per allowlist enchant, so
+	 * {@code docs/combine-flipping.md}'s table can be re-measured. Not an assertion of Hypixel
+	 * behaviour like the others: it exists to answer "which tier does the current selection rule buy,
+	 * and what does it pay", which only the live book can settle. Read the stdout, update the doc.
+	 */
+	@Test
+	void printLiveCombinePicks() throws Exception {
+		BazaarSnapshot bazaar = api.fetchBazaar();
+		ItemCatalog catalog = api.fetchItems();
+		Fees fees = new Fees(1, false);
+		CraftQuote.FillHistory history = CraftQuote.FillHistory.none();
+		Duration horizon = Duration.ofHours(1);
+		long maxCapital = 1_000_000_000L;
+
+		System.out.println("=== live combine picks, Bazaar Flipper 1, 1h horizon, 5% flow ===");
+		System.out.printf("%-26s %-8s %-11s %6s %14s %14s %12s%n",
+				"enchant", "src->T", "route", "merges", "net/combine", "net/output", "profit/hr");
+
+		List<CombineQuote> picks = new ArrayList<>();
+		List<String> rejected = new ArrayList<>();
+
+		for (CombineTable.Entry entry : CombineTable.all()) {
+			BazaarProduct target = bazaar.product(entry.targetId()).orElse(null);
+			int askOrders = target == null ? 0 : target.sellOfferCount();
+			CombineQuote quote = CombineQuote
+					.quote(entry, bazaar, fees, history, horizon, maxCapital)
+					.orElse(null);
+
+			if (quote == null) {
+				rejected.add(String.format("%-26s target ask orders=%d (gate %d), no clearing plan",
+						CombineJob.nameOf(entry, entry.maxTier(), catalog), askOrders,
+						CombineQuote.MIN_TARGET_ASK_ORDERS));
+				continue;
+			}
+
+			picks.add(quote);
+		}
+
+		picks.sort(Comparator.comparingDouble(CombineQuote::netPerCombine).reversed());
+
+		for (CombineQuote q : picks) {
+			CombineTable.Entry e = q.entry();
+			System.out.printf("%-26s %-8s %-11s %6d %14s %14s %12s%n",
+					CombineJob.nameOf(e, e.maxTier(), catalog),
+					q.sourceTier() + "->" + e.maxTier(),
+					q.route(),
+					e.combinesPerOutput(q.sourceTier()),
+					String.format("%,d", Math.round(q.netPerCombine())),
+					String.format("%,d", Math.round(q.netPerOutput())),
+					String.format("%,d", Math.round(q.profitPerHour())));
+		}
+
+		System.out.println("--- rejected (no plan clears the gate) ---");
+		rejected.forEach(System.out::println);
+
+		assertFalse(bazaar.isEmpty());
+	}
+
+	/**
+	 * Prints the shipped fusion picks against the live book, so {@code docs/fusion-flipping.md}'s table
+	 * can be re-measured. The twin of {@link #printLiveCombinePicks}: it answers "which output shards
+	 * clear, at what depth, and what do they pay", which only the live book can settle. Read the
+	 * stdout, update the doc. Crocodile level 0 (no reptile bonus), the conservative default.
+	 */
+	@Test
+	void printLiveFusionPicks() throws Exception {
+		BazaarSnapshot bazaar = api.fetchBazaar();
+		ItemCatalog catalog = api.fetchItems();
+		Fees fees = new Fees(1, false);
+		FusionTable table = FusionTable.bundled();
+		CraftQuote.FillHistory history = CraftQuote.FillHistory.none();
+		Duration horizon = Duration.ofHours(1);
+		long maxCapital = 1_000_000_000L;
+
+		System.out.println("=== live fusion picks, Bazaar Flipper 1, 1h horizon, 5% flow, croc 0 ===");
+		System.out.println("missing bazaar products: " + table.missingProducts(bazaar));
+		System.out.printf("%-24s %6s %6s %14s %14s %12s%n",
+				"output", "leaves", "clicks", "net/click", "net/output", "profit/hr");
+
+		FusionQuote.Solver solver = FusionQuote.solver(table, bazaar, 0);
+		List<FusionQuote> picks = new ArrayList<>();
+
+		for (String output : table.outputs()) {
+			FusionQuote.quote(solver, output, fees, history, horizon, maxCapital)
+					.filter(q -> q.netPerOutput() > 0.0d)
+					.ifPresent(picks::add);
+		}
+
+		picks.sort(Comparator.comparingDouble(FusionQuote::netPerOutput).reversed());
+
+		int singleStep = 0;
+
+		for (FusionQuote q : picks) {
+			if (q.fusions().size() == 1) {
+				singleStep++;
+			}
+
+			System.out.printf("%-24s %6d %6d %14s %14s %12s%n",
+					FusionJob.nameOf(q.outputId(), catalog),
+					q.leaves().size(),
+					q.totalFusions(),
+					String.format("%,d", Math.round(q.netPerFusion())),
+					String.format("%,d", Math.round(q.netPerOutput())),
+					String.format("%,d", Math.round(q.profitPerHour())));
+		}
+
+		System.out.printf("%d outputs clear, %d of them single-step. First play-test a single-step "
+				+ "row before trusting a deep tree.%n", picks.size(), singleStep);
+
+		assertFalse(bazaar.isEmpty());
 	}
 }

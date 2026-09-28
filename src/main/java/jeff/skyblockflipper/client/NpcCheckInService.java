@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client;
 
 import jeff.skyblockflipper.client.track.TrackerService;
@@ -143,7 +160,8 @@ public final class NpcCheckInService {
 		// whole basket - a pass over every product on the book - for a player who has not asked for
 		// one. It is the same NpcReprice.review the worklist runs on the same orders, so the two
 		// cannot disagree about what needs a click, and the round supplies the reprices either way.
-		List<NpcReprice.Advice> advice = NpcReprice.review(TrackerService.restingBuyOrders(),
+		List<NpcReprice.Advice> advice = NpcReprice.review(
+				FlipIntentsService.mine(TrackerService.restingBuyOrders(), now),
 				CandidateFeed.context(), now);
 
 		NpcCheckIn.due(advice, config.minProfitPerFlip, round)

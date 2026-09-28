@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.track;
 
 import jeff.skyblockflipper.SkyblockFlipper;
@@ -99,6 +116,17 @@ public final class TrackerService {
 		}
 
 		return tracker;
+	}
+
+	/**
+	 * Every order the tracker holds, or nothing when auto-tracking is off.
+	 *
+	 * <p>What the worked-job panel measures progress against. Empty rather than absent when tracking
+	 * is off, because the caller's answer is the same either way - no step can be marked done - and
+	 * an empty list says that without every view having to test the setting.
+	 */
+	public static List<TrackedOrder> orders() {
+		return enabled() ? tracker().orders() : List.of();
 	}
 
 	/**

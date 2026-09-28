@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.text;
 
 import org.junit.jupiter.api.Test;
@@ -28,7 +45,9 @@ class GuideTest {
 	 * the two has been changed without the other.
 	 */
 	private static final Set<String> COMMANDS = Set.of(
-			"", "bazaar", "npc", "npc plan", "npc reprice", "snipe", "guide", "status", "config",
+			"", "bazaar", "npc", "npc plan", "npc reprice", "craft", "craft stop", "combine",
+			"combine stop", "fusion", "fusion stop", "jobs", "jobs stop", "snipe", "guide",
+			"status", "config",
 			"config edit", "take", "close", "abandon", "ledger", "ledger forget", "ledger clear",
 			"ledger clear confirm", "ledger clear unquoted", "ledger clear unquoted confirm", "hud",
 			"capture", "track", "menu", "sync", "gui", "reload");

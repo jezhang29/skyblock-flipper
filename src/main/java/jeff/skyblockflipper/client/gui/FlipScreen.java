@@ -1,21 +1,45 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.gui;
 
 import jeff.skyblockflipper.SkyblockFlipper;
 import jeff.skyblockflipper.client.CandidateFeed;
+import jeff.skyblockflipper.client.FlipIntentsService;
 import jeff.skyblockflipper.client.LedgerService;
 import jeff.skyblockflipper.client.MarketDataService;
+import jeff.skyblockflipper.client.RecoveryFeed;
 import jeff.skyblockflipper.client.SkyblockFlipperClient;
+import jeff.skyblockflipper.client.track.TrackerService;
 import jeff.skyblockflipper.core.api.MarketData;
 import jeff.skyblockflipper.core.ledger.LedgerEntry;
 import jeff.skyblockflipper.core.ledger.LedgerStats;
+import jeff.skyblockflipper.core.recovery.RecoveryComponentQuote;
+import jeff.skyblockflipper.core.recovery.RecoveryOpportunity;
 import jeff.skyblockflipper.core.strategy.FlipCandidate;
 import jeff.skyblockflipper.core.strategy.NpcBasket;
 import jeff.skyblockflipper.core.strategy.NpcPlan;
 import jeff.skyblockflipper.core.strategy.NpcWorklist;
 import jeff.skyblockflipper.core.strategy.StrategyKind;
+import jeff.skyblockflipper.core.strategy.WorkedJob;
 import jeff.skyblockflipper.core.text.Coins;
 import jeff.skyblockflipper.core.text.Guide;
 import jeff.skyblockflipper.core.text.Waits;
+import jeff.skyblockflipper.core.track.TrackedOrder;
 import jeff.skyblockflipper.core.valuation.PriceTrend;
 
 import net.minecraft.ChatFormatting;
@@ -88,7 +112,12 @@ public final class FlipScreen extends Screen {
 		BAZAAR("Bazaar", StrategyKind.BAZAAR_SPREAD),
 		NPC("NPC", StrategyKind.NPC_FLIP),
 		BASKET("Basket", null),
+		JOBS("Jobs", null),
+		CRAFT("Craft", StrategyKind.CRAFT),
+		COMBINE("Combine", StrategyKind.COMBINE),
+		FUSION("Fusion", StrategyKind.FUSION),
 		SNIPE("Snipe", StrategyKind.AUCTION_VALUE),
+		RECOVERY("Recovery", null),
 		LEDGER("Ledger", null),
 		GUIDE("Guide", null);
 
@@ -101,7 +130,8 @@ public final class FlipScreen extends Screen {
 		}
 
 		boolean showsCandidates() {
-			return this != BASKET && this != LEDGER && this != GUIDE;
+			return this != BASKET && this != JOBS && this != RECOVERY
+					&& this != LEDGER && this != GUIDE;
 		}
 
 		/**
@@ -126,12 +156,23 @@ public final class FlipScreen extends Screen {
 	}
 
 	private final CandidateTable table = new CandidateTable();
+	private final RecoveryTable recoveryTable = new RecoveryTable();
 	private final Scroller detailScroll = new Scroller();
 	private final Scroller sideScroll = new Scroller();
 
 	private final TextButton takeButton = new TextButton("Take", this::takeSelected);
 	private final TextButton copyButton = new TextButton("Copy name", this::copySelected);
 	private final TextButton closeButton = new TextButton("Close", this::onClose);
+
+	/**
+	 * Adds the selected flip to the worked list, or takes it off again.
+	 *
+	 * <p>A button rather than the row click, which is what it used to be. Selecting a row is how a
+	 * player reads one - the whole right-hand panel is about the selection - and making that same
+	 * click commit the bazaar panel meant clicking a bazaar row to compare it silently ended the
+	 * craft whose materials were still resting.
+	 */
+	private final TextButton workButton = new TextButton("Work", this::workSelected);
 
 	/** Shares the Take button's slot: the tab showing one never shows the other. */
 	private final TextButton abandonButton = new TextButton("Abandon", this::abandonSelected);
@@ -163,6 +204,7 @@ public final class FlipScreen extends Screen {
 
 	/** Whatever the detail panel was last drawn for, so its scroll can reset when that changes. */
 	private FlipCandidate detailShown;
+	private RecoveryOpportunity recoveryDetailShown;
 
 	/** Ledger tab: the selected open position. */
 	private String selectedPosition = "";
@@ -189,6 +231,21 @@ public final class FlipScreen extends Screen {
 	 */
 	private NpcWorklist.Worklist worklist;
 
+	/**
+	 * Jobs tab: every flip being worked, with the tracked orders their progress is measured against.
+	 *
+	 * <p>Assembled on the same revision rule as the table, never in a render pass: re-planning a
+	 * recipe is a walk over the book, and this screen draws sixty times a second.
+	 */
+	private List<WorkedJob> jobs = List.of();
+	private List<TrackedOrder> jobOrders = List.of();
+
+	/** Jobs tab: the selected job, by item id, and the id each drawn row belongs to. */
+	private String selectedJobId = "";
+	private final List<String> jobRowIds = new ArrayList<>();
+	private int jobRowsTop;
+	private int jobRowHeight = 1;
+
 	/** Basket tab: the selected row, as an index into {@link NpcWorklist.Worklist#tasks()}. */
 	private int selectedLine = -1;
 	private int basketRowsTop;
@@ -210,6 +267,7 @@ public final class FlipScreen extends Screen {
 		viewHeight = Math.round(height / zoom);
 
 		table.setBounds(MARGIN, contentTop(), listWidth(), contentHeight());
+		recoveryTable.setBounds(MARGIN, contentTop(), listWidth(), contentHeight());
 
 		int buttonY = viewHeight - MARGIN - BUTTON_HEIGHT;
 		int takeWidth = takeButton.preferredWidth(font);
@@ -217,6 +275,10 @@ public final class FlipScreen extends Screen {
 
 		takeButton.setBounds(MARGIN, buttonY, takeWidth, BUTTON_HEIGHT);
 		copyButton.setBounds(MARGIN + takeWidth + 4, buttonY, copyWidth, BUTTON_HEIGHT);
+		// Widened for "Stop working", which is the same button with the other label on it - a
+		// button that changes width as the selection changes moves under the cursor.
+		workButton.setBounds(MARGIN + takeWidth + copyWidth + 8, buttonY,
+				font.width(Component.literal("Stop working")) + 8, BUTTON_HEIGHT);
 		int abandonWidth = abandonButton.preferredWidth(font);
 		abandonButton.setBounds(MARGIN, buttonY, abandonWidth, BUTTON_HEIGHT);
 		int basketCopyWidth = basketCopyButton.preferredWidth(font);
@@ -261,7 +323,7 @@ public final class FlipScreen extends Screen {
 	}
 
 	private int contentTop() {
-		return MARGIN + TAB_HEIGHT + 4;
+		return tabRowY(tabRows().size()) + 2;
 	}
 
 	private int contentHeight() {
@@ -306,7 +368,7 @@ public final class FlipScreen extends Screen {
 
 	private void refresh(boolean force) {
 		MarketData data = MarketDataService.data();
-		long revision = data.bazaarRevision();
+		long revision = tab == Tab.RECOVERY ? data.recoveryRevision() : data.bazaarRevision();
 
 		if (!force && revision == renderedRevision) {
 			return;
@@ -315,7 +377,12 @@ public final class FlipScreen extends Screen {
 		renderedRevision = revision;
 
 		if (tab.showsCandidates()) {
-			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH), data.trends());
+			table.setCandidates(CandidateFeed.rank(tab.kind, RANK_DEPTH));
+		} else if (tab == Tab.RECOVERY) {
+			recoveryTable.setRows(RecoveryFeed.current());
+		} else if (tab == Tab.JOBS) {
+			jobs = CandidateFeed.jobs();
+			jobOrders = TrackerService.orders();
 		} else if (tab == Tab.BASKET) {
 			worklist = CandidateFeed.worklist();
 
@@ -363,6 +430,18 @@ public final class FlipScreen extends Screen {
 				renderBasket(graphics, MARGIN, top, listWidth(), panelHeight);
 				renderBasketTotals(graphics, detailX(), top, detailWidth(), panelHeight);
 			}
+			case JOBS -> {
+				panel(graphics, MARGIN, top, listWidth(), panelHeight);
+				panel(graphics, detailX(), top, detailWidth(), panelHeight);
+				renderJobs(graphics, MARGIN, top, listWidth(), panelHeight);
+				renderJobDetail(graphics, detailX(), top, detailWidth(), panelHeight);
+			}
+			case RECOVERY -> {
+				panel(graphics, MARGIN, top, listWidth(), panelHeight);
+				panel(graphics, detailX(), top, detailWidth(), panelHeight);
+				recoveryTable.render(graphics, font, vx, vy);
+				renderRecoveryDetail(graphics, detailX(), top, detailWidth(), panelHeight);
+			}
 			default -> {
 				panel(graphics, MARGIN, top, listWidth(), panelHeight);
 				panel(graphics, detailX(), top, detailWidth(), panelHeight);
@@ -386,26 +465,69 @@ public final class FlipScreen extends Screen {
 	}
 
 	private void renderTabs(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
-		int tabX = MARGIN;
+		List<List<Tab>> rows = tabRows();
 
-		for (Tab candidate : Tab.values()) {
-			int tabWidth = tabWidth(candidate);
-			boolean hovered = mouseX >= tabX && mouseX < tabX + tabWidth
-					&& mouseY >= MARGIN && mouseY < MARGIN + TAB_HEIGHT;
+		for (int row = 0; row < rows.size(); row++) {
+			int tabX = MARGIN;
+			int tabY = tabRowY(row);
 
-			graphics.fill(tabX, MARGIN, tabX + tabWidth, MARGIN + TAB_HEIGHT,
-					candidate == tab ? TAB_ACTIVE : TAB_IDLE);
+			for (Tab candidate : rows.get(row)) {
+				int tabWidth = tabWidth(candidate);
+				boolean hovered = mouseX >= tabX && mouseX < tabX + tabWidth
+						&& mouseY >= tabY && mouseY < tabY + TAB_HEIGHT;
 
-			graphics.text(font, Component.literal(candidate.label),
-					tabX + 7, MARGIN + (TAB_HEIGHT - font.lineHeight) / 2 + 1,
-					candidate == tab || hovered ? TEXT : TEXT_DIM);
+				graphics.fill(tabX, tabY, tabX + tabWidth, tabY + TAB_HEIGHT,
+						candidate == tab ? TAB_ACTIVE : TAB_IDLE);
 
-			tabX += tabWidth + 2;
+				graphics.text(font, Component.literal(candidate.label),
+						tabX + 7, tabY + (TAB_HEIGHT - font.lineHeight) / 2 + 1,
+						candidate == tab || hovered ? TEXT : TEXT_DIM);
+
+				tabX += tabWidth + 2;
+			}
 		}
 	}
 
 	private int tabWidth(Tab candidate) {
 		return font.width(Component.literal(candidate.label)) + 14;
+	}
+
+	/**
+	 * The tabs split into as many rows as this width needs.
+	 *
+	 * <p>They used to be one row that assumed it fit. It did, with seven tabs, right up to the
+	 * width GUI scale 6 leaves - about 330 scaled pixels against 311 of tabs. An eighth tab would
+	 * have run off the right edge and been unclickable, on the setting the user actually plays at.
+	 * Wrapping is measured against {@link #viewWidth} rather than against a tab count, so the next
+	 * tab does not have to rediscover this.
+	 */
+	private List<List<Tab>> tabRows() {
+		List<List<Tab>> rows = new ArrayList<>();
+		List<Tab> row = new ArrayList<>();
+		int tabX = MARGIN;
+
+		for (Tab candidate : Tab.values()) {
+			int tabWidth = tabWidth(candidate);
+
+			if (!row.isEmpty() && tabX + tabWidth > viewWidth - MARGIN) {
+				rows.add(row);
+				row = new ArrayList<>();
+				tabX = MARGIN;
+			}
+
+			row.add(candidate);
+			tabX += tabWidth + 2;
+		}
+
+		if (!row.isEmpty()) {
+			rows.add(row);
+		}
+
+		return rows;
+	}
+
+	private static int tabRowY(int row) {
+		return MARGIN + row * (TAB_HEIGHT + 2);
 	}
 
 	/**
@@ -444,7 +566,7 @@ public final class FlipScreen extends Screen {
 		if (candidate == null) {
 			Component message = Component.literal(table.isEmpty()
 					? "No candidates clear the fee stack right now. That is a normal answer."
-					: "Select a row to see the plan and the risks.");
+					: "Select a row to see the plan.");
 
 			graphics.textWithWordWrap(font, message, x, y, wrapWidth, TEXT_DIM);
 			return y + font.wordWrapHeight(message, wrapWidth);
@@ -461,6 +583,35 @@ public final class FlipScreen extends Screen {
 				x, cursor, TEXT_DIM);
 		cursor += font.lineHeight + 5;
 
+		// A craft flip is a list of clicks to make at a menu you are standing in front of, so the
+		// clicks come first and the arithmetic that justified them comes after. Every other strategy
+		// is one buy and one sell, where the numbers are the plan and the steps restate them.
+		if (candidate.kind() == StrategyKind.CRAFT) {
+			for (String warning : candidate.risks()) {
+				Component text = Component.literal(warning);
+				graphics.textWithWordWrap(font, text, x, cursor, wrapWidth, TEXT_WARN);
+				cursor += font.wordWrapHeight(text, wrapWidth) + 3;
+			}
+
+			cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
+			cursor += 4;
+
+			return figures(graphics, candidate, x, cursor, wrapWidth);
+		}
+
+		cursor = figures(graphics, candidate, x, cursor, wrapWidth);
+
+		cursor += 4;
+		cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
+		cursor += 2;
+		return section(graphics, x, cursor, wrapWidth, "Risks", candidate.risks(), TEXT_WARN);
+	}
+
+	/** The money, the size and how long it takes, in the order those questions get asked. */
+	private int figures(GuiGraphicsExtractor graphics, FlipCandidate candidate, int x, int y,
+			int wrapWidth) {
+		int cursor = y;
+
 		cursor = field(graphics, x, cursor, wrapWidth, "Buy", String.format("%.1f", candidate.unitBuyPrice()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Sell", String.format("%.1f", candidate.unitSellPrice()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Net/unit",
@@ -469,10 +620,6 @@ public final class FlipScreen extends Screen {
 		cursor = field(graphics, x, cursor, wrapWidth, "Capital", Coins.format(candidate.capitalRequired()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Total", Coins.format(candidate.totalNetProfit()));
 		cursor = field(graphics, x, cursor, wrapWidth, "Per hour", Coins.format(candidate.profitPerHour()));
-		cursor = field(graphics, x, cursor, wrapWidth, "ROC",
-				String.format("%.0f%%", candidate.returnOnCapital() * 100.0d));
-		cursor = field(graphics, x, cursor, wrapWidth, "Confidence",
-				String.format("%.2f", candidate.confidence()));
 
 		// Stated as fields rather than left in the prose notes: whether an order fills is the first
 		// question about a resting plan, and it was three paragraphs down.
@@ -495,12 +642,7 @@ public final class FlipScreen extends Screen {
 							MarketDataService.data().trends().window().toHours()));
 		}
 
-		cursor += 4;
-		cursor = section(graphics, x, cursor, wrapWidth, "Notes", candidate.notes(), TEXT_NOTE);
-		cursor += 2;
-		cursor = section(graphics, x, cursor, wrapWidth, "Steps", candidate.steps(), TEXT);
-		cursor += 2;
-		return section(graphics, x, cursor, wrapWidth, "Risks", candidate.risks(), TEXT_WARN);
+		return cursor;
 	}
 
 	private int section(GuiGraphicsExtractor graphics, int x, int y, int wrapWidth, String heading,
@@ -538,6 +680,90 @@ public final class FlipScreen extends Screen {
 		graphics.textWithWordWrap(font, text, x + labelWidth, y, wrapWidth - labelWidth, TEXT);
 
 		return y + Math.max(font.lineHeight, font.wordWrapHeight(text, wrapWidth - labelWidth)) + 1;
+	}
+
+	/** Complete evidence for one recovery floor. No action control is rendered beside it. */
+	private void renderRecoveryDetail(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		RecoveryOpportunity opportunity = recoveryTable.selection();
+		if (opportunity != recoveryDetailShown) {
+			recoveryDetailShown = opportunity;
+			detailScroll.reset();
+		}
+		int contentWidth = panelWidth - 2 * PANEL_PAD;
+		int startY = y + PANEL_PAD - detailScroll.offset();
+		int cursor = startY;
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+		if (opportunity == null) {
+			Component message = Component.literal(recoveryTable.isEmpty()
+					? "No evidence-backed recovery opportunities are in the latest shared auction sweep."
+					: "Select a row to inspect every retained exit leg.");
+			graphics.textWithWordWrap(font, message, x + PANEL_PAD, cursor, contentWidth, TEXT_DIM);
+			cursor += font.wordWrapHeight(message, contentWidth);
+		} else {
+			graphics.textWithWordWrap(font, Component.literal(opportunity.displayName()),
+					x + PANEL_PAD, cursor, contentWidth, 0xFF55FFFF);
+			cursor += font.wordWrapHeight(Component.literal(opportunity.displayName()), contentWidth) + 3;
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Auction",
+					opportunity.auctionUuid());
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Purchase",
+					Coins.format(opportunity.purchasePrice()));
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Floor",
+					Coins.format(opportunity.conservativeFloor()));
+			cursor = field(graphics, x + PANEL_PAD, cursor, contentWidth, "Profit",
+					Coins.format(opportunity.expectedProfit()) + " ("
+							+ String.format("%.1f%%", opportunity.margin() * 100.0d) + ")");
+			cursor = recoveryLeg(graphics, opportunity.cleanHostQuote(), x + PANEL_PAD, cursor,
+					contentWidth);
+			for (RecoveryComponentQuote component : opportunity.componentQuotes()) {
+				cursor = recoveryLeg(graphics, component, x + PANEL_PAD, cursor, contentWidth);
+			}
+			if (!opportunity.warnings().isEmpty()) {
+				Component warnings = Component.literal("Warnings: " + opportunity.warnings());
+				graphics.textWithWordWrap(font, warnings, x + PANEL_PAD, cursor, contentWidth,
+						TEXT_WARN);
+				cursor += font.wordWrapHeight(warnings, contentWidth) + 3;
+			}
+			Component advisory = Component.literal(
+					"Read-only: verify the live auction yourself. The mod sends no click or purchase.");
+			graphics.textWithWordWrap(font, advisory, x + PANEL_PAD, cursor, contentWidth, TEXT_NOTE);
+			cursor += font.wordWrapHeight(advisory, contentWidth);
+		}
+		graphics.disableScissor();
+		detailScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		detailScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	private int recoveryLeg(GuiGraphicsExtractor graphics, RecoveryComponentQuote quote, int x,
+			int y, int width) {
+		graphics.text(font, Component.literal(quote.displayName())
+				.withStyle(quote.credited() ? ChatFormatting.WHITE : ChatFormatting.YELLOW),
+				x, y, quote.credited() ? TEXT : TEXT_WARN);
+		int cursor = y + font.lineHeight + 1;
+		cursor = field(graphics, x, cursor, width, "Exit",
+				quote.credited() ? quote.exitVenue().name() : "ZERO CREDIT");
+		cursor = field(graphics, x, cursor, width, "Gross",
+				Coins.format(quote.grossQuickSale()));
+		cursor = field(graphics, x, cursor, width, "Buffered",
+				Coins.format(quote.bufferedGross()));
+		cursor = field(graphics, x, cursor, width, "Fee",
+				Coins.format(quote.fee()));
+		cursor = field(graphics, x, cursor, width, "Removal",
+				Coins.format(quote.removalCost()));
+		cursor = field(graphics, x, cursor, width, "Net",
+				Coins.format(quote.netContribution()));
+		if (quote.sampleCount() > 0) {
+			cursor = field(graphics, x, cursor, width, "Evidence",
+					quote.sampleCount() + " sales, "
+							+ String.format("%.1f/day", quote.salesPerDay()));
+		} else if (quote.quotedDepth() > 0L) {
+			cursor = field(graphics, x, cursor, width, "Depth",
+					quote.quotedDepth() + " units on bids");
+		}
+		if (!quote.warnings().isEmpty()) {
+			cursor = field(graphics, x, cursor, width, "Warning", quote.warnings().toString());
+		}
+		return cursor + 4;
 	}
 
 	/** Everything the mod means by the words it uses, from the same source {@code /flip guide} reads. */
@@ -678,7 +904,7 @@ public final class FlipScreen extends Screen {
 
 		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
 
-		graphics.text(font, Component.literal("Do these").withStyle(ChatFormatting.GOLD),
+		graphics.text(font, Component.literal("Bazaar to NPC").withStyle(ChatFormatting.GOLD),
 				x + PANEL_PAD, cursor, TEXT);
 		cursor += font.lineHeight + 4;
 
@@ -744,6 +970,211 @@ public final class FlipScreen extends Screen {
 		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
 	}
 
+	/**
+	 * Every flip being worked, each one as its own block of clicks with progress against each.
+	 *
+	 * <p>This is the tab the screen was missing. Picking a flip used to hand the bazaar panel one
+	 * job and take away whatever it was showing before, so the only way to see what you had open
+	 * was to remember it. A player with a craft's materials resting, a combine's source books
+	 * filling and a spread on the book has three things running and no other view lists them.
+	 *
+	 * <p>The badges come from the order tracker, so they are empty when {@code autoTrackEnabled} is
+	 * off - which the footer hint says out loud. A guessed badge would be worse than none: a step
+	 * marked done that was never placed is a flip abandoned halfway.
+	 */
+	private void renderJobs(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		int startY = y + PANEL_PAD - sideScroll.offset();
+		int cursor = startY;
+
+		jobRowHeight = font.lineHeight + 2;
+		jobRowIds.clear();
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+
+		graphics.text(font, Component.literal("Working now").withStyle(ChatFormatting.GOLD),
+				x + PANEL_PAD, cursor, TEXT);
+		cursor += font.lineHeight + 4;
+
+		if (jobs.isEmpty()) {
+			Component message = Component.literal(
+					"Nothing is being worked. Pick a bazaar, craft or combine row on its own tab "
+							+ "and press Work: its steps then follow you onto the bazaar panel, "
+							+ "and several can run at once.");
+			graphics.textWithWordWrap(font, message, x + PANEL_PAD, cursor,
+					panelWidth - 2 * PANEL_PAD, TEXT_DIM);
+			cursor += font.wordWrapHeight(message, panelWidth - 2 * PANEL_PAD);
+			graphics.disableScissor();
+			sideScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+			sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+			return;
+		}
+
+		int priceWidth = font.width(Component.literal("000000.0")) + 8;
+		// Wide enough for the order split - "3 x 256 + 112" - rather than for the total alone, for
+		// the reason the basket panel is: a total on its own reads as one order.
+		int unitsWidth = font.width(Component.literal("00 x 00000 + 00000")) + 8;
+		int nameWidth = panelWidth - 2 * PANEL_PAD - priceWidth - unitsWidth;
+
+		jobRowsTop = cursor;
+
+		for (WorkedJob job : jobs) {
+			boolean selected = job.itemId().equals(selectedJobId);
+
+			cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
+					jobHeading(job), "", progressText(job), TEXT_NOTE);
+			jobRowIds.add(job.itemId());
+
+			if (!job.note().isEmpty()) {
+				cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
+						"  " + job.note(), "", "", TEXT_WARN);
+				jobRowIds.add(job.itemId());
+			}
+
+			for (WorkedJob.Step step : job.steps()) {
+				WorkedJob.Progress progress = job.progressOf(step, jobOrders);
+
+				cursor = jobRow(graphics, x, cursor, panelWidth, nameWidth, priceWidth, selected,
+						"  " + progress.badge() + " " + step.label() + " " + step.displayName(),
+						step.stage().priced() ? String.format("%.1f", step.price()) : "",
+						step.orderSplit(), stepColour(progress.state()));
+				jobRowIds.add(job.itemId());
+			}
+		}
+
+		graphics.disableScissor();
+
+		sideScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		sideScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	/** One line of the Jobs panel: name on the left, price and size in the two right columns. */
+	private int jobRow(GuiGraphicsExtractor graphics, int x, int cursor, int panelWidth,
+			int nameWidth, int priceWidth, boolean selected, String name, String price,
+			String units, int colour) {
+		if (selected) {
+			graphics.fill(x + 1, cursor - 1, x + panelWidth - 1, cursor + jobRowHeight - 1,
+					ROW_SELECTED);
+		}
+
+		graphics.text(font, Component.literal(Labels.fit(font, name, nameWidth)), x + PANEL_PAD,
+				cursor, colour);
+
+		if (!price.isEmpty()) {
+			Component priced = Component.literal(price);
+			graphics.text(font, priced,
+					x + PANEL_PAD + nameWidth + priceWidth - 8 - font.width(priced), cursor,
+					TEXT_NOTE);
+		}
+
+		if (!units.isEmpty()) {
+			Component sized = Component.literal(units);
+			graphics.text(font, sized, x + panelWidth - PANEL_PAD - font.width(sized), cursor,
+					TEXT_DIM);
+		}
+
+		return cursor + jobRowHeight;
+	}
+
+	private static String jobHeading(WorkedJob job) {
+		return job.kind().label() + ": " + job.displayName();
+	}
+
+	/** {@code 1/3 done}, or why there is no count to give. */
+	private String progressText(WorkedJob job) {
+		if (job.trackableCount() == 0) {
+			return "";
+		}
+
+		return jobOrders.isEmpty()
+				? "untracked"
+				: job.doneCount(jobOrders) + "/" + job.trackableCount() + " done";
+	}
+
+	/** Green once the tracker has seen a step through, amber while an order is still resting. */
+	private static int stepColour(WorkedJob.State state) {
+		return switch (state) {
+			case DONE -> TEXT_GOOD;
+			case RESTING -> TEXT_WARN;
+			case TODO -> TEXT;
+			case UNTRACKED -> TEXT_DIM;
+		};
+	}
+
+	/**
+	 * What the selected job is worth, and how much of it the tracker has actually seen happen.
+	 *
+	 * <p>The capital line is the one a player working four flips at once cannot get anywhere else:
+	 * the ranking quotes each flip on its own, and nothing added them up.
+	 */
+	private void renderJobDetail(GuiGraphicsExtractor graphics, int x, int y, int panelWidth,
+			int panelHeight) {
+		int contentWidth = panelWidth - 2 * PANEL_PAD;
+		int startY = y + PANEL_PAD - detailScroll.offset();
+		int cursor = startY;
+		int textX = x + PANEL_PAD;
+
+		graphics.enableScissor(x, y, x + panelWidth, y + panelHeight);
+
+		graphics.text(font, Component.literal("Committed").withStyle(ChatFormatting.GOLD), textX,
+				cursor, TEXT);
+		cursor += font.lineHeight + 4;
+
+		long capital = 0L;
+		double profit = 0.0d;
+
+		for (WorkedJob job : jobs) {
+			capital += job.capital();
+			profit += job.netProfit();
+		}
+
+		cursor = field(graphics, textX, cursor, contentWidth, "Flips", String.valueOf(jobs.size()));
+		cursor = field(graphics, textX, cursor, contentWidth, "Capital", Coins.format(capital));
+		cursor = field(graphics, textX, cursor, contentWidth, "Net if all fill",
+				Coins.format(profit));
+
+		WorkedJob selected = selectedJob();
+
+		if (selected == null) {
+			Component message = Component.literal(
+					"Select a flip on the left to see its numbers, or press Stop working to drop "
+							+ "it. Stopping leaves any orders already on the book alone - it only "
+							+ "stops the mod telling you about them.");
+			cursor += font.lineHeight;
+			graphics.textWithWordWrap(font, message, textX, cursor, contentWidth, TEXT_DIM);
+			cursor += font.wordWrapHeight(message, contentWidth);
+		} else {
+			cursor += font.lineHeight;
+			graphics.text(font, Component.literal(selected.displayName())
+					.withStyle(ChatFormatting.GOLD), textX, cursor, TEXT);
+			cursor += font.lineHeight + 4;
+
+			cursor = field(graphics, textX, cursor, contentWidth, "Strategy",
+					selected.kind().label());
+			cursor = field(graphics, textX, cursor, contentWidth, "Capital",
+					Coins.format(selected.capital()));
+			cursor = field(graphics, textX, cursor, contentWidth, "Net",
+					Coins.format(selected.netProfit()));
+			cursor = field(graphics, textX, cursor, contentWidth, "Steps",
+					selected.steps().size() + ", " + progressText(selected));
+		}
+
+		graphics.disableScissor();
+
+		detailScroll.measured(cursor - startY + PANEL_PAD, panelHeight - PANEL_PAD);
+		detailScroll.renderBar(graphics, x, y, panelWidth, panelHeight);
+	}
+
+	private WorkedJob selectedJob() {
+		for (WorkedJob job : jobs) {
+			if (job.itemId().equals(selectedJobId)) {
+				return job;
+			}
+		}
+
+		return null;
+	}
+
 	/** One colour per kind of click, so the shape of a trip is readable before it is read. */
 	private static int taskColour(NpcWorklist.Kind kind) {
 		return switch (kind) {
@@ -794,8 +1225,6 @@ public final class FlipScreen extends Screen {
 							basket.restingHours()));
 			cursor = field(graphics, textX, cursor, contentWidth, "Per hour",
 					Coins.format(basket.profitPerHour()));
-			cursor = field(graphics, textX, cursor, contentWidth, "ROC",
-					String.format("%.0f%%", basket.returnOnCapital() * 100.0d));
 			cursor = field(graphics, textX, cursor, contentWidth, "NPC coins",
 					Coins.format(basket.npcPayout()) + " of the day's budget");
 			cursor = field(graphics, textX, cursor, contentWidth, "Hauling",
@@ -906,12 +1335,9 @@ public final class FlipScreen extends Screen {
 		cursor = field(graphics, x, cursor, contentWidth, "Fill",
 				String.format("%.0f units an hour %s", plan.fillPerHour(),
 						plan.fillMeasured() ? "(measured)" : "(assumed)"));
-		cursor = field(graphics, x, cursor, contentWidth, "Edge", plan.edgeMeasured()
+		return field(graphics, x, cursor, contentWidth, "Edge", plan.edgeMeasured()
 				? String.format("held in %.0f%% of samples", plan.persistence() * 100.0d)
 				: "never taped");
-
-		return field(graphics, x, cursor, contentWidth, "Confidence",
-				String.format("%.2f", plan.confidence()));
 	}
 
 	private void renderLedgerStats(GuiGraphicsExtractor graphics, int x, int y, int panelWidth) {
@@ -953,8 +1379,18 @@ public final class FlipScreen extends Screen {
 		boolean hasSelection = tab.showsCandidates() && table.selection() != null;
 
 		if (tab.showsCandidates()) {
+			copyButton.setLabel("Copy name");
 			takeButton.render(graphics, font, mouseX, mouseY, hasSelection);
 			copyButton.render(graphics, font, mouseX, mouseY, hasSelection);
+			workButton.setLabel(workLabel());
+			workButton.render(graphics, font, mouseX, mouseY, workable());
+		} else if (tab == Tab.RECOVERY) {
+			copyButton.setLabel("Copy UUID");
+			copyButton.render(graphics, font, mouseX, mouseY, recoveryTable.selection() != null);
+		} else if (tab == Tab.JOBS) {
+			workButton.setLabel("Stop working");
+			workButton.render(graphics, font, mouseX, mouseY, selectedJob() != null);
+			copyButton.render(graphics, font, mouseX, mouseY, selectedJob() != null);
 		} else if (tab == Tab.LEDGER) {
 			abandonButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
 			forgetButton.render(graphics, font, mouseX, mouseY, !selectedPosition.isEmpty());
@@ -994,6 +1430,10 @@ public final class FlipScreen extends Screen {
 				switch (tab) {
 					case LEDGER -> "Abandon keeps a position in the numbers, Forget deletes it.";
 					case BASKET -> "Work the list top down: claims, cancels, reprices, then places.";
+					case JOBS -> TrackerService.enabled()
+							? "Every flip you are working, with what the tracker has seen done."
+							: "Turn on autoTrackEnabled to see which steps are done.";
+					case RECOVERY -> "Read-only evidence; Copy UUID does not open or buy the auction.";
 					default -> "Click a column to sort, a row to select.";
 				},
 				"Guide tab defines every column.");
@@ -1026,12 +1466,85 @@ public final class FlipScreen extends Screen {
 		try {
 			// Exactly the path /flip take uses, so both routes write one ledger with one format.
 			LedgerEntry entry = LedgerService.ledger().open(candidate, System.currentTimeMillis());
+			// So the NPC side does not later adopt this buy order as its own, on an item it could sell.
+			FlipIntentsService.record(candidate.itemId(), candidate.kind(), System.currentTimeMillis());
 			notice = "Took " + entry.displayName() + " as " + entry.id()
 					+ " - close it with /flip close " + entry.id() + " <units> <price>";
 		} catch (IOException e) {
 			SkyblockFlipper.LOGGER.error("Ledger write failed", e);
 			notice = "Could not write the ledger - see the log.";
 		}
+	}
+
+	/**
+	 * Adds the selected flip to the worked list, or takes it off again.
+	 *
+	 * <p>On the Jobs tab this is only ever a stop, because everything on that tab is already being
+	 * worked.
+	 */
+	private void workSelected() {
+		if (tab == Tab.JOBS) {
+			WorkedJob job = selectedJob();
+
+			if (job == null) {
+				notice = "Select a flip first.";
+				return;
+			}
+
+			CandidateFeed.stopWork(job.itemId());
+			selectedJobId = "";
+			notice = "Stopped working " + job.displayName()
+					+ " - any orders already on the book are left alone.";
+			refresh(true);
+			return;
+		}
+
+		FlipCandidate candidate = table.selection();
+
+		if (candidate == null) {
+			notice = "Select a row first.";
+			return;
+		}
+
+		if (CandidateFeed.stopWork(candidate.itemId())) {
+			notice = "Stopped working " + candidate.displayName() + ".";
+			return;
+		}
+
+		if (!CandidateFeed.work(candidate.kind(), candidate.itemId(), candidate.displayName())) {
+			// An auction snipe and an NPC basket line are not lists of clicks at a bazaar menu, so
+			// there is nothing for the panel to follow. Both have a view of their own.
+			notice = candidate.kind().label() + " flips are not worked from here - "
+					+ (candidate.kind() == StrategyKind.NPC_FLIP
+							? "the Basket tab has the whole trip."
+							: "a snipe is one bid on the auction house.");
+			return;
+		}
+
+		// No refresh: nothing on this tab changed, and switching to Jobs forces one anyway. Re-ranking
+		// two thousand order books on a button press to redraw the same table is the waste
+		// CandidateFeed exists to avoid.
+		notice = "Working " + candidate.displayName()
+				+ " - its steps are on the bazaar panel and the Jobs tab.";
+	}
+
+	/** Whether the Work button has anything to act on, which is a selection on a followable row. */
+	private boolean workable() {
+		FlipCandidate candidate = table.selection();
+
+		return candidate != null && (CandidateFeed.working(candidate.itemId())
+				|| candidate.kind() == StrategyKind.CRAFT
+				|| candidate.kind() == StrategyKind.COMBINE
+				|| candidate.kind() == StrategyKind.BAZAAR_SPREAD);
+	}
+
+	/** Work or Stop working, whichever this selection would do. */
+	private String workLabel() {
+		FlipCandidate candidate = table.selection();
+
+		return candidate != null && CandidateFeed.working(candidate.itemId())
+				? "Stop working"
+				: "Work";
 	}
 
 	/**
@@ -1114,15 +1627,29 @@ public final class FlipScreen extends Screen {
 	}
 
 	private void copySelected() {
-		FlipCandidate candidate = table.selection();
+		if (tab == Tab.RECOVERY) {
+			RecoveryOpportunity opportunity = recoveryTable.selection();
+			if (opportunity == null) {
+				notice = "Select a recovery row first.";
+				return;
+			}
+			minecraft.keyboardHandler.setClipboard(opportunity.auctionUuid());
+			notice = "Copied auction UUID " + opportunity.auctionUuid() + "; no command was run.";
+			return;
+		}
+		// The Jobs tab shares this button, and the thing to paste into the bazaar search there is
+		// the name of the flip under the cursor.
+		String name = tab == Tab.JOBS
+				? (selectedJob() == null ? null : selectedJob().displayName())
+				: (table.selection() == null ? null : table.selection().displayName());
 
-		if (candidate == null) {
+		if (name == null) {
 			notice = "Select a row first.";
 			return;
 		}
 
-		minecraft.keyboardHandler.setClipboard(candidate.displayName());
-		notice = "Copied \"" + candidate.displayName() + "\" - paste it into the bazaar search.";
+		minecraft.keyboardHandler.setClipboard(name);
+		notice = "Copied \"" + name + "\" - paste it into the bazaar search.";
 	}
 
 	/** The selected task, or null when the selection points at nothing. */
@@ -1221,6 +1748,10 @@ public final class FlipScreen extends Screen {
 			return true;
 		}
 
+		if (tab == Tab.RECOVERY && copyButton.clicked(mouseX, mouseY)) {
+			return true;
+		}
+
 		if (tab == Tab.BASKET && (basketCopyButton.clicked(mouseX, mouseY)
 				|| basketPriceButton.clicked(mouseX, mouseY)
 				|| basketUnitsButton.clicked(mouseX, mouseY))) {
@@ -1229,6 +1760,10 @@ public final class FlipScreen extends Screen {
 
 		if (tab == Tab.LEDGER
 				&& (abandonButton.clicked(mouseX, mouseY) || forgetButton.clicked(mouseX, mouseY))) {
+			return true;
+		}
+
+		if ((tab.showsCandidates() || tab == Tab.JOBS) && workButton.clicked(mouseX, mouseY)) {
 			return true;
 		}
 
@@ -1244,7 +1779,43 @@ public final class FlipScreen extends Screen {
 			return basketRowClicked(mouseX, mouseY);
 		}
 
+		if (tab == Tab.JOBS) {
+			return jobRowClicked(mouseX, mouseY);
+		}
+
+		if (tab == Tab.RECOVERY) {
+			return recoveryTable.mouseClicked(mouseX, mouseY);
+		}
+
+		// Selecting a row only selects it. It used to also hand the bazaar panel a job to follow -
+		// and hand back whatever it was following - so clicking a bazaar row to compare it against
+		// a craft ended the craft. Committing is the Work button, which says what it does.
 		return tab.showsCandidates() && table.mouseClicked(mouseX, mouseY);
+	}
+
+	/** @return true when the click landed in the jobs panel, on a row or not */
+	private boolean jobRowClicked(double mouseX, double mouseY) {
+		int top = contentTop();
+
+		if (mouseX < MARGIN || mouseX >= MARGIN + listWidth()
+				|| mouseY < top || mouseY >= top + contentHeight()) {
+			return false;
+		}
+
+		// Tested before the division, which truncates towards zero: a click above the first row
+		// divides to 0 as well, and the heading sits in exactly that band.
+		int row = mouseY < jobRowsTop ? -1 : (int) ((mouseY - jobRowsTop) / jobRowHeight);
+
+		if (row >= 0 && row < jobRowIds.size()) {
+			// Every row of a job carries its id, so clicking a step selects the flip it belongs to
+			// rather than nothing - the panel is blocks of steps, and the step is what is under the
+			// cursor.
+			selectedJobId = jobRowIds.get(row);
+			detailScroll.reset();
+			notice = "";
+		}
+
+		return true;
 	}
 
 	/** @return true when the click landed in the basket panel, on a row or not */
@@ -1293,13 +1864,17 @@ public final class FlipScreen extends Screen {
 	}
 
 	private boolean tabClicked(double mouseX, double mouseY) {
-		if (mouseY < MARGIN || mouseY >= MARGIN + TAB_HEIGHT) {
+		List<List<Tab>> rows = tabRows();
+		int row = (int) ((mouseY - MARGIN) / (TAB_HEIGHT + 2));
+
+		if (mouseY < MARGIN || row >= rows.size()
+				|| mouseY >= tabRowY(row) + TAB_HEIGHT) {
 			return false;
 		}
 
 		int tabX = MARGIN;
 
-		for (Tab candidate : Tab.values()) {
+		for (Tab candidate : rows.get(row)) {
 			int tabWidth = tabWidth(candidate);
 
 			if (mouseX >= tabX && mouseX < tabX + tabWidth) {
@@ -1323,10 +1898,15 @@ public final class FlipScreen extends Screen {
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
 		double vx = mouseX / zoom;
 
-		if (tab == Tab.BASKET) {
+		if (tab == Tab.BASKET || tab == Tab.JOBS) {
 			// Two scrolling panels rather than one, because the right-hand side carries a whole
 			// item's plan under the totals and does not fit either.
 			if ((vx >= detailX() ? detailScroll : sideScroll).scroll(scrollY)) {
+				return true;
+			}
+		} else if (tab == Tab.RECOVERY) {
+			if (vx >= detailX() ? detailScroll.scroll(scrollY)
+					: recoveryTable.mouseScrolled(scrollY)) {
 				return true;
 			}
 		} else if (!tab.showsCandidates()) {
@@ -1361,6 +1941,17 @@ public final class FlipScreen extends Screen {
 
 			if (event.key() == GLFW.GLFW_KEY_UP) {
 				table.moveSelection(-1);
+				return true;
+			}
+		}
+
+		if (tab == Tab.RECOVERY) {
+			if (event.key() == GLFW.GLFW_KEY_DOWN) {
+				recoveryTable.moveSelection(1);
+				return true;
+			}
+			if (event.key() == GLFW.GLFW_KEY_UP) {
+				recoveryTable.moveSelection(-1);
 				return true;
 			}
 		}

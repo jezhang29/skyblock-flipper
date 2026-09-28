@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.config.NpcRanking;
@@ -156,17 +173,7 @@ public final class NpcBasket {
 		DAILY_CAP,
 
 		/** Nothing ran out: the market has no more items worth resting an order on. */
-		CANDIDATES,
-
-		/**
-		 * Nothing ran out and nothing is wrong with the market: the premium cannot be priced yet.
-		 *
-		 * <p>The one bound that is about the mod rather than the account or the book, and the reason
-		 * it is a bound at all is that the alternative is worse. See
-		 * {@link NpcContext#driftUnmeasured()}: a plan built here would post at the plain outbid
-		 * price while the settings say to post above it, and nothing on the screen would say so.
-		 */
-		DRIFT_UNMEASURED
+		CANDIDATES
 	}
 
 	/**
@@ -328,12 +335,6 @@ public final class NpcBasket {
 				case DAILY_CAP -> "The day's NPC coin budget ran out. It refills at UTC midnight.";
 				case CANDIDATES -> "Nothing else on the book clears the filters, so this is the "
 						+ "market limiting the basket rather than your account.";
-				case DRIFT_UNMEASURED -> "Pay the chase up front is on, but the drift it pays is "
-						+ "not measured yet - that reads three days of bazaar tape and lands about "
-						+ "half a minute after launch. Run this again shortly. Planning now would "
-						+ "post at the plain top-of-book price with no premium in it, which is what "
-						+ "the setting is off. If it never arrives, the bazaar tape is switched off "
-						+ "or has less than a day in it.";
 			};
 		}
 	}
@@ -358,13 +359,6 @@ public final class NpcBasket {
 	 * already committed, and a plan that does not know it is a plan for an account you do not have.
 	 */
 	public static Basket plan(StrategyContext context, Held held) {
-		// Before anything is priced, because everything below would be priced wrong. A premium the
-		// mod cannot compute is silently a premium of zero, and the plan it produces is one the
-		// player would place believing it holds the top of the book for the whole resting window.
-		if (context.npc().driftUnmeasured()) {
-			return withHeld(Basket.empty(context, Bound.DRIFT_UNMEASURED), held);
-		}
-
 		List<NpcPlan> plans = new ArrayList<>(NpcFlipStrategy.restingPlans(context));
 
 		if (plans.isEmpty()) {

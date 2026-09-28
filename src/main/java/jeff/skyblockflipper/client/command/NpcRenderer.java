@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client.command;
 
 import jeff.skyblockflipper.core.strategy.NpcBasket;
@@ -172,9 +189,8 @@ public final class NpcRenderer {
 				.append(Component.literal(" -> " + Coins.format(basket.profit()) + " over "
 								+ String.format("%.0fh", basket.restingHours()))
 						.withStyle(ChatFormatting.GREEN))
-				.append(Component.literal(String.format("  (%s/hr, %.0f%% on capital)",
-								Coins.format(basket.profitPerHour()),
-								basket.returnOnCapital() * 100.0d))
+				.append(Component.literal(String.format("  (%s/hr)",
+								Coins.format(basket.profitPerHour())))
 						.withStyle(ChatFormatting.DARK_GRAY)));
 
 		source.sendFeedback(Component.literal("  " + basket.boundExplanation())

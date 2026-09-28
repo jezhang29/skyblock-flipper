@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.client;
 
 import jeff.skyblockflipper.client.track.TrackerService;
@@ -60,7 +77,10 @@ public final class NpcRoundService {
 			return null;
 		}
 
-		List<NpcReprice.Order> resting = TrackerService.restingBuyOrders();
+		// Only the orders the NPC side owns: a craft ingredient or combine source order must not enter
+		// a round, or its reprice would be frozen and offered as an NPC click for the interval.
+		List<NpcReprice.Order> resting = FlipIntentsService.mine(
+				TrackerService.restingBuyOrders(), now);
 
 		// Nothing on the book: opening here would spend the interval on an empty round, and the mod
 		// would then be inside a round for the whole half hour after the first basket is placed.

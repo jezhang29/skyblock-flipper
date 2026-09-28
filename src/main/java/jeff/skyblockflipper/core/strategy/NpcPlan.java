@@ -1,3 +1,20 @@
+/*
+ * Skyblock Flipper - a Hypixel Skyblock flipping advisor mod.
+ * Copyright (C) 2026 SoupChugger
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package jeff.skyblockflipper.core.strategy;
 
 import jeff.skyblockflipper.core.valuation.NpcEdge;
@@ -25,10 +42,6 @@ import jeff.skyblockflipper.core.valuation.NpcEdge;
  *                      the basket ranks in
  * @param edge          measured tape history, or null where the product has too little of it. Null
  *                      is expected on a fresh install and is not a rejection
- * @param postsAboveBook whether the drift premium lifted {@link #postPrice()} above the live top of
- *                      the book. When true the order is meant to rest above the book, so the price
- *                      page must type it on the sign rather than click Hypixel's "+0.1" button,
- *                      which would post at the top of the book and spend the whole premium
  */
 public record NpcPlan(
 		String itemId,
@@ -43,8 +56,7 @@ public record NpcPlan(
 		double fillPerHour,
 		boolean fillMeasured,
 		NpcEdge edge,
-		double confidence,
-		boolean postsAboveBook
+		double confidence
 ) {
 	/**
 	 * The ranking key: coins of profit one inventory load of this item carries.
